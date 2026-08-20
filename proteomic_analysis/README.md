@@ -102,6 +102,12 @@ Run the comparison parser checks:
 Rscript tests/test_gct_comparison_parser.R
 ```
 
+Run the animal-level aggregation and ProTigy GCT contract checks:
+
+```bash
+Rscript tests/test_animal_level_proteomics.R
+```
+
 ## Running On Your Own Data
 
 Use the shared label helper in `R/analysis_labels.R` when adding or modifying scripts. Input metadata should contain `sample_id`; if `sample_class` or `condition_code` are absent, active preprocessing scripts infer them from canonical labels where possible.
@@ -121,6 +127,14 @@ Full-analysis paths on shared storage are still supported when these settings po
 Large input files and some generated results are kept outside Git. Active QC scripts remain under `03_qc_exploration/`, while obsolete or superseded scripts are under `legacy/`.
 
 The EWCE workflow in `05_celltype_enrichment_EWCE/01_EWCE.r` uses shared sample-class and condition definitions from `R/analysis_labels.R`.
+
+## Animal-Level ProTigy Handoff
+
+`01_preprocessing/02a_prepare_animal_level_protigy_input.r` creates a separate ProTigy GCT in which valid Left and Right hemisphere values are averaged within `AnimalID × sample_class`. It consumes the existing 5,349-protein processed/imputed matrix and does not transform, normalize, filter, impute, or remap it. The stage writes the corrected matrix, source-sample and feature-identity audits, design summaries, a historically scoped within-class contrast manifest, and SHA-256 provenance under a separate `protigy_input_animal_level` directory. Existing ProTigy inputs and results are not changed.
+
+The 2024 Neha instrument IDs do not contain `_L_`/`_R_`. For that historical dataset only, the stage requires the original annotation's explicit `_left`/`_right` label and independently verifies its one-to-one agreement with both archived `ReplicateGroup` fields and the instrument sample identity. Reusable aggregation helpers otherwise accept only `Left`/`L` and `Right`/`R` and require the sample-ID hemisphere token.
+
+The current EWCE differential branch remains sample-level: it parses `AnimalID`, but `run_limma_stratum()` passes hemisphere-level columns directly to `limma::lmFit()`. This handoff deliberately does not alter EWCE. A follow-up should call the same animal-level aggregation helper before fitting its limma contrasts.
 
 ## License
 
