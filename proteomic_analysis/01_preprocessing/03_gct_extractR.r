@@ -1,317 +1,197 @@
-# ===========================================================
-# GCT Comparison Splitter: Per-Comparison Forward and Reverse Output
-# Robust version for Metric.Comparison formatted GCT files
-# Handles duplicate column names by keeping first occurrence only
-# Author: Tobias Pohl
-# ===========================================================
+# ================================================================
+# Neha animal-level ProTigy statistical-result GCT extraction
+#
+# Statistical fields can occur anywhere among the physical GCT fields,
+# including the row-descriptor area. This stage extracts existing ProTigy
+# results only; it does not fit or rerun any statistical model.
+# ================================================================
 
-# -------------------------------
-# Library Setup
-# -------------------------------
+args <- commandArgs(trailingOnly = FALSE)
+file_arg <- grep("^--file=", args, value = TRUE)
+script_path <- if (length(file_arg) == 1L) {
+  sub("^--file=", "", file_arg)
+} else {
+  file.path("01_preprocessing", "03_gct_extractR.r")
+}
+repo_root <- normalizePath(file.path(dirname(script_path), ".."), winslash = "/", mustWork = FALSE)
+if (!file.exists(file.path(repo_root, "R", "protigy_stat_gct_utils.R"))) {
+  repo_root <- normalizePath(getwd(), winslash = "/", mustWork = TRUE)
+}
 
-required_pkgs <- c("dplyr", "readr", "stringr", "purrr", "fs", "tibble")
+source(file.path(repo_root, "R", "analysis_labels.R"))
+source(file.path(repo_root, "R", "protigy_stat_gct_utils.R"))
 
-if (!requireNamespace("pacman", quietly = TRUE)) install.packages("pacman")
-library(pacman)
-pacman::p_load(char = required_pkgs)
-source(file.path("R", "analysis_labels.R"))
+option_or_env <- function(option_name, env_name, default) {
+  value <- getOption(option_name)
+  if (!is.null(value) && nzchar(trimws(as.character(value)))) return(as.character(value))
+  value <- Sys.getenv(env_name, unset = "")
+  if (nzchar(trimws(value))) return(value)
+  default
+}
 
-# -------------------------------
-# Parameters
-# -------------------------------
-
-labels <- source_analysis_labels()
-
-# -------------------------------
-# Input
-# -------------------------------
-
-setwd("S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/")
-
-input_file <- "pg.matrix_Two-sample_mod_T_2025-12-15-transformed-p-val_n120x5349"
-
-gct_path <- file.path(
-  "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/Datasets/gct/data",
-  paste0(input_file, ".gct")
+input_gct <- option_or_env(
+  "neha.protigy_stat_gct_input",
+  "NEHA_PROTIGY_STAT_GCT_INPUT",
+  "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/Datasets/data/protigy_animal_level/stat_results_for_ssGSEA_neha_proteome.gct"
 )
-
-# -------------------------------
-# Helper Functions
-# -------------------------------
-
-safe_name <- function(x) {
-  x |>
-    stringr::str_replace_all("[^A-Za-z0-9._-]", "_") |>
-    stringr::str_replace_all("_+", "_")
-}
-
-swap_comparison <- function(comp_key) {
-  parts <- stringr::str_split(comp_key, "\\.over\\.", simplify = TRUE)
-
-  if (ncol(parts) != 2) return(NA_character_)
-
-  paste0(parts[2], ".over.", parts[1])
-}
-
-split_col <- function(col) {
-  m <- stringr::str_match(
-    col,
-    "^([A-Za-z0-9\\.]+)\\.([A-Za-z0-9_]+\\.over\\.[A-Za-z0-9_]+)$"
-  )
-
-  if (is.na(m[1, 1])) {
-    return(list(metric = NA_character_, comparison = NA_character_))
-  }
-
-  list(
-    metric = m[1, 2],
-    comparison = m[1, 3]
-  )
-}
-
-parse_compkey <- function(key, warn = TRUE) {
-  parsed <- parse_comparison_key(key)
-  if (!is.null(parsed)) {
-    return(parsed$name)
-  }
-
-  if (isTRUE(warn)) {
-    warning(
-      "Could not parse comparison key '", key,
-      "'. Expected '<sample_class_or_alias>_<condition_code>.over.<sample_class_or_alias>_<condition_code>' ",
-      "or '<analysis_unit>_<sample_class_or_alias>_<condition_code>.over.<analysis_unit>_<sample_class_or_alias>_<condition_code>'. ",
-      "Using original safe name.",
-      call. = FALSE
-    )
-  }
-
-  safe_name(key)
-}
-
-# -------------------------------
-# Read GCT File
-# -------------------------------
-
-raw <- utils::read.delim(
-  gct_path,
-  header = FALSE,
-  stringsAsFactors = FALSE,
-  check.names = FALSE,
-  comment.char = ""
+output_root <- option_or_env(
+  "neha.protigy_stat_gct_output_root",
+  "NEHA_PROTIGY_STAT_GCT_OUTPUT_ROOT",
+  "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/Datasets/data/protigy_animal_level/split"
 )
+input_gct <- normalizePath(input_gct, winslash = "/", mustWork = TRUE)
+output_root <- normalizePath(output_root, winslash = "/", mustWork = FALSE)
 
-raw_clean <- raw[-c(1:2), ]
-
-header_row <- which(tolower(trimws(raw_clean[[1]])) == "id")[1]
-
-if (is.na(header_row)) {
-  stop("Could not find GCT header row. Expected first column to contain 'id'.")
+path_is_within <- function(path, parent) {
+  path <- tolower(normalizePath(path, winslash = "/", mustWork = FALSE))
+  parent <- sub("/+$", "", tolower(normalizePath(parent, winslash = "/", mustWork = FALSE)))
+  identical(path, parent) || startsWith(path, paste0(parent, "/"))
 }
 
-col_names <- as.character(unlist(raw_clean[header_row, ]))
-
-data <- raw_clean[(header_row + 1):nrow(raw_clean), , drop = FALSE]
-colnames(data) <- col_names
-
-# -------------------------------
-# Remove Duplicate Columns
-# Keep first occurrence only
-# -------------------------------
-
-dup_cols <- duplicated(names(data))
-
-if (any(dup_cols)) {
-  message(
-    "Removing duplicate columns, keeping first occurrence: ",
-    paste(unique(names(data)[dup_cols]), collapse = ", ")
-  )
-
-  data <- data[, !dup_cols, drop = FALSE]
-}
-
-if (!"id" %in% names(data)) {
-  stop("No 'id' column found after assigning GCT header.")
-}
-
-if (anyDuplicated(names(data))) {
+historical_dataset_root <- "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/Datasets"
+protected_roots <- file.path(historical_dataset_root, c("raw", "mapped"))
+if (any(vapply(protected_roots, function(path) path_is_within(output_root, path), logical(1)))) {
   stop(
-    "Duplicate columns remain after cleanup: ",
-    paste(unique(names(data)[duplicated(names(data))]), collapse = ", ")
+    "Refusing to write animal-level ProTigy splits under historical Datasets/raw or Datasets/mapped: ",
+    output_root,
+    call. = FALSE
   )
 }
 
-# -------------------------------
-# Remove Annotation Rows
-# -------------------------------
+gct <- read_protigy_stat_gct(input_gct, strict_primary = TRUE)
+contract <- validate_neha_stat_gct_contract(gct, expected_n_proteins = 5349L)
+expected <- neha_primary_contrast_manifest()
 
-annotation_rows <- c(
-  "AnimalID", "ReplicateGroup", "sample_class",
-  "condition_code", "condition", "sample_class_condition", "plate",
-  "sampleNumber", "shortname"
+forward_dir <- file.path(output_root, "forward")
+reverse_dir <- file.path(output_root, "reverse")
+expected_forward_names <- paste0(expected$canonical_contrast, ".csv")
+expected_reverse_names <- paste0(
+  expected$reference_phenotype,
+  "_vs_",
+  expected$case_phenotype,
+  ".csv"
 )
 
-data <- data |>
-  dplyr::filter(!id %in% annotation_rows, id != "na")
-
-# -------------------------------
-# Parse Feature Columns
-# -------------------------------
-
-feature_cols <- setdiff(names(data), "id")
-split_info <- lapply(feature_cols, split_col)
-
-comparison_keys <- setNames(
-  vapply(split_info, `[[`, character(1), "comparison"),
-  feature_cols
+unexpected_existing_csv <- function(directory, expected_names) {
+  if (!dir.exists(directory)) return(character())
+  existing <- list.files(directory, pattern = "\\.csv$", full.names = FALSE, ignore.case = TRUE)
+  setdiff(existing, expected_names)
+}
+unexpected <- c(
+  unexpected_existing_csv(forward_dir, expected_forward_names),
+  unexpected_existing_csv(reverse_dir, expected_reverse_names)
 )
-
-metric_keys <- setNames(
-  vapply(split_info, `[[`, character(1), "metric"),
-  feature_cols
-)
-
-valid_cols <- names(comparison_keys)[!is.na(comparison_keys)]
-
-if (length(valid_cols) == 0) {
-  stop("No valid Metric.Comparison columns detected.")
+if (length(unexpected)) {
+  stop(
+    "Output split directories contain unexpected CSV files; refusing a mixed contract: ",
+    paste(unique(unexpected), collapse = ", "),
+    call. = FALSE
+  )
 }
 
-by_comparison <- split(valid_cols, comparison_keys[valid_cols])
+dir.create(forward_dir, recursive = TRUE, showWarnings = FALSE)
+dir.create(reverse_dir, recursive = TRUE, showWarnings = FALSE)
 
-# -------------------------------
-# Convert Numeric Columns
-# -------------------------------
-
-data[valid_cols] <- lapply(data[valid_cols], readr::parse_number)
-
-# -------------------------------
-# Output Folder Structure
-# -------------------------------
-
-outdir_base <- "raw"
-
-fname <- basename(gct_path)
-subfolder <- basename(fs::path_dir(gct_path))
-
-if (is.na(subfolder) || subfolder == "") {
-  subfolder <- "unknown-comparison"
-}
-
-outdir <- file.path(outdir_base, subfolder)
-outdir_fwd <- file.path(outdir, "forward")
-outdir_rev <- file.path(outdir, "reverse")
-
-fs::dir_create(outdir_fwd)
-fs::dir_create(outdir_rev)
-
-# -------------------------------
-# Metric Rename Map
-# -------------------------------
-
-recode_map <- c(
-  "adj.P.Val"   = "padj",
-  "P.Value"     = "pval",
-  "logFC"       = "log2fc",
-  "RawlogFC"    = "rawlog2fc",
-  "Log.P.Value" = "logpval",
-  "AveExpr"     = "aveExpr",
-  "t"           = "t"
-)
-
-# -------------------------------
-# Main Loop: Write Forward & Reverse CSVs
-# -------------------------------
-
-written_index <- purrr::imap_dfr(by_comparison, function(cols, comp_key) {
-
-  df_out <- data |>
-    dplyr::select(id, dplyr::all_of(cols)) |>
-    dplyr::mutate(id = as.character(id))
-
-  names(df_out)[1] <- "gene_symbol"
-
-  metrics <- metric_keys[cols]
-
-  new_names <- vapply(metrics, function(m) {
-    if (m %in% names(recode_map)) {
-      recode_map[[m]]
-    } else {
-      m
-    }
-  }, character(1))
-
-  new_names <- make.unique(new_names)
-  names(df_out)[-1] <- new_names
-
-  comp2 <- parse_compkey(comp_key)
-
-  fwd_file <- file.path(
-    outdir_fwd,
-    paste0(safe_name(comp2), ".csv")
+index_rows <- lapply(seq_len(nrow(expected)), function(i) {
+  comparison <- expected$canonical_comparison[[i]]
+  forward <- extract_protigy_comparison_table(gct, comparison)
+  metric_by_column <- attr(forward, "metric_by_column")
+  reverse <- reverse_protigy_metric_frame(forward, metric_by_column)
+  forward_path <- normalizePath(
+    file.path(forward_dir, expected_forward_names[[i]]),
+    winslash = "/",
+    mustWork = FALSE
+  )
+  reverse_path <- normalizePath(
+    file.path(reverse_dir, expected_reverse_names[[i]]),
+    winslash = "/",
+    mustWork = FALSE
   )
 
-  utils::write.csv(
-    df_out,
-    fwd_file,
-    row.names = FALSE,
-    quote = TRUE
-  )
+  utils::write.csv(forward, forward_path, row.names = FALSE, quote = TRUE, na = "")
+  utils::write.csv(reverse, reverse_path, row.names = FALSE, quote = TRUE, na = "")
 
-  message("Wrote: ", fwd_file)
-
-  rev_file <- NA_character_
-  rev_comp <- NA_character_
-
-  if (stringr::str_detect(comp_key, "\\.over\\.")) {
-
-    df_rev <- df_out
-
-    log_cols <- names(df_rev)[
-      stringr::str_detect(
-        names(df_rev),
-        stringr::regex("log.*fc", ignore_case = TRUE)
-      )
-    ]
-
-    for (col in log_cols) {
-      df_rev[[col]] <- suppressWarnings(as.numeric(df_rev[[col]]) * -1)
-    }
-
-    rev_comp <- parse_compkey(swap_comparison(comp_key))
-
-    rev_file <- file.path(
-      outdir_rev,
-      paste0(safe_name(rev_comp), ".csv")
-    )
-
-    utils::write.csv(
-      df_rev,
-      rev_file,
-      row.names = FALSE,
-      quote = TRUE
-    )
-
-    message("Wrote reversed: ", rev_file)
+  forward_check <- utils::read.csv(forward_path, stringsAsFactors = FALSE, check.names = FALSE)
+  reverse_check <- utils::read.csv(reverse_path, stringsAsFactors = FALSE, check.names = FALSE)
+  if (
+    nrow(forward_check) != gct$n_protein_rows_read ||
+      nrow(reverse_check) != gct$n_protein_rows_read ||
+      !identical(as.character(forward_check$gene_symbol), gct$ids) ||
+      !identical(as.character(reverse_check$gene_symbol), gct$ids) ||
+      !identical(as.character(forward_check$Description), gct$description) ||
+      !identical(as.character(reverse_check$Description), gct$description)
+  ) {
+    stop("Post-write identity or row-count validation failed for: ", comparison, call. = FALSE)
   }
 
-  tibble::tibble(
-    comparison = comp_key,
-    parsed_forward_comparison = comp2,
-    parsed_reverse_comparison = rev_comp,
-    n_columns = length(cols),
-    columns_used = paste(cols, collapse = ";"),
-    forward_file = fwd_file,
-    reverse_file = rev_file
+  fields <- gct$parsed_fields[
+    gct$parsed_fields$canonical_comparison == comparison,
+    ,
+    drop = FALSE
+  ]
+  data.frame(
+    canonical_comparison = comparison,
+    canonical_contrast = expected$canonical_contrast[[i]],
+    sample_class = expected$sample_class[[i]],
+    numerator_condition = expected$case_condition[[i]],
+    denominator_condition = expected$reference_condition[[i]],
+    numerator_phenotype = expected$case_phenotype[[i]],
+    denominator_phenotype = expected$reference_phenotype[[i]],
+    historical_comparison_alias = expected$historical_comparison_name[[i]],
+    forward_filename = basename(forward_path),
+    forward_path = forward_path,
+    reverse_filename = basename(reverse_path),
+    reverse_path = reverse_path,
+    statistical_fields_detected = paste(fields$metric, collapse = ";"),
+    source_fields = paste(fields$field, collapse = ";"),
+    n_proteins = gct$n_protein_rows_read,
+    source_gct_path = gct$path,
+    source_gct_sha256 = gct$sha256,
+    stringsAsFactors = FALSE
   )
 })
+index <- do.call(rbind, index_rows)
+index_path <- file.path(output_root, "indexComparisons.csv")
+utils::write.csv(index, index_path, row.names = FALSE, quote = TRUE, na = "")
 
-# -------------------------------
-# Index File
-# -------------------------------
+forward_files <- sort(list.files(forward_dir, pattern = "\\.csv$", full.names = TRUE), method = "radix")
+reverse_files <- sort(list.files(reverse_dir, pattern = "\\.csv$", full.names = TRUE), method = "radix")
+if (length(forward_files) != 12L || length(reverse_files) != 12L || nrow(index) != 12L) {
+  stop("Post-write split contract failed: expected 12 forward, 12 reverse, and 12 index rows.", call. = FALSE)
+}
 
-readr::write_csv(
-  written_index,
-  file.path(outdir, "indexComparisons.csv")
+contract_manifest <- data.frame(
+  contract_version = "neha_animal_level_protigy_stat_split_v1",
+  generated_utc = format(Sys.time(), tz = "UTC", usetz = TRUE),
+  status = contract$status,
+  source_gct_path = gct$path,
+  source_gct_sha256 = gct$sha256,
+  declared_n_proteins = unname(gct$dimensions[["nrmat"]]),
+  declared_n_matrix_columns = unname(gct$dimensions[["ncmat"]]),
+  declared_n_row_descriptors = unname(gct$dimensions[["nrhd"]]),
+  declared_n_column_metadata_rows = unname(gct$dimensions[["nchd"]]),
+  observed_physical_fields = gct$observed_physical_fields,
+  comparison_naming_style = gct$naming_style,
+  required_da_metrics = paste(protigy_required_da_metrics(), collapse = ";"),
+  detected_statistics = paste(gct$metrics_found, collapse = ";"),
+  n_primary_comparisons = nrow(index),
+  n_forward_files = length(forward_files),
+  n_reverse_files = length(reverse_files),
+  n_proteins_per_file = gct$n_protein_rows_read,
+  protein_ids_unique = gct$protein_ids_unique,
+  description_retained = gct$description_present && gct$description_aligned,
+  duplicate_metric_comparison_fields = gct$duplicate_metric_comparison_fields,
+  output_root = output_root,
+  index_path = normalizePath(index_path, winslash = "/", mustWork = TRUE),
+  index_sha256 = protigy_file_sha256(index_path),
+  stringsAsFactors = FALSE
 )
+contract_path <- file.path(output_root, "run_contract_manifest.csv")
+utils::write.csv(contract_manifest, contract_path, row.names = FALSE, quote = TRUE, na = "")
 
-message("Finished successfully.")
+message("Neha animal-level ProTigy statistical-result extraction completed successfully.")
+message("Source GCT SHA-256: ", gct$sha256)
+message("Forward files: ", length(forward_files), " (", gct$n_protein_rows_read, " proteins each)")
+message("Reverse files: ", length(reverse_files), " (", gct$n_protein_rows_read, " proteins each)")
+message("Index: ", normalizePath(index_path, winslash = "/", mustWork = TRUE))
+message("Contract manifest: ", normalizePath(contract_path, winslash = "/", mustWork = TRUE))

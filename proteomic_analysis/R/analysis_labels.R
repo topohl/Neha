@@ -29,6 +29,46 @@ source_analysis_labels <- function() {
   )
 }
 
+neha_primary_contrast_manifest <- function() {
+  contrast_definitions <- data.frame(
+    contrast_family = c(
+      "paired_cno_vs_paired_veh",
+      "paired_veh_vs_unpaired_veh",
+      "unpaired_cno_vs_unpaired_veh"
+    ),
+    case_code = c("1", "2", "3"),
+    reference_code = c("2", "4", "4"),
+    stringsAsFactors = FALSE
+  )
+  historical_alias <- c(
+    mcherry = "mcherry",
+    neuropil = "bg",
+    cfos = "cfos",
+    neuron = "neuron"
+  )
+
+  manifest <- do.call(rbind, lapply(sample_classes, function(sample_class) {
+    out <- contrast_definitions
+    out$sample_class <- sample_class
+    out$case_condition <- unname(condition_code_map[out$case_code])
+    out$reference_condition <- unname(condition_code_map[out$reference_code])
+    out$case_phenotype <- paste(sample_class, out$case_condition, sep = "_")
+    out$reference_phenotype <- paste(sample_class, out$reference_condition, sep = "_")
+    out$canonical_comparison <- paste(out$case_phenotype, out$reference_phenotype, sep = "_over_")
+    out$canonical_contrast <- paste(out$case_phenotype, out$reference_phenotype, sep = "_vs_")
+    alias <- unname(historical_alias[[sample_class]])
+    out$historical_comparison_name <- paste0(alias, out$case_code, "_", alias, out$reference_code)
+    out
+  }))
+  rownames(manifest) <- NULL
+  manifest[c(
+    "sample_class", "contrast_family", "case_code", "case_condition",
+    "reference_code", "reference_condition", "case_phenotype",
+    "reference_phenotype", "canonical_comparison", "canonical_contrast",
+    "historical_comparison_name"
+  )]
+}
+
 normalize_condition <- function(x) {
   x <- tolower(as.character(x))
   x <- gsub("-", "_", x)

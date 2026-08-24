@@ -277,39 +277,21 @@ feature_audit <- data.frame(
 )
 utils::write.csv(feature_audit, feature_audit_path, row.names = FALSE, na = "")
 
-historical_alias <- c(mcherry = "mcherry", neuropil = "bg", cfos = "cfos", neuron = "neuron")
-contrast_definitions <- data.frame(
-  contrast_family = c("paired_cno_vs_paired_veh", "paired_veh_vs_unpaired_veh", "unpaired_cno_vs_unpaired_veh"),
-  case_code = c("1", "2", "3"),
-  reference_code = c("2", "4", "4"),
-  evidence_subdir = c(
-    "mapped/effects_chemogenetic_inhibition/paired",
-    "mapped/learning_signature/memory_ensemble",
-    "mapped/effects_chemogenetic_inhibition/unpaired"
-  ),
-  stringsAsFactors = FALSE
+contrast_manifest <- neha_primary_contrast_manifest()
+evidence_subdir <- c(
+  paired_cno_vs_paired_veh = "mapped/effects_chemogenetic_inhibition/paired",
+  paired_veh_vs_unpaired_veh = "mapped/learning_signature/memory_ensemble",
+  unpaired_cno_vs_unpaired_veh = "mapped/effects_chemogenetic_inhibition/unpaired"
 )
-contrast_manifest <- do.call(rbind, lapply(sample_classes, function(sample_class) {
-  alias <- historical_alias[[sample_class]]
-  out <- contrast_definitions
-  out$sample_class <- sample_class
-  out$case_condition <- unname(condition_code_map[out$case_code])
-  out$reference_condition <- unname(condition_code_map[out$reference_code])
-  out$case_phenotype <- paste(sample_class, out$case_condition, sep = "_")
-  out$reference_phenotype <- paste(sample_class, out$reference_condition, sep = "_")
-  out$canonical_contrast <- paste(out$case_phenotype, out$reference_phenotype, sep = "_vs_")
-  out$historical_comparison_name <- paste0(alias, out$case_code, "_", alias, out$reference_code)
-  out$historical_evidence_file <- file.path(
-    project_root,
-    "clusterProfiler",
-    "Datasets",
-    out$evidence_subdir,
-    paste0(out$historical_comparison_name, ".csv")
-  )
-  out$historical_evidence_exists <- file.exists(out$historical_evidence_file)
-  out$recommended_model <- "within_sample_class_animal_level_two_sample_ProTigy"
-  out
-}))
+contrast_manifest$historical_evidence_file <- file.path(
+  project_root,
+  "clusterProfiler",
+  "Datasets",
+  unname(evidence_subdir[contrast_manifest$contrast_family]),
+  paste0(contrast_manifest$historical_comparison_name, ".csv")
+)
+contrast_manifest$historical_evidence_exists <- file.exists(contrast_manifest$historical_evidence_file)
+contrast_manifest$recommended_model <- "within_sample_class_animal_level_two_sample_ProTigy"
 contrast_manifest <- contrast_manifest[c(
   "sample_class", "contrast_family", "case_code", "case_condition", "reference_code",
   "reference_condition", "case_phenotype", "reference_phenotype", "canonical_contrast",
