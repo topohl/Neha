@@ -2,8 +2,8 @@
 # EWCE: Neha proteomics workflow
 # ==========================================
 
-# This script keeps the original EWCE analysis intent, but adds:
-# - sample-level limma contrasts rather than mean-only differences
+# This script keeps the original EWCE analysis intent, but uses:
+# - animal-level limma contrasts rather than hemisphere-level pseudoreplicates
 # - measured-proteome background for EWCE
 # - up/down differential signatures
 # - hit-list size and annotation-level sensitivity analyses
@@ -12,12 +12,20 @@
 
 options(repos = c(CRAN = "https://cloud.r-project.org"))
 set.seed(42)
-source(file.path("R", "analysis_labels.R"))
+script_arg <- grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE)
+script_path <- if (length(script_arg)) sub("^--file=", "", script_arg[[1]]) else file.path("05_celltype_enrichment_EWCE", "01_EWCE.r")
+repo_root <- normalizePath(file.path(dirname(script_path), ".."), winslash = "/", mustWork = FALSE)
+if (!file.exists(file.path(repo_root, "R", "analysis_labels.R"))) {
+  repo_root <- normalizePath(getwd(), winslash = "/", mustWork = TRUE)
+}
+source(file.path(repo_root, "R", "analysis_labels.R"))
+source(file.path(repo_root, "R", "protigy_input_utils.R"))
+source(file.path(repo_root, "R", "ewce_animal_level_utils.R"))
 
 if (!require("BiocManager", quietly = TRUE)) install.packages("BiocManager")
 
 cran_packages <- c(
-  "readxl", "dplyr", "tibble", "tidyr", "ggplot2", "pheatmap",
+  "dplyr", "tibble", "tidyr", "ggplot2", "pheatmap",
   "svglite", "ggridges", "ggrepel", "ggsci", "viridis",
   "openxlsx", "stringr", "patchwork", "future", "future.apply",
   "digest"
@@ -45,9 +53,28 @@ invisible(lapply(bioc_packages, install_and_load, bioc = TRUE))
 # 1. CONFIG
 # ==========================================
 
-data_path     <- "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/Datasets/gct/data/imputed_data.xlsx"
-base_results  <- "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/Results/EWCE_Results"
-sample_metadata_path <- "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/Datasets/sample_metadata/"
+option_or_env <- function(option_name, env_name, default) {
+  option_value <- getOption(option_name)
+  if (!is.null(option_value) && nzchar(trimws(as.character(option_value)))) return(as.character(option_value))
+  env_value <- Sys.getenv(env_name, unset = "")
+  if (nzchar(trimws(env_value))) return(env_value)
+  default
+}
+
+data_path <- option_or_env(
+  "neha.ewce_animal_level_input",
+  "NEHA_EWCE_ANIMAL_LEVEL_INPUT",
+  "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/Datasets/gct/data/protigy_input_animal_level/neha_protigy_input_animal_level_primary.gct"
+)
+historical_results <- "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/Results/EWCE_Results"
+base_results <- validate_neha_ewce_output_root(
+  option_or_env(
+    "neha.ewce_output_root",
+    "NEHA_EWCE_OUTPUT_ROOT",
+    "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/Results/EWCE_Results_animal_level"
+  ),
+  historical_results
+)
 
 # create folders if needed and define parameters
 
@@ -77,13 +104,25 @@ dirs <- list(
   cache   = file.path(base_results, "06_EWCE_Run_Cache")
 )
 lapply(dirs, dir.create, recursive = TRUE, showWarnings = FALSE)
+differential_output_path <- file.path(dirs$tables, "EWCE_input_signatures.xlsx")
+differential_audit_path <- file.path(dirs$qc, "animal_level_differential_audit.csv")
 
 message("Step 1: Loading CTD and proteomics matrix...")
 ctd <- ewceData::ctd()
 ref_genes_by_level <- lapply(ctd, function(x) rownames(x$specificity))
 ref_genes <- unique(unlist(ref_genes_by_level, use.names = FALSE))
 
-raw_df <- readxl::read_excel(data_path)
+animal_gct <- validate_protigy_gct_v13(data_path)
+animal_input <- validate_neha_ewce_animal_input(animal_gct, data_path, expected_n = 3L)
+sample_cols <- colnames(animal_input$expression_matrix)
+raw_df <- data.frame(
+  Gene_Group = rownames(animal_input$expression_matrix),
+  Genes = as.character(animal_gct$row_descriptors$Description),
+  as.data.frame(animal_input$expression_matrix, check.names = FALSE),
+  check.names = FALSE,
+  stringsAsFactors = FALSE
+)
+sample_meta <- animal_input$sample_metadata
 input_hash <- if (file.exists(data_path)) digest::digest(file = data_path, algo = "sha256") else NA_character_
 
 # ==========================================
@@ -119,23 +158,6 @@ safe_file_stem <- function(x) {
   substr(x, 1, 180)
 }
 
-condition_reference <- function() {
-  analysis_params$reference_condition
-}
-
-condition_contrasts <- function(present_conditions) {
-  ref <- condition_reference()
-  comparison_conditions <- setdiff(analysis_params$conditions, ref)
-  comparison_conditions <- comparison_conditions[comparison_conditions %in% present_conditions]
-
-  tibble::tibble(
-    contrast = paste(comparison_conditions, ref, sep = "_vs_"),
-    case = comparison_conditions,
-    reference = ref,
-    label = paste(comparison_conditions, "vs", ref)
-  )
-}
-
 clean_gene_token <- function(x) {
   x %>%
     as.character() %>%
@@ -143,142 +165,12 @@ clean_gene_token <- function(x) {
     stringr::str_trim()
 }
 
-extract_sample_token <- function(sample_names, tokens, case = c("asis", "upper", "lower")) {
-  case <- match.arg(case)
-  pattern <- paste0(
-    "(?i)(^|[^A-Za-z0-9])(",
-    paste(tokens, collapse = "|"),
-    ")(?=$|[^A-Za-z0-9])"
-  )
-  out <- stringr::str_match(sample_names, pattern)[, 3]
-  if (case == "upper") out <- stringr::str_to_upper(out)
-  if (case == "lower") out <- stringr::str_to_lower(out)
-  out
-}
-
-normalize_sample_id <- function(x) {
-  x %>%
-    as.character() %>%
-    stringr::str_replace_all("\\\\", "/") %>%
-    stringr::str_trim()
-}
-
-resolve_metadata_file <- function(metadata_path) {
-  if (is.null(metadata_path) || !file.exists(metadata_path)) {
-    return(NA_character_)
-  }
-  if (dir.exists(metadata_path)) {
-    candidates <- list.files(metadata_path, pattern = "\\.xlsx?$", full.names = TRUE, ignore.case = TRUE)
-    if (length(candidates) == 0) {
-      return(NA_character_)
-    }
-    candidates[1]
-  } else {
-    metadata_path
-  }
-}
-
-load_sample_condition_lookup <- function(metadata_path) {
-  metadata_file <- resolve_metadata_file(metadata_path)
-  if (is.na(metadata_file)) {
-    return(tibble::tibble(
-      Sample = character(),
-      AnimalID = character(),
-      Cond_Metadata = character(),
-      SampleClass_Metadata = character()
-    ))
-  }
-
-  meta_df <- readxl::read_excel(metadata_file, sheet = readxl::excel_sheets(metadata_file)[1]) %>%
-    tibble::as_tibble()
-
-  sample_col <- intersect(c("sample_id", "Sample", "sample", "SampleID"), colnames(meta_df))[1]
-  animal_col <- intersect(c("AnimalID", "animal_id", "Animal", "animal"), colnames(meta_df))[1]
-  cond_col <- intersect(c("condition", "Condition", "Cond", "condition_code"), colnames(meta_df))[1]
-  sample_class_col <- intersect(c("sample_class", "SampleClass"), colnames(meta_df))[1]
-
-  if (is.na(cond_col) || (is.na(sample_col) && is.na(animal_col))) {
-    warning("Sample metadata file found but no usable sample/animal condition columns were detected: ", metadata_file)
-    return(tibble::tibble(
-      Sample = character(),
-      AnimalID = character(),
-      Cond_Metadata = character(),
-      SampleClass_Metadata = character()
-    ))
-  }
-
-  meta_df %>%
-    dplyr::transmute(
-      Sample = if (!is.na(sample_col)) normalize_sample_id(.data[[sample_col]]) else NA_character_,
-      AnimalID = if (!is.na(animal_col)) as.character(.data[[animal_col]]) else stringr::str_match(Sample, "(?i)(?:^|_)(A[0-9]+)(?=_)")[, 2],
-      Cond_Metadata = normalize_condition(.data[[cond_col]]),
-      SampleClass_Metadata = if (!is.na(sample_class_col)) normalize_sample_class(.data[[sample_class_col]]) else NA_character_
-    ) %>%
-    dplyr::filter(!is.na(Cond_Metadata), Cond_Metadata %in% analysis_params$conditions) %>%
-    dplyr::distinct()
-}
-
-parse_sample_metadata <- function(sample_names, condition_lookup = NULL) {
-  direct_meta <- tibble::tibble(
-    Sample = sample_names,
-    SampleKey = normalize_sample_id(sample_names),
-    AnimalID = stringr::str_match(sample_names, "(?i)(?:^|_)(A[0-9]+)(?=_)")[, 2]
-  )
-
-  if (!is.null(condition_lookup) && nrow(condition_lookup) > 0) {
-    by_sample <- condition_lookup %>%
-      dplyr::filter(!is.na(Sample)) %>%
-      dplyr::mutate(SampleKey = normalize_sample_id(Sample)) %>%
-      dplyr::distinct(SampleKey, Cond_Metadata, SampleClass_Metadata)
-
-    by_animal <- condition_lookup %>%
-      dplyr::filter(!is.na(AnimalID)) %>%
-      dplyr::distinct(AnimalID, Cond_Animal = Cond_Metadata, SampleClass_Animal = SampleClass_Metadata)
-
-    direct_meta <- direct_meta %>%
-      dplyr::left_join(by_sample, by = "SampleKey") %>%
-      dplyr::left_join(by_animal, by = "AnimalID")
-  } else {
-    direct_meta <- direct_meta %>%
-      dplyr::mutate(
-        Cond_Metadata = NA_character_,
-        SampleClass_Metadata = NA_character_,
-        Cond_Animal = NA_character_,
-        SampleClass_Animal = NA_character_
-      )
-  }
-
-  resolved_meta <- direct_meta %>%
-    dplyr::select(Sample, AnimalID, Cond_Metadata, SampleClass_Metadata, Cond_Animal, SampleClass_Animal) %>%
-    dplyr::distinct() %>%
-    dplyr::mutate(
-      Cond_From_Name = extract_sample_token(Sample, analysis_params$conditions, case = "lower"),
-      Cond_From_Name = dplyr::if_else(
-        is.na(Cond_From_Name),
-        normalize_condition(stringr::str_extract(stringr::str_to_lower(Sample), paste(analysis_params$conditions, collapse = "|"))),
-        Cond_From_Name
-      ),
-      SampleClass_From_Name = extract_sample_token(Sample, analysis_params$sample_class, case = "lower"),
-      Cond_Resolved = dplyr::coalesce(Cond_From_Name, Cond_Metadata, Cond_Animal),
-      SampleClass_Resolved = dplyr::coalesce(SampleClass_From_Name, SampleClass_Metadata, SampleClass_Animal)
-    ) %>%
-    dplyr::select(Sample, AnimalID, Cond_Resolved, SampleClass_Resolved) %>%
-    dplyr::right_join(tibble::tibble(Sample = sample_names), by = "Sample")
-
-  resolved_meta %>%
-    dplyr::mutate(
-      Stratum = normalize_sample_class(SampleClass_Resolved),
-      Cond = factor(Cond_Resolved, levels = analysis_params$conditions),
-      Batch = stringr::str_extract(Sample, "(?i)(batch|plate|run)[-_]?[A-Za-z0-9]+")
-    )
-}
-
 make_expr_mat <- function(df, sample_cols) {
   df %>%
     dplyr::select(Gene, dplyr::all_of(sample_cols)) %>%
     dplyr::group_by(Gene) %>%
     dplyr::summarise(
-      dplyr::across(dplyr::all_of(sample_cols), ~ mean(as.numeric(.x), na.rm = TRUE)),
+      dplyr::across(dplyr::all_of(sample_cols), ~ mean(as.numeric(.x))),
       .groups = "drop"
     ) %>%
     tibble::column_to_rownames("Gene") %>%
@@ -286,75 +178,56 @@ make_expr_mat <- function(df, sample_cols) {
 }
 
 run_limma_stratum <- function(expr_mat, sample_meta, stratum) {
-  stratum_meta <- sample_meta %>%
-    dplyr::filter(Stratum == stratum, !is.na(Cond))
-  stratum_samples <- stratum_meta %>%
-    dplyr::pull(Sample)
-
-  if (length(stratum_samples) < 4) {
-    return(tibble::tibble())
-  }
-
-  meta <- sample_meta %>%
-    dplyr::filter(Sample %in% stratum_samples) %>%
-    dplyr::arrange(match(Sample, stratum_samples))
-
-  x <- expr_mat[, meta$Sample, drop = FALSE]
-  keep <- rowSums(is.finite(x)) >= 2
-  x <- x[keep, , drop = FALSE]
-  x[!is.finite(x)] <- NA
-
-  if (anyNA(x)) {
-    row_medians <- apply(x, 1, stats::median, na.rm = TRUE)
-    idx <- which(is.na(x), arr.ind = TRUE)
-    x[idx] <- row_medians[idx[, 1]]
-  }
-
-  meta$Cond <- droplevels(factor(meta$Cond, levels = analysis_params$conditions))
-  present_conditions <- levels(meta$Cond)[levels(meta$Cond) %in% meta$Cond]
-
-  if (!condition_reference() %in% present_conditions || length(present_conditions) < 2) {
-    return(tibble::tibble())
-  }
-
-  design <- stats::model.matrix(~ 0 + Cond, data = meta)
-  design_key <- tibble::tibble(
-    condition = levels(meta$Cond),
-    design_col = make.names(levels(meta$Cond), unique = TRUE)
-  )
-  colnames(design) <- design_key$design_col[match(sub("^Cond", "", colnames(design)), design_key$condition)]
-
-  contrast_tbl <- condition_contrasts(present_conditions) %>%
-    dplyr::left_join(design_key, by = c("case" = "condition")) %>%
-    dplyr::rename(case_col = design_col) %>%
-    dplyr::left_join(design_key, by = c("reference" = "condition")) %>%
-    dplyr::rename(reference_col = design_col) %>%
-    dplyr::filter(!is.na(case_col), !is.na(reference_col)) %>%
-    dplyr::mutate(expression = paste(case_col, reference_col, sep = " - "))
-
-  if (nrow(contrast_tbl) == 0) return(tibble::tibble())
-
-  contrast_matrix <- limma::makeContrasts(contrasts = contrast_tbl$expression, levels = design)
-  colnames(contrast_matrix) <- contrast_tbl$contrast
-
-  fit <- limma::lmFit(x, design)
-  fit2 <- limma::eBayes(limma::contrasts.fit(fit, contrast_matrix), trend = TRUE, robust = TRUE)
-
-  dplyr::bind_rows(lapply(colnames(contrast_matrix), function(coef_name) {
-    limma::topTable(fit2, coef = coef_name, number = Inf, sort.by = "none") %>%
-      tibble::rownames_to_column("Gene") %>%
-      tibble::as_tibble() %>%
-      dplyr::mutate(
-        Stratum = stratum,
-        Contrast = coef_name,
-        Direction_for_EWCE = dplyr::case_when(
-          logFC > 0 ~ "up",
-          logFC < 0 ~ "down",
-          TRUE ~ "flat"
-        ),
-        RankingStat = t
-      )
-  }))
+  failed_metadata <- neha_ewce_contrast_metadata(stratum)
+  tryCatch({
+    limma_input <- prepare_neha_ewce_limma_stratum(
+      expr_mat,
+      sample_meta,
+      sample_class = stratum,
+      expected_n = 3L
+    )
+    fit <- limma::lmFit(limma_input$expression_matrix, limma_input$design)
+    fit2 <- limma::eBayes(
+      limma::contrasts.fit(fit, limma_input$contrast_matrix),
+      trend = TRUE,
+      robust = TRUE
+    )
+    results <- dplyr::bind_rows(lapply(colnames(limma_input$contrast_matrix), function(coef_name) {
+      limma::topTable(fit2, coef = coef_name, number = Inf, sort.by = "none") %>%
+        tibble::rownames_to_column("Gene") %>%
+        tibble::as_tibble() %>%
+        dplyr::mutate(
+          Stratum = stratum,
+          Contrast = coef_name,
+          Direction_for_EWCE = dplyr::case_when(
+            logFC > 0 ~ "up",
+            logFC < 0 ~ "down",
+            TRUE ~ "flat"
+          ),
+          RankingStat = t
+        )
+    }))
+    audit <- make_neha_ewce_differential_audit(
+      limma_input$contrast_metadata,
+      source_path = data_path,
+      output_path = differential_output_path,
+      n_proteins = limma_input$n_proteins,
+      analysis_params = analysis_params,
+      execution_status = "success"
+    )
+    list(results = results, audit = audit)
+  }, error = function(e) {
+    audit <- make_neha_ewce_differential_audit(
+      failed_metadata,
+      source_path = data_path,
+      output_path = differential_output_path,
+      n_proteins = nrow(expr_mat),
+      analysis_params = analysis_params,
+      execution_status = "failed",
+      error_message = conditionMessage(e)
+    )
+    list(results = tibble::tibble(), audit = audit)
+  })
 }
 
 make_baseline_targets <- function(baseline_mat, top_n_values) {
@@ -536,10 +409,6 @@ celltype_marker_overlap <- function(results_tbl, target_gene_tbl, annot_level) {
 # ==========================================
 
 message("Step 2: Robust gene mapping and QC logs...")
-sample_cols <- colnames(raw_df)[grep("^D:", colnames(raw_df))]
-if (length(sample_cols) == 0) {
-  stop("No sample columns detected. Expected sample columns starting with 'D:'.")
-}
 
 mapping_input <- raw_df %>%
   dplyr::mutate(
@@ -599,34 +468,24 @@ mapped_clean_df <- clean_df %>%
 
 expr_mat <- make_expr_mat(mapped_clean_df, sample_cols)
 expr_mat <- expr_mat[rownames(expr_mat) %in% ref_genes, , drop = FALSE]
+if (!identical(colnames(expr_mat), sample_cols)) {
+  stop("Mapped EWCE matrix changed the validated animal-level sample columns.", call. = FALSE)
+}
+if (any(!is.finite(expr_mat))) {
+  stop("Mapped EWCE matrix contains nonfinite abundance values; no filtering or imputation is permitted.", call. = FALSE)
+}
 background_universe <- intersect(rownames(expr_mat), ref_genes)
 
-condition_lookup <- load_sample_condition_lookup(sample_metadata_path)
-sample_meta <- parse_sample_metadata(colnames(expr_mat), condition_lookup)
-if (all(is.na(sample_meta$Cond))) {
-  stop(
-    "No sample conditions could be resolved. Provide condition tokens in sample names ",
-    "or set sample_metadata_path to a metadata file with AnimalID/sample_id and condition_code/condition columns."
-  )
-}
-if (all(is.na(sample_meta$Stratum))) {
-  stop(
-    "No sample classes could be resolved. Provide sample_class tokens in sample names ",
-    "or set sample_metadata_path to a metadata file with sample_id/AnimalID and sample_class columns."
-  )
-}
-if (any(is.na(sample_meta$Cond))) {
-  warning(sum(is.na(sample_meta$Cond)), " sample(s) have no resolved condition and will be excluded from contrasts.")
-}
-if (any(is.na(sample_meta$Stratum))) {
-  warning(sum(is.na(sample_meta$Stratum)), " sample(s) have no resolved sample_class and will be excluded from signatures.")
-}
 sample_meta_qc <- sample_meta %>%
-  dplyr::count(Stratum, Cond, name = "N_Samples") %>%
+  dplyr::count(Stratum, Cond, name = "N_Animals") %>%
   dplyr::arrange(Stratum, Cond)
 
 openxlsx::write.xlsx(
-  list(SampleMetadata = sample_meta, SampleCounts = sample_meta_qc, ConditionLookup = condition_lookup),
+  list(
+    AnimalMetadata = sample_meta,
+    AnimalCounts = sample_meta_qc,
+    ValidatedDesign = animal_input$count_audit
+  ),
   file.path(dirs$qc, "sample_metadata_qc.xlsx"),
   overwrite = TRUE
 )
@@ -646,25 +505,38 @@ long_df <- expr_mat %>%
 
 baseline_mat <- long_df %>%
   dplyr::group_by(Gene, Stratum, Cond) %>%
-  dplyr::summarise(MeanExp = mean(Exp, na.rm = TRUE), .groups = "drop") %>%
+  dplyr::summarise(MeanExp = mean(Exp), .groups = "drop") %>%
   dplyr::mutate(ID = paste(Stratum, Cond, sep = "__")) %>%
   dplyr::select(Gene, ID, MeanExp) %>%
   tidyr::pivot_wider(names_from = ID, values_from = MeanExp) %>%
   tibble::column_to_rownames("Gene") %>%
   as.matrix()
 
-analysis_strata <- sample_meta %>%
-  dplyr::filter(!is.na(Stratum)) %>%
-  dplyr::distinct(Stratum) %>%
-  dplyr::arrange(Stratum) %>%
-  dplyr::pull(Stratum)
-
-de_tbl <- dplyr::bind_rows(lapply(analysis_strata, function(stratum) {
+analysis_strata <- analysis_params$sample_class
+limma_runs <- lapply(analysis_strata, function(stratum) {
   run_limma_stratum(expr_mat, sample_meta, stratum)
-}))
+})
+differential_audit <- dplyr::bind_rows(lapply(limma_runs, `[[`, "audit"))
+utils::write.csv(differential_audit, differential_audit_path, row.names = FALSE, na = "")
+if (any(differential_audit$execution_status != "success")) {
+  failed <- differential_audit %>%
+    dplyr::filter(execution_status != "success") %>%
+    dplyr::distinct(sample_class, error_message)
+  stop(
+    "Animal-level EWCE differential analysis failed closed:\n",
+    paste(utils::capture.output(print(failed, row.names = FALSE)), collapse = "\n"),
+    call. = FALSE
+  )
+}
+de_tbl <- dplyr::bind_rows(lapply(limma_runs, `[[`, "results"))
 
 if (nrow(de_tbl) == 0) {
-  stop("No differential contrasts were created. Check sample names or metadata for sample_class and condition labels.")
+  stop("No animal-level differential contrasts were created.")
+}
+expected_comparisons <- neha_primary_contrast_manifest()$canonical_comparison
+observed_comparisons <- unique(as.character(de_tbl$Contrast))
+if (length(observed_comparisons) != 12L || !setequal(observed_comparisons, expected_comparisons)) {
+  stop("EWCE differential output does not contain exactly the 12 shared Neha primary comparisons.", call. = FALSE)
 }
 
 target_gene_tbl <- dplyr::bind_rows(
@@ -682,10 +554,11 @@ target_manifest <- target_gene_tbl %>%
 openxlsx::write.xlsx(
   list(
     DifferentialModelResults = de_tbl,
+    DifferentialAudit = differential_audit,
     TargetManifest = target_manifest,
     TargetGenes = target_gene_tbl
   ),
-  file.path(dirs$tables, "EWCE_input_signatures.xlsx"),
+  differential_output_path,
   overwrite = TRUE
 )
 
@@ -822,7 +695,7 @@ cap_signed_value <- function(x, limit = 10) {
 metric_label_levels <- c(
   analysis_params$conditions,
   as.vector(t(outer(
-    format_contrast_label(condition_contrasts(analysis_params$conditions)$contrast),
+    format_contrast_label(neha_primary_contrast_manifest()$canonical_comparison),
     c("Up", "Down"),
     paste
   )))
@@ -1217,6 +1090,7 @@ add_worksheet_safe(wb, "CellType_Significance_Rank", sig_rank_tbl)
 add_worksheet_safe(wb, "Driver_Marker_Overlap", driver_overlap_tbl)
 add_worksheet_safe(wb, "Input_Gene_Stats", input_gene_stats)
 add_worksheet_safe(wb, "Sample_Counts", sample_meta_qc)
+add_worksheet_safe(wb, "Animal_Differential_Audit", differential_audit)
 openxlsx::saveWorkbook(wb, file.path(dirs$tables, "Supplementary_Table_EWCE.xlsx"), overwrite = TRUE)
 
 high_confidence_wb <- openxlsx::createWorkbook()
@@ -1248,7 +1122,11 @@ saveRDS(
     target_manifest = target_manifest,
     background_universe = background_universe,
     sample_metadata = sample_meta,
-    condition_lookup = condition_lookup,
+    animal_level_differential_audit = differential_audit,
+    animal_level_input_contract = animal_input[c(
+      "count_audit", "source_path", "sampling_unit", "aggregation_policy",
+      "transformations_after_aggregation"
+    )],
     mapping_qc = mapping_qc,
     high_confidence_hits = high_confidence_hits,
     annotation_consistency_tbl = annotation_consistency_tbl,
@@ -1261,8 +1139,11 @@ saveRDS(
 
 reproducibility_lines <- c(
   paste0("Run date: ", Sys.time()),
-  paste0("Input file: ", data_path),
-  paste0("Sample metadata file: ", sample_metadata_path),
+  paste0("Animal-level input file: ", data_path),
+  paste0("Sampling unit: ", animal_input$sampling_unit),
+  paste0("Aggregation policy: ", animal_input$aggregation_policy),
+  paste0("Post-aggregation transformations: ", animal_input$transformations_after_aggregation),
+  paste0("Differential audit: ", differential_audit_path),
   paste0("Input SHA256: ", input_hash),
   paste0("EWCE reps: ", analysis_params$reps),
   paste0("Top-N values: ", paste(analysis_params$top_n_values, collapse = ", ")),
