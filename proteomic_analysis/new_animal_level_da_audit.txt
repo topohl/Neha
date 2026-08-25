@@ -1,0 +1,17 @@
+﻿
+File                                               Rows UniqueProteinIDs UniqueUniProt UniqueLog2FC TiedLog2FC_pct UniqueT TiedT_pct SigFDR05
+----                                               ---- ---------------- ------------- ------------ -------------- ------- --------- --------
+cfos_paired_cno_vs_cfos_paired_veh.csv             5327             5327          5326         1731          67,51    5326      0,02        3
+cfos_paired_veh_vs_cfos_unpaired_veh.csv           5327             5327          5326         1606          69,85    5327         0        6
+cfos_unpaired_cno_vs_cfos_unpaired_veh.csv         5327             5327          5326         1480          72,22    5326      0,02        0
+mcherry_paired_cno_vs_mcherry_paired_veh.csv       5327             5327          5326         1788          66,44    5324      0,06        0
+mcherry_paired_veh_vs_mcherry_unpaired_veh.csv     5327             5327          5326         2498          53,11    5327         0     1132
+mcherry_unpaired_cno_vs_mcherry_unpaired_veh.csv   5327             5327          5326         2126          60,09    5326      0,02       37
+neuron_paired_cno_vs_neuron_paired_veh.csv         5327             5327          5326         1453          72,72    5325      0,04        0
+neuron_paired_veh_vs_neuron_unpaired_veh.csv       5327             5327          5326         1593           70,1    5326      0,02        0
+neuron_unpaired_cno_vs_neuron_unpaired_veh.csv     5327             5327          5326         1360          74,47    5322      0,09        0
+neuropil_paired_cno_vs_neuropil_paired_veh.csv     5327             5327          5326         1516          71,54    5327         0        0
+neuropil_paired_veh_vs_neuropil_unpaired_veh.csv   5327             5327          5326         1703          68,03    5326      0,02        0
+neuropil_unpaired_cno_vs_neuropil_unpaired_veh.csv 5327             5327          5326         1844          65,38    5327         0        0
+
+

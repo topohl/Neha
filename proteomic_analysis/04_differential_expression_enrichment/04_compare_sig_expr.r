@@ -1,361 +1,165 @@
-  #' @title Compare Proteomics Expression to Learning Signatures
-  #' 
-  #' @description
-  #' This script analyzes proteomics expression data to evaluate the concordance between 
-  #' an experimental treatment (specifically CNO vs. Vehicle) and established "learning" 
-  #' molecular signatures. The pipeline processes raw expression data, integrates extenal 
-  #' differential expression statistics, and visualizes the correlation between the 
-  #' experiment and the reference signature.
-  #' 
-  #' @section Workflow:
-  #' 1. **Setup**: Loads required libraries (pheatmap, ggplot2, etc.) and defines input/output paths.
-  #' 2. **Data Ingestion**: 
-  #'    - Parses a GCT file to extract protein expression matrix and sample metadata.
-  #'    - Filters samples based on user-defined cell type (`COMP_TYPE`) and standardizes metadata terms.
-  #' 3. **Signature Integration**: 
-  #'    - Aggregates external Excel files containing "learning" signature statistics (Up/Down regulated lists).
-  #'    - Aligns the signature data with the experimental dataset via UniProt IDs.
-  #' 4. **Statistical Analysis**:
-  #'    - Calculates raw Log2 Fold Change (Log2FC) of CNO vs. Vehicle in the current experiment.
-  #'    - computes global Z-scores for these Log2FC values.
-  #'    - Annotates proteins based on directionality concordance (Learning UP/DOWN vs CNO UP/DOWN).
-  #' 5. **Visualization**: Generates vector graphics and PDFs, including:
-  #'    - Ordered heatmaps of Z-scores.
-  #'    - Per-sample and group-averaged expression heatmaps.
-  #'    - Side-by-side comparison heatmaps (Reference vs. Experiment).
-  #'    - Correlation scatter plots with linear regression.
-  #' 
-  #' @param COMP_TYPE Input string (e.g., "mcherry") used to filter `sample_class` in metadata and define output filenames.
-  #' @param GCT_FILE_PATH Path to the source .gct file containing unnormalized protein matrix and header metadata.
-  #' @param SIG_PATH Directory path containing reference Excel files for the learning signature (matching pattern `log2fc_.*_(down|up)regulated_all.xlsx`).
-  #' 
-  #' @return 
-  #' Writes output to `BASE_OUT_DIR` within `/tables` and `/plots`:
-  #' - **CSV Table**: Merged dataframe of fold-changes, Z-scores, and directional annotations.
-  #' - **PDF/SVG Plots**: Various heatmaps and a correlation scatter plot illustrating the relationship between the drug effect and the learning signature.
-  #' 
-  #' @dependencies pacman, readxl, dplyr, tidyr, pheatmap, svglite, ggplot2, RColorBrewer
-  #' @author Tobi
-  ## =============================================================================
-  ## TITLE: Compare Proteomics Expression to Learning Signatures
-  ## =============================================================================
+#!/usr/bin/env Rscript
 
-  ## ---------- 0. Libraries and Setup ----------
-  if (!require("pacman")) install.packages("pacman")
-  library(pacman)
-  # Added ggplot2 and RColorBrewer here to ensure they are loaded early
-  p_load(readxl, dplyr, tidyr, pheatmap, svglite, ggplot2, RColorBrewer)
+# Compare protein-level differential statistics for the established learning
+# and paired-CNO contrasts. The animal-level mapped branch contains contrast
+# statistics, not per-animal expression, so this script deliberately produces
+# contrast-statistic concordance outputs only.
 
-  ## ---------- 1. Configuration (USER INPUT) ----------
+script_file <- grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE)
+script_file <- if (length(script_file)) sub("^--file=", "", script_file[[1]]) else "04_differential_expression_enrichment/04_compare_sig_expr.r"
+script_dir <- dirname(normalizePath(script_file, winslash = "/", mustWork = FALSE))
+project_root <- normalizePath(file.path(script_dir, ".."), winslash = "/", mustWork = TRUE)
+source(file.path(project_root, "R", "analysis_labels.R"))
+source(file.path(project_root, "R", "animal_level_enrichment_utils.R"))
 
-  # 1.1 Comparison Settings
-  # Define the primary comparison variable (e.g., "mcherry", "cfos").
-  # Determines cell type filtering and contrast name (pattern: "{comp_type}2_{comp_type}4").
-  COMP_TYPE <- "mcherry" 
-  TARGET_CONTRAST <- paste0(COMP_TYPE, "2_", COMP_TYPE, "4")
+config <- resolve_neha_enrichment_config()
+enrichment_index_path <- Sys.getenv(
+  "NEHA_ENRICHMENT_INDEX",
+  unset = file.path(config$output_root, "indexEnrichmentComparisons.csv")
+)
+enrichment_index_path <- neha_enrichment_normalize_path(enrichment_index_path, must_work = TRUE)
+if (!neha_enrichment_path_is_within(enrichment_index_path, config$output_root)) {
+  stop("compare_sig_expr requires the canonical animal-level enrichment index.", call. = FALSE)
+}
+index <- utils::read.csv(enrichment_index_path, stringsAsFactors = FALSE, check.names = FALSE)
+validate_neha_enrichment_index(index, require_files = TRUE)
+if (any(index$execution_status != "success")) stop("compare_sig_expr requires 12 successful enrichment comparisons.", call. = FALSE)
 
-  # 1.2 Input File Paths
-  # GCT File
-  GCT_FILE_PATH <- "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/Datasets/gct/data/pg.matrix_filtered_pcaAdjusted_unnormalized.gct"
+output_root <- file.path(config$output_root, "compare_sig_expr")
+dir.create(output_root, recursive = TRUE, showWarnings = FALSE)
+output_index_path <- file.path(output_root, "indexCompareSigExpr.csv")
+if (file.exists(output_index_path) && !isTRUE(config$force)) {
+  stop("compare_sig_expr output already exists; set NEHA_ENRICHMENT_FORCE=true to replace isolated canonical outputs.", call. = FALSE)
+}
 
-  # Folder containing differential expression results (up/down regulated lists)
-  SIG_PATH <- "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/Results/compareGO/BP/learning_signature/memory_ensemble/06_Significant_Proteins/"
+find_contrast <- function(sample_class, numerator, denominator) {
+  rows <- which(
+    index$sample_class == sample_class &
+      index$numerator_condition == numerator &
+      index$denominator_condition == denominator
+  )
+  if (length(rows) != 1L) stop("Expected exactly one indexed contrast for ", sample_class, ": ", numerator, " vs ", denominator, call. = FALSE)
+  index[rows, , drop = FALSE]
+}
 
-  # 1.3 Output Settings
-  BASE_OUT_DIR <- "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/Results/compare_sig_expr"
-  DIR_TABLES   <- file.path(BASE_OUT_DIR, "tables")
-  DIR_PLOTS    <- file.path(BASE_OUT_DIR, "plots")
+read_collapsed <- function(row) {
+  mapped <- read_neha_enrichment_mapped_file(
+    row$mapped_input_path,
+    expected_rows = row$n_source_protein_rows,
+    expected_sha256 = row$mapped_input_sha256
+  )
+  collapse_neha_enrichment_accessions(mapped, "log2fc")$collapsed
+}
 
-  # Check directories
-  if (!dir.exists(DIR_TABLES)) dir.create(DIR_TABLES, recursive = TRUE)
-  if (!dir.exists(DIR_PLOTS))  dir.create(DIR_PLOTS,  recursive = TRUE)
+safe_z <- function(x) {
+  x <- suppressWarnings(as.numeric(x))
+  finite <- is.finite(x)
+  out <- rep(NA_real_, length(x))
+  if (sum(finite) >= 2L && stats::sd(x[finite]) > 0) out[finite] <- as.numeric(scale(x[finite]))
+  out
+}
 
-  ## ---------- 2. Helper Functions ----------
+expected <- neha_primary_contrast_manifest()
+records <- lapply(unique(expected$sample_class), function(sample_class) {
+  learning_meta <- find_contrast(sample_class, "paired_veh", "unpaired_veh")
+  cno_meta <- find_contrast(sample_class, "paired_cno", "paired_veh")
+  learning <- read_collapsed(learning_meta)
+  cno <- read_collapsed(cno_meta)
+  learning <- learning[, c(
+    "uniprot_accession", "original_protein_id", "Description", "mapped_gene_symbol",
+    "source_row_id", "log2fc", "t", "pval", "padj", "significant"
+  ), drop = FALSE]
+  cno <- cno[, c(
+    "uniprot_accession", "original_protein_id", "Description", "mapped_gene_symbol",
+    "source_row_id", "log2fc", "t", "pval", "padj", "significant"
+  ), drop = FALSE]
+  names(learning)[-1] <- paste0(names(learning)[-1], "_learning")
+  names(cno)[-1] <- paste0(names(cno)[-1], "_cno")
+  joined <- merge(learning, cno, by = "uniprot_accession", all = TRUE, sort = TRUE)
+  joined$sample_class <- sample_class
+  joined$learning_canonical_comparison <- learning_meta$canonical_comparison
+  joined$cno_canonical_comparison <- cno_meta$canonical_comparison
+  joined$learning_historical_alias <- learning_meta$historical_comparison_alias
+  joined$cno_historical_alias <- cno_meta$historical_comparison_alias
+  joined$z_log2fc_learning <- safe_z(joined$log2fc_learning)
+  joined$z_log2fc_cno <- safe_z(joined$log2fc_cno)
+  joined$fdr_significant_learning <- is.finite(joined$padj_learning) & joined$padj_learning < config$fdr_threshold
+  joined$fdr_significant_cno <- is.finite(joined$padj_cno) & joined$padj_cno < config$fdr_threshold
+  joined$direction_relation <- ifelse(
+    !is.finite(joined$log2fc_learning) | !is.finite(joined$log2fc_cno), "not_shared",
+    ifelse(sign(joined$log2fc_learning) == sign(joined$log2fc_cno), "concordant", "opposed")
+  )
+  joined <- joined[, c(
+    "sample_class", "uniprot_accession",
+    "original_protein_id_learning", "Description_learning", "mapped_gene_symbol_learning", "source_row_id_learning",
+    "log2fc_learning", "t_learning", "pval_learning", "padj_learning", "significant_learning", "z_log2fc_learning",
+    "original_protein_id_cno", "Description_cno", "mapped_gene_symbol_cno", "source_row_id_cno",
+    "log2fc_cno", "t_cno", "pval_cno", "padj_cno", "significant_cno", "z_log2fc_cno",
+    "fdr_significant_learning", "fdr_significant_cno", "direction_relation",
+    "learning_canonical_comparison", "cno_canonical_comparison",
+    "learning_historical_alias", "cno_historical_alias"
+  ), drop = FALSE]
+  all_path <- write_neha_enrichment_csv(joined, file.path(output_root, paste0(sample_class, "_learning_vs_paired_cno_protein_statistics.csv")))
+  signature <- joined[joined$fdr_significant_learning, , drop = FALSE]
+  signature <- signature[order(signature$padj_learning, -abs(signature$log2fc_learning), signature$uniprot_accession, method = "radix"), , drop = FALSE]
+  signature_path <- write_neha_enrichment_csv(signature, file.path(output_root, paste0(sample_class, "_FDR_learning_signature.csv")))
 
-  # Parse GCT files: handle skipping metadata lines and standardizing column names.
-  read_gct <- function(file_path) {
-    if (!file.exists(file_path)) stop("GCT file not found: ", file_path)
-    
-    gct_data <- read.delim(file_path, skip = 2, header = FALSE, check.names = FALSE)
-    if ("Name" %in% colnames(gct_data)) {
-      colnames(gct_data)[1] <- "Gene"
-    }
-    gct_data
+  shared <- is.finite(joined$log2fc_learning) & is.finite(joined$log2fc_cno)
+  pearson <- if (sum(shared) >= 3L) stats::cor(joined$log2fc_learning[shared], joined$log2fc_cno[shared], method = "pearson") else NA_real_
+  spearman <- if (sum(shared) >= 3L) stats::cor(joined$log2fc_learning[shared], joined$log2fc_cno[shared], method = "spearman") else NA_real_
+  signature_shared <- joined$fdr_significant_learning & shared
+  signature_pearson <- if (sum(signature_shared) >= 3L) stats::cor(
+    joined$log2fc_learning[signature_shared], joined$log2fc_cno[signature_shared], method = "pearson"
+  ) else NA_real_
+
+  plot_path <- NA_character_
+  if (isTRUE(config$plots_enabled) && any(shared) && requireNamespace("ggplot2", quietly = TRUE)) {
+    plot_data <- joined[shared, , drop = FALSE]
+    plot <- ggplot2::ggplot(plot_data, ggplot2::aes(log2fc_learning, log2fc_cno, colour = fdr_significant_learning)) +
+      ggplot2::geom_hline(yintercept = 0, colour = "grey80") +
+      ggplot2::geom_vline(xintercept = 0, colour = "grey80") +
+      ggplot2::geom_point(alpha = 0.55, size = 1.25) +
+      ggplot2::scale_colour_manual(values = c(`FALSE` = "grey65", `TRUE` = "#B2182B")) +
+      ggplot2::labs(
+        title = paste(sample_class, "protein-level contrast concordance"),
+        subtitle = "Positive values indicate higher abundance in each canonical numerator",
+        x = "paired VEH vs unpaired VEH log2FC",
+        y = "paired CNO vs paired VEH log2FC",
+        colour = "Learning FDR < threshold"
+      ) + ggplot2::theme_minimal(base_size = 10)
+    plot_path <- file.path(output_root, paste0(sample_class, "_learning_vs_paired_cno_log2fc_scatter.png"))
+    ggplot2::ggsave(plot_path, plot = plot, width = 8, height = 7, dpi = 300)
+    plot_path <- neha_enrichment_normalize_path(plot_path, must_work = TRUE)
   }
 
-  ## ---------- 3. Data Loaded: GCT File ----------
-
-  gct_data <- read_gct(GCT_FILE_PATH)
-
-  # Locate the start of the expression data (first UniProt ID ending in "_MOUSE").
-  num_start <- which(grepl("_MOUSE$", gct_data[[1]]))[1]
-
-  # Separate metadata and expression data.
-  meta_rows <- gct_data[1:(num_start - 1), ]
-  expr_raw  <- gct_data[num_start:nrow(gct_data), ]
-
-  # Construct Expression Matrix.
-  prot_ids  <- expr_raw[[1]]
-  expr_mat  <- as.matrix(expr_raw[,-1])
-  storage.mode(expr_mat) <- "numeric"
-  rownames(expr_mat) <- prot_ids
-
-  # Construct Sample Annotation.
-  sample_anno <- as.data.frame(t(meta_rows[,-1]), stringsAsFactors = FALSE)
-  colnames(sample_anno) <- trimws(meta_rows[[1]])
-  sample_anno[] <- lapply(sample_anno, function(x) if (is.character(x)) trimws(x) else x)
-  sample_anno$sample_id <- colnames(expr_mat)
-
-  # Process 'condition_code' factor.
-  if (!"condition_code" %in% colnames(sample_anno)) {
-    warning("Metadata 'condition_code' not found. Available: ", paste(colnames(sample_anno), collapse = ", "))
-  } else {
-    sample_anno$condition_code <- factor(as.numeric(sample_anno$condition_code),
-                                  levels = c(1, 2, 3, 4),
-                                  labels = c("1", "2", "3", "4"))
-  }
-
-  # Filter by 'sample_class' based on configuration.
-  if ("sample_class" %in% colnames(sample_anno)) {
-    keep_samples <- sample_anno$sample_id[sample_anno$sample_class == COMP_TYPE]
-    
-    if (length(keep_samples) > 0) {
-      sample_anno <- sample_anno[sample_anno$sample_id %in% keep_samples, ]
-      expr_mat    <- expr_mat[, keep_samples, drop = FALSE]
-      message(sprintf("Filtered to %d %s samples.", length(keep_samples), COMP_TYPE))
-    } else {
-      warning(sprintf("No samples found with sample_class == '%s'.", COMP_TYPE))
-    }
-  } else {
-    warning("Column 'sample_class' not found in metadata.")
-  }
-
-  ## ---------- 4. Data Loading: Learning Signature ----------
-
-  # List and aggregate Excel files.
-  file_list <- list.files(path = SIG_PATH, pattern = "^SigProteins_(Up|Down)regulated_.*\\.xlsx$", full.names = TRUE)
-  file_names  <- tools::file_path_sans_ext(basename(file_list))
-  group_names <- gsub("^SigProteins_(Up|Down)regulated_", "", file_names)
-
-  data_list <- list()
-  unique_groups <- unique(group_names)
-
-  for (grp in unique_groups) {
-    current_files <- file_list[group_names == grp]
-    data_list[[grp]] <- lapply(current_files, read_excel) %>% bind_rows()
-  }
-
-  if (!TARGET_CONTRAST %in% names(data_list)) {
-    stop("Contrast '", TARGET_CONTRAST, "' not found. Available: ", paste(names(data_list), collapse = ", "))
-  }
-
-  # Clean and format the learning dataframe.
-  learn_df_clean <- data_list[[TARGET_CONTRAST]] %>%
-    mutate(
-      log2fc     = as.numeric(log2fc),
-      abs_log2fc = as.numeric(abs_log2fc),
-      padj       = as.numeric(padj),
-      Rank       = as.numeric(Rank)
-    ) %>%
-    dplyr::select(Gene_Name, `UniProtKB-ID`, Uniprot_Accession, Gene_Synonym, 
-                  Comparison, log2fc, abs_log2fc, padj, Direction, Rank)
-
-  # Intersect UniProt IDs.
-  learn_ids <- intersect(unique(learn_df_clean$`UniProtKB-ID`), rownames(expr_mat))
-
-  ## ---------- 5. Statistics: Calculate Differential Effect & Z-Scores ----------
-
-  # Define groups (1 = CNO, 2 = VEH).
-  cno_samples <- intersect(sample_anno$sample_id[sample_anno$condition_code == "1"], colnames(expr_mat))
-  veh_samples <- intersect(sample_anno$sample_id[sample_anno$condition_code == "2"], colnames(expr_mat))
-
-  if (length(cno_samples) == 0 || length(veh_samples) == 0) stop("No samples found for CNO or VEH groups.")
-
-  expr_cno <- expr_mat[, cno_samples, drop = FALSE]
-  expr_veh <- expr_mat[, veh_samples, drop = FALSE]
-
-  # A. Calculate Raw Fold Change
-  log2fc_cno_veh <- rowMeans(expr_cno, na.rm = TRUE) - rowMeans(expr_veh, na.rm = TRUE)
-
-  # B. Global Z-Score Calculation (All Proteins)
-  z_all <- (log2fc_cno_veh - mean(log2fc_cno_veh, na.rm = TRUE)) / sd(log2fc_cno_veh, na.rm = TRUE)
-
-  # C. Extract Signatures and Integreate
-  z_learning <- z_all[learn_ids]
-  learning_z_df <- data.frame(
-    `UniProtKB-ID` = names(z_learning),
-    z_cno_vs_veh   = as.numeric(z_learning),
-    stringsAsFactors = FALSE, check.names = FALSE
+  data.frame(
+    sample_class = sample_class,
+    learning_canonical_comparison = learning_meta$canonical_comparison,
+    cno_canonical_comparison = cno_meta$canonical_comparison,
+    learning_historical_alias = learning_meta$historical_comparison_alias,
+    cno_historical_alias = cno_meta$historical_comparison_alias,
+    learning_mapped_input_path = learning_meta$mapped_input_path,
+    learning_mapped_input_sha256 = learning_meta$mapped_input_sha256,
+    cno_mapped_input_path = cno_meta$mapped_input_path,
+    cno_mapped_input_sha256 = cno_meta$mapped_input_sha256,
+    shared_unique_uniprot_count = sum(shared),
+    learning_fdr_significant_count = nrow(signature),
+    cno_fdr_significant_count = sum(joined$fdr_significant_cno),
+    concordant_count = sum(joined$direction_relation == "concordant"),
+    opposed_count = sum(joined$direction_relation == "opposed"),
+    pearson_log2fc = pearson,
+    spearman_log2fc = spearman,
+    learning_signature_pearson_log2fc = signature_pearson,
+    full_statistics_path = all_path,
+    learning_signature_path = signature_path,
+    scatter_path = plot_path,
+    analysis_scope = "contrast_statistics_only;per_animal_expression_not_available_in_mapped_manifest",
+    enrichment_index_path = enrichment_index_path,
+    run_timestamp_utc = format(Sys.time(), tz = "UTC", usetz = TRUE),
+    stringsAsFactors = FALSE
   )
+})
 
-  learn_annot_z <- learn_df_clean %>%
-    inner_join(learning_z_df, by = "UniProtKB-ID") %>%
-    mutate(
-      learning_dir = ifelse(log2fc > 0, "learning_up", "learning_down"),
-      cno_dir      = ifelse(z_cno_vs_veh > 0, "cno_up", "cno_down"),
-      same_direction = case_when(
-        learning_dir == "learning_up"   & cno_dir == "cno_up"   ~ "same",
-        learning_dir == "learning_down" & cno_dir == "cno_down" ~ "same",
-        TRUE ~ "opposite"
-      )
-    )
-
-  # Save intermediate table
-  write.csv(learn_annot_z, file.path(DIR_TABLES, paste0("learning_signature_zscores_cno_vs_veh_", COMP_TYPE, ".csv")), row.names = FALSE)
-
-  ## ---------- 6. Visualization Setup (Colors & Palettes) ----------
-
-  # Define colors for pheatmap annotations
-  ann_colors <- list()
-
-  # Helper to assign colors safely if the column exists/is not empty
-  unique_exp <- if(!all(is.na(sample_anno$condition_code))) unique(sample_anno$condition_code) else NULL
-  unique_ld  <- unique(learn_annot_z$learning_dir)
-  unique_cd  <- unique(learn_annot_z$cno_dir)
-  unique_sd  <- unique(learn_annot_z$same_direction)
-
-  if (!is.null(unique_exp)) ann_colors$condition_code       <- setNames(brewer.pal(max(2, length(unique_exp)), "Set1")[seq_along(unique_exp)], unique_exp)
-  if (!is.null(unique_ld))  ann_colors$learning_dir   <- setNames(c("#e31a1c", "#1f78b4")[seq_along(unique_ld)], unique_ld)
-  if (!is.null(unique_cd))  ann_colors$cno_dir        <- setNames(c("#fb9a99", "#a6cee3")[seq_along(unique_cd)], unique_cd)
-  if (!is.null(unique_sd))  ann_colors$same_direction <- setNames(c("#33a02c", "#e31a1c")[seq_along(unique_sd)], unique_sd)
-
-  heatmap_cols <- colorRampPalette(c("#6698CC", "white", "#F08C21"))(100)
-
-  ## ---------- 7. Generate Plots ----------
-
-  ## --- Plot A: 1-Column Heatmap of Z-Scores ---
-  ord <- order(learn_annot_z$learning_dir, -learn_annot_z$z_cno_vs_veh)
-  heatmap_mat1 <- matrix(learn_annot_z$z_cno_vs_veh[ord], ncol = 1, 
-                        dimnames = list(learn_annot_z$`UniProtKB-ID`[ord], "Z-score (CNO vs VEH)"))
-
-  pheatmap(
-    heatmap_mat1,
-    cluster_rows = FALSE, cluster_cols = FALSE, show_rownames = FALSE,
-    main = paste0("Learning-up vs learning-down (CNO z-scores) - ", COMP_TYPE),
-    filename = file.path(DIR_PLOTS, paste0("heatmap_learning_signature_zscores_1col_ordered_", COMP_TYPE, ".pdf")),
-    width = 4, height = 8
-  )
-
-  ## --- Plot B: Per-Sample Expression Heatmap ---
-  expr_learning <- expr_mat[learn_ids, c(cno_samples, veh_samples), drop = FALSE]
-  expr_learning_scaled <- t(scale(t(as.matrix(expr_learning)))) # Z-score scaling
-
-  # Annotations
-  col_anno <- data.frame(row.names = colnames(expr_learning_scaled),
-                        condition_code = sample_anno$condition_code[match(colnames(expr_learning_scaled), sample_anno$sample_id)])
-
-  row_anno <- learn_annot_z %>% 
-    dplyr::select(`UniProtKB-ID`, learning_dir, cno_dir, same_direction) %>% distinct() %>%
-    as.data.frame()
-  rownames(row_anno) <- row_anno$`UniProtKB-ID`
-  row_anno <- row_anno[rownames(expr_learning_scaled), c("learning_dir", "cno_dir", "same_direction")]
-
-  pheatmap(
-    expr_learning_scaled,
-    annotation_col = col_anno, annotation_row = row_anno, annotation_colors = ann_colors,
-    color = heatmap_cols, cluster_rows = TRUE, cluster_cols = FALSE, show_rownames = FALSE,
-    main = paste0("Learning-signature proteins: paired CNO vs VEH (per sample) - ", COMP_TYPE),
-    filename = file.path(DIR_PLOTS, paste0("heatmap_learning_signature_expr_per_sample_annotated_", COMP_TYPE, ".pdf")),
-    width = 7, height = 8
-  )
-
-  ## --- Plot C: Averaged Expression per condition_code ---
-  expr_learning_all <- expr_mat[learn_ids, , drop = FALSE]
-  group_vec <- sample_anno$condition_code[match(colnames(expr_learning_all), sample_anno$sample_id)]
-
-  # Calculate averages
-  avg_list <- lapply(sort(unique(group_vec)), function(g) {
-    rowMeans(expr_learning_all[, colnames(expr_learning_all)[group_vec == g], drop = FALSE], na.rm = TRUE)
-  })
-  avg_expr <- do.call(cbind, avg_list)
-  colnames(avg_expr) <- paste0("Group_", sort(unique(group_vec)))
-  avg_expr_scaled <- t(scale(t(avg_expr)))
-
-  # Match row annotation to averages
-  row_anno_avg <- row_anno[rownames(avg_expr_scaled), , drop = FALSE]
-
-  pheatmap(
-    avg_expr_scaled,
-    annotation_row = row_anno_avg, annotation_colors = ann_colors,
-    color = heatmap_cols, cluster_rows = TRUE, cluster_cols = FALSE, show_rownames = FALSE,
-    main = paste0("Average Expression per condition_code - ", COMP_TYPE),
-    filename = file.path(DIR_PLOTS, paste0("heatmap_learning_signature_avg_per_group_", COMP_TYPE, ".pdf")),
-    width = 5, height = 8
-  )
-
-  ## --- Plot D: Side-by-Side Heatmap (Learning vs CNO) ---
-  # Normalize Learning FC to Z-score
-  mu_learn  <- mean(learn_annot_z$log2fc, na.rm = TRUE)
-  sig_learn <- sd(learn_annot_z$log2fc,   na.rm = TRUE)
-  learn_annot_z$z_learning_fc <- (learn_annot_z$log2fc - mu_learn) / sig_learn
-
-  ord_learn <- order(learn_annot_z$z_learning_fc, decreasing = TRUE)
-  mat_pair <- rbind(
-    learning_z   = learn_annot_z$z_learning_fc[ord_learn],
-    cno_vs_veh_z = learn_annot_z$z_cno_vs_veh[ord_learn]
-  )
-  colnames(mat_pair) <- learn_annot_z$`UniProtKB-ID`[ord_learn]
-
-  limit <- max(abs(mat_pair), na.rm = TRUE)
-  pheatmap(
-    mat_pair,
-    color = heatmap_cols, breaks = seq(-limit, limit, length.out = 101),
-    cluster_rows = FALSE, cluster_cols = FALSE, show_rownames = TRUE, show_colnames = FALSE,
-    main = paste0("Learning z-score vs CNO z-score - ", COMP_TYPE),
-    filename = file.path(DIR_PLOTS, paste0("heatmap_learning_vs_cno_signature_", COMP_TYPE, ".pdf")),
-    width = 6, height = 3
-  )
-
-  ## --- Plot E: Scatter Plot (Learning vs CNO Effect) ---
-  cor_val <- cor(learn_annot_z$z_learning_fc, learn_annot_z$z_cno_vs_veh, use = "complete.obs")
-
-  p_scatter <- ggplot(learn_annot_z, aes(x = z_learning_fc, y = z_cno_vs_veh)) +
-    geom_hline(yintercept = 0, color = "grey80", linetype = "dashed") +
-    geom_vline(xintercept = 0, color = "grey80", linetype = "dashed") +
-    geom_point(color = "#2c3e50", alpha = 0.3, size = 4, shape = 16) +
-    geom_smooth(method = "lm", color = "#e74c3c", fill = "#e74c3c", alpha = 0.2) +
-    labs(
-      x = paste0("Learning z-score (", TARGET_CONTRAST, ")"),
-      y = "CNO vs VEH z-score (paired, group 1 vs 2)",
-      title = paste0("Learning signature vs CNO effect - ", COMP_TYPE),
-      subtitle = paste0("Pearson correlation: r = ", round(cor_val, 2))
-    ) +
-    theme_minimal(base_size = 22, base_family = "Arial Nova") +
-    theme(
-      plot.title = element_text(face = "bold"),
-      panel.grid = element_blank(),
-      axis.text = element_text(size = 20)
-    ) +
-    coord_fixed(ratio = 1)
-
-  ggsave(file.path(DIR_PLOTS, paste0("scatter_learning_z_vs_cno_z_", COMP_TYPE, ".svg")),
-        plot = p_scatter, width = 6, height = 6)
-
-  message("Analysis complete. Files saved to: ", BASE_OUT_DIR)
-  ## --- Plot F: Scatter Plot (Learning FC vs CNO FC) ---
-  # Retrieve raw CNO Log2FC values for the proteins in the signature (lookup from the vector computed in step 5A)
-  learn_annot_z$cno_log2fc <- log2fc_cno_veh[learn_annot_z$`UniProtKB-ID`]
-
-  cor_val_fc <- cor(learn_annot_z$log2fc, learn_annot_z$cno_log2fc, use = "complete.obs")
-
-  p_scatter_fc <- ggplot(learn_annot_z, aes(x = log2fc, y = cno_log2fc)) +
-    geom_hline(yintercept = 0, color = "grey80", linetype = "dashed") +
-    geom_vline(xintercept = 0, color = "grey80", linetype = "dashed") +
-    geom_point(color = "#2c3e50", alpha = 0.3, size = 4, shape = 16) +
-    geom_smooth(method = "lm", color = "#e74c3c", fill = "#e74c3c", alpha = 0.2) +
-    labs(
-      x = paste0("Learning Log2FC (", TARGET_CONTRAST, ")"),
-      y = "CNO vs VEH Log2FC (paired, group 1 vs 2)",
-      title = paste0("Learning signature vs CNO effect (Log2FC) - ", COMP_TYPE),
-      subtitle = paste0("Pearson correlation: r = ", round(cor_val_fc, 2))
-    ) +
-    theme_minimal(base_size = 22, base_family = "Arial Nova") +
-    theme(
-      plot.title = element_text(face = "bold"),
-      panel.grid = element_blank(),
-      axis.text = element_text(size = 20)
-    )
-
-  ggsave(file.path(DIR_PLOTS, paste0("scatter_learning_logfc_vs_cno_logfc_", COMP_TYPE, ".svg")),
-        plot = p_scatter_fc, width = 4, height = 6)
-
+comparison_index <- do.call(rbind, records)
+write_neha_enrichment_csv(comparison_index, output_index_path)
+message("Canonical compare_sig_expr completed: ", output_index_path)

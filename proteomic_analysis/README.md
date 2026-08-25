@@ -114,6 +114,12 @@ Run the indexed animal-level MapThatProt handoff checks:
 Rscript tests/test_mapthatprot_animal_level.R
 ```
 
+Run the canonical animal-level enrichment contract checks:
+
+```bash
+Rscript tests/test_animal_level_enrichment.R
+```
+
 ## Running On Your Own Data
 
 Use the shared label helper in `R/analysis_labels.R` when adding or modifying scripts. Input metadata should contain `sample_id`; if `sample_class` or `condition_code` are absent, active preprocessing scripts infer them from canonical labels where possible.
@@ -143,6 +149,12 @@ The EWCE workflow in `05_celltype_enrichment_EWCE/01_EWCE.r` uses shared sample-
 `02_id_mapping/01_MapThatProt_batch.r` consumes only the 12 files listed in that split branch's `indexComparisons.csv`; it does not scan the historical `Datasets/raw` tree. Forward mapping is the default, with `NEHA_MAPTHATPROT_DIRECTION=reverse` available only as an explicit override. Outputs are isolated under `Datasets/data/protigy_animal_level/mapped`, including 12 canonical mapped CSVs in `forward/`, per-row mapping/unmapped audits, an `indexMappedComparisons.csv`, reference and source SHA-256 provenance, and the existing mapping-strategy QC report. Override roots with `NEHA_MAPTHATPROT_SPLIT_ROOT` and `NEHA_MAPTHATPROT_OUTPUT_ROOT`. `NEHA_MAPTHATPROT_REFERENCE_FILE` and `NEHA_MAPTHATPROT_MANUAL_MAPPING_FILE` override the mapping references; `NEHA_MAPTHATPROT_REFERENCE_VERSION` can record a known UniProt release label because the local three-column idmapping file does not encode one internally.
 
 In mapped comparison CSVs, the first column `gene_symbol` is retained for current downstream compatibility but remains historically misnamed: it contains the resolved UniProt accession used by clusterProfiler. `original_protein_id` preserves the original GCT `id`, `Description` preserves the source gene-style description, and `mapped_gene_symbol` provides the mapped gene annotation when available. All source DA statistics are carried through unchanged. Unmapped rows are written separately and participate in an exact mapped-plus-unmapped row-accounting audit.
+
+`04_differential_expression_enrichment/01_clusterProfiler.r` consumes the 12 forward files recorded in `Datasets/data/protigy_animal_level/mapped/indexMappedComparisons.csv` and writes an isolated canonical branch under `Datasets/data/protigy_animal_level/enrichment`. It uses `uniprot_accession` explicitly. Repeated accessions are collapsed deterministically by the largest absolute `log2fc` while preserving its sign, with source-row and protein-ID tie breakers and a per-comparison audit. GO ORA uses all unique successfully mapped, measured UniProt accessions in that comparison as its explicit universe. GSEA retains the canonical numerator-over-denominator `log2fc` direction and records its deterministic seed, parameters, input hashes, counts, warnings, and outputs in `indexEnrichmentComparisons.csv`.
+
+The downstream `02_compareGO.r`, `03_compare_pathways.r`, and `04_compare_sig_expr.r` scripts consume the canonical indexes instead of historical filenames. Historical comparison aliases remain provenance metadata only. `04_compare_sig_expr.r` now compares animal-level contrast statistics; it does not fabricate per-animal expression from mapped differential-result tables.
+
+Canonical enrichment defaults can be overridden with `NEHA_ENRICHMENT_MAPPED_ROOT`, `NEHA_ENRICHMENT_MAPPED_INDEX`, and `NEHA_ENRICHMENT_OUTPUT_ROOT`. Existing isolated outputs are protected unless `NEHA_ENRICHMENT_FORCE=true` is set explicitly. Historical `Datasets/raw`, `Datasets/mapped`, `Datasets/core_enrichment`, `Results`, and `Plots` roots are rejected as canonical inputs or outputs.
 
 The 2024 Neha instrument IDs do not contain `_L_`/`_R_`. For that historical dataset only, the stage requires the original annotation's explicit `_left`/`_right` label and independently verifies its one-to-one agreement with both archived `ReplicateGroup` fields and the instrument sample identity. Reusable aggregation helpers otherwise accept only `Left`/`L` and `Right`/`R` and require the sample-ID hemisphere token.
 

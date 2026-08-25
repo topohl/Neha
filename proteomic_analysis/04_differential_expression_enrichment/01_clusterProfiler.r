@@ -1,1301 +1,543 @@
-#' ============================================================
-#' HIGH-THROUGHPUT Gene Set Enrichment Analysis (GSEA) Workflow
-#' WITH PARALLEL PROCESSING AND GO TERM SIMPLIFICATION
-#' ============================================================
-#' 
-#' This script performs comprehensive GSEA, KEGG, ORA, custom pathway analysis
-#' for MULTIPLE cell type comparisons in parallel using future.
-#' Includes GO term redundancy removal via simplify().
-#' Celltype scoring runs separately at the end.
-#'
-#' @author Tobias Pohl
-#' ============================================================
+#!/usr/bin/env Rscript
 
-# ----------------------------------------------------
-# 0. SIMPLIFICATION SETTINGS
-# ----------------------------------------------------
-# *** MAIN CONTROL: Set whether to perform simplification at all ***
-PERFORM_SIMPLIFICATION <- FALSE  # Set to FALSE to skip simplification entirely
+# Canonical animal-level enrichment for the Neha proteomics study.
+#
+# This stage consumes only the validated, forward MapThatProt manifest.  It does
+# not discover files by name and it cannot fall back to the historical mapped
+# or enrichment trees.  Positive log2fc values always mean higher abundance in
+# the canonical numerator recorded in indexMappedComparisons.csv.
 
-# Control which version to use for plots (only matters if PERFORM_SIMPLIFICATION = TRUE)
-USE_SIMPLIFIED_FOR_PLOTS <- FALSE  # TRUE = simplified plots, FALSE = full results
+script_file <- grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE)
+script_file <- if (length(script_file)) sub("^--file=", "", script_file[[1]]) else "04_differential_expression_enrichment/01_clusterProfiler.r"
+script_dir <- dirname(normalizePath(script_file, winslash = "/", mustWork = FALSE))
+project_root <- normalizePath(file.path(script_dir, ".."), winslash = "/", mustWork = TRUE)
 
-# Semantic similarity cutoff for simplify() function (only used if simplification is enabled)
-# Range: 0.4 (strict, removes more) to 0.9 (lenient, keeps more)
-# Default: 0.7 (moderate redundancy removal)
-SIMPLIFY_CUTOFF <- 0.7
+source(file.path(project_root, "R", "analysis_labels.R"))
+source(file.path(project_root, "R", "animal_level_enrichment_utils.R"))
 
-# Package installation policy:
-# FALSE (recommended): fail fast with a clear list of missing packages.
-# TRUE: auto-install missing packages (can take a long time and look "stuck").
-AUTO_INSTALL_MISSING_PACKAGES <- FALSE
-
-# Note: 
-# - If PERFORM_SIMPLIFICATION = FALSE, only full results are computed and saved
-# - If PERFORM_SIMPLIFICATION = TRUE, both versions are computed and saved
-
-# ----------------------------------------------------
-# 1. PACKAGE SETUP
-# ----------------------------------------------------
-checkBiocManager <- function() {
-  if (!requireNamespace("BiocManager", quietly = TRUE)) {
-    install.packages("BiocManager", repos = "https://cloud.r-project.org")
-  }
-}
-
-installBioC <- function(bioc_packages, auto_install = AUTO_INSTALL_MISSING_PACKAGES) {
-  # Install only missing packages to avoid unloading issues, set update=FALSE
-  missing <- bioc_packages[!sapply(bioc_packages, requireNamespace, quietly = TRUE)]
-  if (length(missing) > 0) {
-    if (isTRUE(auto_install)) {
-      message("Installing missing Bioconductor packages: ", paste(missing, collapse = ", "))
-      BiocManager::install(missing, update = FALSE, ask = FALSE)
-    } else {
-      stop(
-        "Missing Bioconductor packages detected (auto-install disabled): ",
-        paste(missing, collapse = ", "),
-        "\nInstall them manually or set AUTO_INSTALL_MISSING_PACKAGES <- TRUE."
-      )
-    }
-  }
-}
-
-loadPkg <- function(pkg) {
-  if (!require(pkg, character.only = TRUE, quietly = TRUE)) warning(paste("Could not load:", pkg))
-}
-
-setupPackages <- function() {
-  setup_start <- Sys.time()
-  message("[Package setup] Checking dependencies...")
-
-  # Ensure a CRAN mirror is set for non-interactive sessions
-  if (is.null(getOption("repos"))) {
-    options(repos = c(CRAN = "https://cloud.r-project.org"))
-  }
-  
-  checkBiocManager()
-  
-  required_packages <- c("clusterProfiler", "pathview", "enrichplot", "DOSE", "ggplot2", "ggnewscale",
-                         "cowplot", "ggridges", "europepmc", "ggpubr", "ggrepel", "ggsci", "ggthemes",
-                         "ggExtra", "ggforce", "ggalluvial", "lattice", "latticeExtra", "BiocManager",
-                         "org.Mm.eg.db", "ggplotify", "svglite", "tidyr", "dplyr", "pheatmap", "proxy",
-                         "tibble", "openxlsx", "future", "future.apply", "GOSemSim", "yaml", "progressr")
-  bioc_packages <- c("clusterProfiler", "pathview", "enrichplot", "DOSE", "org.Mm.eg.db", "GOSemSim")
-  
-  # 1. Install missing BioC packages first
-  installBioC(bioc_packages)
-  
-  # 2. Identify and install missing CRAN packages
-  cran_packages <- setdiff(required_packages, bioc_packages)
-  # Only check strictly for missing namespaces to avoid touching loaded packages
-  missing_cran <- cran_packages[!sapply(cran_packages, requireNamespace, quietly = TRUE)]
-  
-  if (length(missing_cran) > 0) {
-    if (isTRUE(AUTO_INSTALL_MISSING_PACKAGES)) {
-      message("Installing missing CRAN packages: ", paste(missing_cran, collapse = ", "))
-      install.packages(missing_cran, repos = "https://cloud.r-project.org")
-    } else {
-      stop(
-        "Missing CRAN packages detected (auto-install disabled): ",
-        paste(missing_cran, collapse = ", "),
-        "\nInstall them manually or set AUTO_INSTALL_MISSING_PACKAGES <- TRUE."
-      )
-    }
-  }
-  
-  # 3. Quietly load only packages needed in the master process.
-  # Worker-specific packages are loaded inside analyze_comparison().
-  master_packages <- c("future", "future.apply", "yaml", "progressr")
-  suppressPackageStartupMessages({
-    invisible(lapply(master_packages, function(pkg) {
-      if (!require(pkg, character.only = TRUE, quietly = TRUE)) {
-        warning(paste("Could not load:", pkg))
-      }
-    }))
-  })
-
-  message("[Package setup] Ready in ", round(as.numeric(difftime(Sys.time(), setup_start, units = "secs")), 2), " sec")
-}
-
-setupPackages()
-
-# ----------------------------------------------------
-# 2. DIRECTORY ORGANIZATION FUNCTIONS
-# ----------------------------------------------------
-create_analysis_dirs <- function(base_dir, comparison_name, ontology) {
-  route <- classify_comparison_route(comparison_name)
-  results_root <- file.path(base_dir, "Results", route$category, route$unit_folder, comparison_name)
-  plots_root <- file.path(base_dir, "Plots", route$category, route$unit_folder, comparison_name)
-
-  dirs <- list(
-    results = results_root,
-    go_ont = file.path(results_root, "GO", ontology),
-    kegg = file.path(results_root, "KEGG"),
-    ora = file.path(results_root, "ORA"),
-    custom = file.path(results_root, "Custom", ontology),
-    pathview = file.path(results_root, "pathview"),
-    plots_go = file.path(plots_root, paste0("GO_", ontology)),
-    plots_kegg = file.path(plots_root, "KEGG"),
-    plots_ora = file.path(plots_root, "ORA"),
-    plots_custom = file.path(plots_root, "Custom", ontology),
-    core_enrich = file.path(base_dir, "Datasets/core_enrichment", ontology),
-    core_enrich_routed = file.path(base_dir, "Datasets/core_enrichment", ontology, route$category, route$unit_folder),
-    route_category = route$category,
-    route_unit = route$unit_folder
-  )
-  # Create only actual directory paths, not metadata fields.
-  dir_fields <- c("results", "go_ont", "kegg", "ora", "custom", "pathview", "plots_go", "plots_kegg", "plots_ora", "plots_custom", "core_enrich", "core_enrich_routed")
-  lapply(dirs[dir_fields], function(d) if (!dir.exists(d)) dir.create(d, recursive = TRUE))
-  return(dirs)
-}
-
-save_plot_organized <- function(plot, filename, directory) {
-  # Wrap in tryCatch as specific plots sometimes fail to render
-  tryCatch({
-    ggsave(file.path(directory, filename), plot, units = "cm", dpi = 300)
-  }, error = function(e) {
-    warning("Plot save failed for ", filename, ": ", e$message)
-  })
-}
-
-read_gct <- function(file_path) {
-  gct_data <- read.delim(file_path, skip = 2, header = FALSE, check.names = FALSE)
-  if ("Name" %in% colnames(gct_data)) {
-    colnames(gct_data)[1] <- "Gene"
-  }
-  return(gct_data)
-}
-
-read_config <- function(config_path) {
-  defaults <- list(
-    simplification = list(
-      perform = PERFORM_SIMPLIFICATION,
-      use_for_plots = USE_SIMPLIFIED_FOR_PLOTS,
-      cutoff = SIMPLIFY_CUTOFF
-    ),
-    analysis = list(
-      organism = "org.Mm.eg.db",
-      ontology = "BP",
-      top_gene_abs_log2fc = 1,
-      pvalue_cutoff = 1,
-      qvalue_cutoff = 1,
-      p_adjust_method = "BH",
-      min_gs_size = 10,
-      max_gs_size = 800
-    ),
-    runtime = list(
-      workers = -1,
-      future_globals_max_size_mb = 8000,
-      resume_if_complete = TRUE,
-      force_rerun = FALSE,
-      prewarm_workers = TRUE,
-      show_progress = TRUE,
-      show_step_progress = TRUE,
-      config_file = config_path
-    ),
-    paths = list(
-      mapped_dir = "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/Datasets/mapped/learning_signature/memory_ensemble",
-      working_base = "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler",
-      mapped_data_base = "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/Datasets/mapped/learning_signature/memory_ensemble",
-      background_universe_file = ""
-    ),
-    optional_inputs = list(
-      nk3r_genes = character(0),
-      selected_uniprot = character(0),
-      path_ids = character(0)
-    ),
-    background_universe = list(
-      enabled = FALSE,
-      column = "UNIPROT"
-    )
-  )
-
-  cfg <- defaults
-  if (file.exists(config_path)) {
-    yaml_cfg <- tryCatch(yaml::read_yaml(config_path), error = function(e) NULL)
-    if (!is.null(yaml_cfg) && is.list(yaml_cfg)) {
-      cfg <- utils::modifyList(defaults, yaml_cfg)
-      message("Loaded config: ", config_path)
-    } else {
-      warning("Config file exists but could not be parsed. Using defaults: ", config_path)
-    }
-  } else {
-    message("Config file not found; using script defaults: ", config_path)
-  }
-  cfg
-}
-
-write_log_line <- function(log_file, level = "INFO", comparison = "GLOBAL", step = "GENERAL", message_text = "") {
-  if (is.null(log_file) || !nzchar(log_file)) return(invisible(NULL))
-  dir.create(dirname(log_file), recursive = TRUE, showWarnings = FALSE)
-  line <- paste(format(Sys.time(), "%Y-%m-%d %H:%M:%S"), level, comparison, step, message_text, sep = " | ")
-  cat(line, "\n", file = log_file, append = TRUE)
-  invisible(NULL)
-}
-
-print_progress_step <- function(comparison, step, detail = "", enabled = TRUE) {
-  if (!isTRUE(enabled)) return(invisible(NULL))
-  stamp <- format(Sys.time(), "%H:%M:%S")
-  msg <- paste0("[", stamp, "] [", comparison, "] ", step,
-                if (nzchar(detail)) paste0(" - ", detail) else "")
-  cat(msg, "\n")
-  flush.console()
-  invisible(NULL)
-}
-
-prewarm_workers <- function(n_workers, runtime_params) {
-  if (!isTRUE(runtime_params$prewarm_workers) || n_workers < 1) return(invisible(NULL))
-
-  cat("\n==============================================\n")
-  cat("PREWARMING WORKERS (INITIAL PACKAGE LOAD)\n")
-  cat("==============================================\n\n")
-
-  worker_ids <- seq_len(n_workers)
-  if (isTRUE(runtime_params$show_progress)) {
-    progressr::handlers("txtprogressbar")
-    progressr::with_progress({
-      p <- progressr::progressor(steps = length(worker_ids))
-      future_lapply(worker_ids, function(i) {
-        suppressPackageStartupMessages({
-          library(clusterProfiler)
-          library(pathview)
-          library(enrichplot)
-          library(DOSE)
-          library(ggplot2)
-          library(tidyr)
-          library(dplyr)
-          library(openxlsx)
-          library(GOSemSim)
-        })
-        options(clusterProfiler.worker_packages_loaded = TRUE)
-        p(message = paste0("worker ", i, " ready"))
-        TRUE
-      }, future.seed = TRUE)
-    })
-  } else {
-    future_lapply(worker_ids, function(i) {
-      suppressPackageStartupMessages({
-        library(clusterProfiler)
-        library(pathview)
-        library(enrichplot)
-        library(DOSE)
-        library(ggplot2)
-        library(tidyr)
-        library(dplyr)
-        library(openxlsx)
-        library(GOSemSim)
-      })
-      options(clusterProfiler.worker_packages_loaded = TRUE)
-      TRUE
-    }, future.seed = TRUE)
-  }
-
-  cat("Worker prewarm complete. Starting analysis...\n\n")
-  invisible(NULL)
-}
-
-checkpoint_file_path <- function(dirs) {
-  file.path(dirs$results, "ANALYSIS_COMPLETE.flag")
-}
-
-is_completed_checkpoint <- function(dirs) {
-  file.exists(checkpoint_file_path(dirs))
-}
-
-write_completed_checkpoint <- function(dirs) {
-  flag <- checkpoint_file_path(dirs)
-  cat(format(Sys.time(), "%Y-%m-%d %H:%M:%S"), file = flag)
-  invisible(flag)
-}
-
-prepare_gene_vectors <- function(df, top_gene_abs_log2fc = 1) {
-  colnames(df)[1] <- "gene_symbol"
-  original_gene_list <- df$log2fc
-  names(original_gene_list) <- df$gene_symbol
-
-  gene_list <- sort(na.omit(original_gene_list), decreasing = TRUE)
-  gene_list <- gene_list[!duplicated(names(gene_list))]
-
-  top_gene_list <- gene_list
-  top_genes <- names(top_gene_list)[abs(top_gene_list) > top_gene_abs_log2fc]
-  if (length(top_genes) > 0) {
-    top_genes <- names(sort(top_gene_list[top_genes], decreasing = TRUE))
-  } else {
-    top_genes <- character(0)
-  }
-
-  list(
-    original_gene_list = original_gene_list,
-    gene_list = gene_list,
-    fc_for_cnet = gene_list,
-    top_genes = top_genes
-  )
-}
-
-load_background_universe <- function(cfg) {
-  if (!isTRUE(cfg$background_universe$enabled)) return(character(0))
-  file_path <- cfg$paths$background_universe_file
-  if (!nzchar(file_path) || !file.exists(file_path)) {
-    warning("Background universe enabled but file missing: ", file_path)
-    return(character(0))
-  }
-
-  universe_df <- tryCatch(read.csv(file_path, stringsAsFactors = FALSE), error = function(e) NULL)
-  if (is.null(universe_df) || nrow(universe_df) == 0) {
-    warning("Background universe file is empty or unreadable: ", file_path)
-    return(character(0))
-  }
-
-  column_name <- cfg$background_universe$column
-  if (!column_name %in% colnames(universe_df)) {
-    warning("Background universe column not found: ", column_name)
-    return(character(0))
-  }
-
-  universe <- unique(stats::na.omit(universe_df[[column_name]]))
-  as.character(universe)
-}
-
-parse_sample_token <- function(token, conditions = c("paired_cno", "paired_veh", "unpaired_cno", "unpaired_veh")) {
-  condition <- ""
-  unit <- token
-
-  for (cond in conditions) {
-    if (grepl(paste0("_?", cond, "$"), token, ignore.case = TRUE)) {
-      condition <- tolower(cond)
-      unit <- sub(paste0("_?", cond, "$"), "", token, ignore.case = TRUE)
-      break
-    }
-  }
-
-  unit <- gsub("[^A-Za-z0-9]", "", unit)
-  pretty_unit <- unit
-  if (nzchar(unit)) {
-    m <- regexec("^([A-Za-z]+[0-9]*)([A-Za-z0-9]*)$", unit)
-    mm <- regmatches(unit, m)[[1]]
-    if (length(mm) == 3 && nzchar(mm[3])) {
-      pretty_unit <- paste(mm[2], mm[3], sep = "_")
-    }
-  }
-
-  list(raw = token, unit = unit, pretty_unit = pretty_unit, condition = condition)
-}
-
-classify_comparison_route <- function(comparison_name) {
-  parts <- strsplit(comparison_name, "_vs_", fixed = TRUE)[[1]]
-  if (length(parts) < 2) {
-    return(list(category = "unclassified", unit_folder = "unknown_unit"))
-  }
-
-  a <- parse_sample_token(parts[1])
-  b <- parse_sample_token(parts[2])
-
-  same_unit <- nzchar(a$unit) && nzchar(b$unit) && identical(a$unit, b$unit)
-  same_condition <- nzchar(a$condition) && nzchar(b$condition) && identical(a$condition, b$condition)
-
-  category <- if (same_unit && !same_condition) {
-    "condition_within_unit"
-  } else if (!same_unit && same_condition) {
-    "condition_between_unit"
-  } else if (same_unit && same_condition) {
-    "within_unit_same_condition"
-  } else if (!same_unit && !same_condition) {
-    "between_unit_and_condition"
-  } else {
-    "unclassified"
-  }
-
-  unit_folder <- if (same_unit && nzchar(a$pretty_unit)) {
-    a$pretty_unit
-  } else {
-    unit_a <- if (nzchar(a$pretty_unit)) a$pretty_unit else "unitA"
-    unit_b <- if (nzchar(b$pretty_unit)) b$pretty_unit else "unitB"
-    paste(sort(c(unit_a, unit_b)), collapse = "_vs_")
-  }
-
-  list(category = category, unit_folder = unit_folder)
-}
-
-# ----------------------------------------------------
-# 3. DATA INPUT/COMPARISONS
-# ----------------------------------------------------
-`%||%` <- function(x, y) if (is.null(x)) y else x
-config_candidates <- c(
-  file.path(getwd(), "clusterProfiler_config.yml"),
-  file.path(getwd(), "Analysis", "clusterProfiler_config.yml")
+required_packages <- c(
+  "clusterProfiler", "org.Mm.eg.db", "AnnotationDbi", "DOSE", "enrichplot",
+  "GOSemSim", "ggplot2", "withr", "digest", "fgsea"
 )
-config_path <- config_candidates[file.exists(config_candidates)][1] %||% config_candidates[1]
-cfg <- read_config(config_path)
-
-PERFORM_SIMPLIFICATION <- isTRUE(cfg$simplification$perform)
-USE_SIMPLIFIED_FOR_PLOTS <- isTRUE(cfg$simplification$use_for_plots)
-SIMPLIFY_CUTOFF <- as.numeric(cfg$simplification$cutoff)
-
-mapped_dir <- cfg$paths$mapped_dir
-if (!dir.exists(mapped_dir)) {
-  stop("Mapped data directory does not exist: ", mapped_dir)
+missing_packages <- required_packages[!vapply(required_packages, requireNamespace, logical(1), quietly = TRUE)]
+if (length(missing_packages)) {
+  stop("Canonical enrichment requires installed packages: ", paste(missing_packages, collapse = ", "), call. = FALSE)
 }
 
-comparison_files <- list.files(mapped_dir, pattern = "\\.csv$", full.names = FALSE)
-comparison_list <- lapply(comparison_files, function(f) {
-  parts <- strsplit(sub("\\.csv$", "", f), "_", fixed = TRUE)[[1]]
-  parts <- parts[nzchar(parts)]
-  if (length(parts) >= 2) parts else NULL
-})
-comparison_list <- Filter(Negate(is.null), comparison_list)
+config <- resolve_neha_enrichment_config()
+mapped_index <- read_neha_enrichment_mapped_index(config$mapped_index, config$mapped_root)
 
-if (length(comparison_list) == 0) {
-  stop("No valid comparison files found in: ", mapped_dir)
+dir.create(config$output_root, recursive = TRUE, showWarnings = FALSE)
+per_comparison_root <- file.path(config$output_root, "per_comparison")
+audit_root <- file.path(config$output_root, "audits")
+dir.create(per_comparison_root, recursive = TRUE, showWarnings = FALSE)
+dir.create(audit_root, recursive = TRUE, showWarnings = FALSE)
+
+index_path <- file.path(config$output_root, "indexEnrichmentComparisons.csv")
+if (file.exists(index_path) && !isTRUE(config$force)) {
+  stop(
+    "Canonical enrichment index already exists. Refusing to overwrite it. ",
+    "Set NEHA_ENRICHMENT_FORCE=true only after reviewing the existing isolated output root.",
+    call. = FALSE
+  )
 }
 
-working_base <- "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler"
-#working_base <- cfg$paths$working_base
-
-working_dir <- working_base
-#mapped_data_base <- cfg$paths$mapped_data_base
-mapped_data_base <- file.path(working_base, "Datasets/mapped/baseline_cell_type_profiling/US")
-organism <- cfg$analysis$organism
-ont <- cfg$analysis$ontology
-
-analysis_params <- list(
-  pvalue_cutoff = as.numeric(cfg$analysis$pvalue_cutoff),
-  qvalue_cutoff = as.numeric(cfg$analysis$qvalue_cutoff),
-  p_adjust_method = as.character(cfg$analysis$p_adjust_method),
-  min_gs_size = as.integer(cfg$analysis$min_gs_size),
-  max_gs_size = as.integer(cfg$analysis$max_gs_size),
-  top_gene_abs_log2fc = as.numeric(cfg$analysis$top_gene_abs_log2fc)
+timestamp_utc <- format(Sys.time(), tz = "UTC", usetz = TRUE)
+package_versions_path <- write_neha_enrichment_csv(
+  neha_enrichment_package_versions(),
+  file.path(audit_root, "package_database_versions.csv")
 )
 
-runtime_params <- list(
-  workers = as.integer(cfg$runtime$workers),
-  future_globals_max_size_mb = as.numeric(cfg$runtime$future_globals_max_size_mb),
-  resume_if_complete = isTRUE(cfg$runtime$resume_if_complete),
-  force_rerun = isTRUE(cfg$runtime$force_rerun),
-  prewarm_workers = isTRUE(cfg$runtime$prewarm_workers),
-  show_progress = isTRUE(cfg$runtime$show_progress),
-  show_step_progress = isTRUE(cfg$runtime$show_step_progress)
+parameters <- data.frame(
+  parameter = c(
+    "ontology", "ranking_statistic", "rank_direction", "pvalue_cutoff",
+    "qvalue_cutoff", "p_adjust_method", "fdr_threshold", "top_abs_log2fc",
+    "min_gs_size", "max_gs_size", "simplify", "simplify_cutoff",
+    "gsea_seed_base", "kegg_enabled", "plots_enabled",
+    "duplicate_uniprot_rule", "ora_universe"
+  ),
+  value = c(
+    config$ontology, "log2fc", "positive_is_higher_in_canonical_numerator",
+    config$pvalue_cutoff, config$qvalue_cutoff, config$p_adjust_method,
+    config$fdr_threshold, config$top_abs_log2fc, config$min_gs_size,
+    config$max_gs_size, config$simplify, config$simplify_cutoff,
+    config$gsea_seed_base, config$kegg_enabled, config$plots_enabled,
+    "largest_absolute_log2fc;finite_preferred;ties_by_source_row_id_then_original_protein_id",
+    "all_unique_successfully_mapped_measured_uniprot_accessions_per_comparison"
+  ),
+  stringsAsFactors = FALSE
 )
+parameters_path <- write_neha_enrichment_csv(parameters, file.path(audit_root, "run_parameters.csv"))
 
-run_id <- format(Sys.time(), "%Y%m%d_%H%M%S")
-run_log_dir <- file.path(working_base, "Results", "_run_logs")
-dir.create(run_log_dir, recursive = TRUE, showWarnings = FALSE)
-master_log <- file.path(run_log_dir, paste0("clusterProfiler_run_", run_id, ".log"))
-write_log_line(master_log, "INFO", "GLOBAL", "CONFIG", paste0("Using config file: ", config_path))
-
-#nk3r_genes <- c("P21279", "P21278", "P51432", "P11881", "P63318", "P68404", "P0DP26", "P0DP27", "P0DP28", "P11798", "P28652", "P47937", "P47713")
-#selected_uniprot <- c("P21279", "P21278", "Q9Z1B3", "P51432", "P11881", "P68404", "P63318", "P0DP26", "P0DP27", "P11798", "P28652", "Q61411", "Q99N57", "P31938", "P63085", "Q63844", "Q8BWG8", "Q91YI4", "V9GXQ9")
-#path_ids <- c("mmu04110", "mmu04115", "mmu04114", "mmu04113", "mmu04112", "mmu04111", "mmu04116", "mmu04117", "mmu04118", "mmu04119", "mmu04720", "mmu04721", "mmu04722", "mmu04725", "mmu04726", "mmu04727", "mmu04724", "mmu04080", "mmu00030", "mmu04151")
-
-# Optional analysis inputs: default to empty vectors so downstream blocks can be skipped cleanly.
-if (!exists("nk3r_genes", inherits = FALSE)) {
-  nk3r_genes <- as.character(cfg$optional_inputs$nk3r_genes %||% character(0))
-  if (length(nk3r_genes) > 0) {
-    message("Loaded nk3r_genes from config (n=", length(nk3r_genes), ").")
-  } else {
-    message("No nk3r_genes provided; custom NK3R GSEA will be skipped.")
-  }
-}
-if (!exists("selected_uniprot", inherits = FALSE)) {
-  selected_uniprot <- as.character(cfg$optional_inputs$selected_uniprot %||% character(0))
-  if (length(selected_uniprot) > 0) {
-    message("Loaded selected_uniprot from config (n=", length(selected_uniprot), ").")
-  } else {
-    message("No selected_uniprot provided; predefined KEGG GSEA will be skipped.")
-  }
-}
-if (!exists("path_ids", inherits = FALSE)) {
-  path_ids <- as.character(cfg$optional_inputs$path_ids %||% character(0))
-  if (length(path_ids) > 0) {
-    message("Loaded path_ids from config (n=", length(path_ids), ").")
-  } else {
-    message("No path_ids provided; pathview rendering will be skipped.")
-  }
-}
-
-background_universe <- load_background_universe(cfg)
-if (length(background_universe) > 0) {
-  write_log_line(master_log, "INFO", "GLOBAL", "BACKGROUND", paste0("Loaded background universe: n=", length(background_universe)))
-} else {
-  write_log_line(master_log, "INFO", "GLOBAL", "BACKGROUND", "No background universe loaded (disabled or unavailable).")
-}
-
-# ----------------------------------------------------
-# 4. SETUP PARALLEL PROCESSING WITH FUTURE
-# ----------------------------------------------------
-suppressPackageStartupMessages({
-  library(future)
-  library(future.apply)
-})
-
-# Ensure progress handlers are active in interactive runs
-options(progressr.enable = TRUE)
-progressr::handlers(global = TRUE)
-
-# Set up multisession plan
-# Set up multisession plan
-detected_cores <- suppressWarnings(as.integer(availableCores()))
-cat("[DEBUG PARALLEL] availableCores() returned:", detected_cores, "\n")
-if (is.na(detected_cores) || detected_cores < 1L) detected_cores <- 1L
-cat("[DEBUG PARALLEL] After validation, detected_cores =", detected_cores, "\n")
-cat("[DEBUG PARALLEL] runtime_params$workers =", runtime_params$workers, "\n")
-
-if (!is.na(runtime_params$workers) && runtime_params$workers > 0) {
-  # Positive value: use specified workers, capped at detected cores
-  n_cores <- min(runtime_params$workers, detected_cores)
-  cat("[DEBUG PARALLEL] Using workers from config:", runtime_params$workers, "-> n_cores =", n_cores, "\n")
-} else if (!is.na(runtime_params$workers) && runtime_params$workers < 0) {
-  # Negative value (-1): use all cores except the specified number
-  # e.g., -1 means use all but 1
-  n_cores <- max(1L, detected_cores + runtime_params$workers)
-  cat("[DEBUG PARALLEL] Using negative config value:", runtime_params$workers, "-> n_cores =", n_cores, "\n")
-} else {
-  # Default fallback: use detected cores - 1
-  n_cores <- max(1L, detected_cores - 1L)
-  cat("[DEBUG PARALLEL] Using fallback (detected - 1):", n_cores, "\n")
-}
-
-cat("[DEBUG PARALLEL] Calling plan(multisession, workers =", n_cores, ")\n")
-plan(multisession, workers = n_cores)
-cat("[DEBUG PARALLEL] Plan set. Current plan is:", toString(class(plan())), "\n")
-on.exit(plan(sequential), add = TRUE)
-
-# Increase global size limit for passing data to workers
-options(future.globals.maxSize = runtime_params$future_globals_max_size_mb * 1024^2) 
-
-cat("Setting up parallel processing with", n_cores, "cores using future\n")
-write_log_line(master_log, "INFO", "GLOBAL", "PARALLEL", paste0("workers=", n_cores,
-                                                                      ", future.globals.maxSize(MB)=", runtime_params$future_globals_max_size_mb))
-
-prewarm_workers(n_cores, runtime_params)
-
-# ----------------------------------------------------
-# 5. ANALYSIS FUNCTION
-# ----------------------------------------------------
-analyze_comparison <- function(cell_types, working_base, mapped_data_base, organism, ont, 
-                               nk3r_genes, selected_uniprot, path_ids,
-                               analysis_params, runtime_params, run_log_dir,
-                               background_universe = character(0)) {
-
-  # Load required libraries in worker once per worker session.
-  if (!isTRUE(getOption("clusterProfiler.worker_packages_loaded", FALSE))) {
-    suppressPackageStartupMessages({
-      library(clusterProfiler)
-      library(pathview)
-      library(enrichplot)
-      library(DOSE)
-      library(ggplot2)
-      library(tidyr)
-      library(dplyr)
-      library(openxlsx)
-      library(GOSemSim)
-    })
-    options(clusterProfiler.worker_packages_loaded = TRUE)
-  }
-
-  # === CRITICAL FIX FOR PARALLEL PROCESSING ===
-  # To avoid "undefined columns selected" / connection errors:
-  # We must ensure the OrgDb is loaded FRESH in this worker process.
-  # If it was inherited from the master process, the SQLite connection is dead.
-  comparison_name <- paste(cell_types, collapse = "_")
-  comparison_log <- file.path(run_log_dir, paste0(comparison_name, ".log"))
-  run_start <- Sys.time()
-  qc <- data.frame(
-    comparison = comparison_name,
-    status = "STARTED",
-    runtime_seconds = NA_real_,
-    n_input_rows = NA_integer_,
-    n_non_na_log2fc = NA_integer_,
-    n_unique_gene_ids = NA_integer_,
-    n_top_genes = NA_integer_,
-    n_background_universe = length(background_universe),
-    n_id_mapped_uniprot_to_entrez = NA_integer_,
-    n_gsea_terms = NA_integer_,
-    n_ora_terms = NA_integer_,
-    n_kegg_terms = NA_integer_,
-    stringsAsFactors = FALSE
+capture_warnings <- function(expression) {
+  warnings <- character()
+  value <- withCallingHandlers(
+    expression,
+    warning = function(w) {
+      warnings <<- c(warnings, conditionMessage(w))
+      invokeRestart("muffleWarning")
+    }
   )
-
-  cat("Analyzing comparison:", comparison_name, "\n")
-  write_log_line(comparison_log, "INFO", comparison_name, "START", "Comparison analysis started")
-  print_progress_step(comparison_name, "START", "Worker initialized", runtime_params$show_step_progress)
-
-  tryCatch({
-    # Load OrgDb namespace quietly (no attach chatter in console)
-    if (!requireNamespace(organism, quietly = TRUE)) {
-      stop("Could not load OrgDb namespace: ", organism)
-    }
-
-    # Get object reference from namespace
-    org_db_obj <- get(organism, envir = asNamespace(organism))
-
-    # Setup directories
-    dirs <- create_analysis_dirs(working_base, comparison_name, ont)
-    cat("Directories set up for comparison:", comparison_name, "\n")
-    route_msg <- paste0("route=", dirs$route_category, " / ", dirs$route_unit)
-    print_progress_step(comparison_name, "ROUTE", route_msg, runtime_params$show_step_progress)
-    write_log_line(comparison_log, "INFO", comparison_name, "ROUTE", route_msg)
-    print_progress_step(comparison_name, "SETUP", "Output directories ready", runtime_params$show_step_progress)
-    qc_path <- file.path(dirs$results, "QC_summary.csv")
-
-    if (isTRUE(runtime_params$resume_if_complete) && !isTRUE(runtime_params$force_rerun) && is_completed_checkpoint(dirs)) {
-      write_log_line(comparison_log, "INFO", comparison_name, "CHECKPOINT", "Checkpoint found; skipping comparison")
-      qc$status <- "SKIPPED"
-      qc$runtime_seconds <- as.numeric(difftime(Sys.time(), run_start, units = "secs"))
-      write.csv(qc, qc_path, row.names = FALSE)
-      return(list(status = "SKIPPED", comparison = comparison_name, error = NA_character_, qc = qc))
-    }
-
-    # Define data file path
-    file_name <- paste0(comparison_name, ".csv")
-    cat("Looking for data file:", file_name, "\n")
-    data_path <- file.path(mapped_data_base, file_name)
-    cat("Full data path:", data_path, "\n")
-
-    if (!file.exists(data_path)) {
-      write_log_line(comparison_log, "ERROR", comparison_name, "INPUT", paste0("File not found: ", data_path))
-      qc$status <- "FAILED"
-      qc$runtime_seconds <- as.numeric(difftime(Sys.time(), run_start, units = "secs"))
-      write.csv(qc, qc_path, row.names = FALSE)
-      return(list(status = "FAILED", comparison = comparison_name, error = "File not found", qc = qc))
-    }
-
-    # Load and prepare data
-    df <- read.csv(data_path, header = TRUE, stringsAsFactors = FALSE)
-    cat("Data loaded for comparison:", comparison_name, "\n")
-    print_progress_step(comparison_name, "INPUT", paste0("Loaded rows=", nrow(df)), runtime_params$show_step_progress)
-
-    if (nrow(df) == 0) {
-      write_log_line(comparison_log, "ERROR", comparison_name, "INPUT", "Data file is empty")
-      qc$status <- "FAILED"
-      qc$runtime_seconds <- as.numeric(difftime(Sys.time(), run_start, units = "secs"))
-      write.csv(qc, qc_path, row.names = FALSE)
-      return(list(status = "FAILED", comparison = comparison_name, error = "Data file is empty", qc = qc))
-    }
-
-    if (!"log2fc" %in% colnames(df)) {
-      if ("logFC" %in% colnames(df)) {
-        colnames(df)[colnames(df) == "logFC"] <- "log2fc"
-      } else {
-        write_log_line(comparison_log, "ERROR", comparison_name, "INPUT", "No log2fc/logFC column")
-        qc$status <- "FAILED"
-        qc$runtime_seconds <- as.numeric(difftime(Sys.time(), run_start, units = "secs"))
-        write.csv(qc, qc_path, row.names = FALSE)
-        return(list(status = "FAILED", comparison = comparison_name, error = "No log2fc column", qc = qc))
-      }
-    }
-
-    vectors <- prepare_gene_vectors(df, top_gene_abs_log2fc = analysis_params$top_gene_abs_log2fc)
-    original_gene_list <- vectors$original_gene_list
-    gene_list <- vectors$gene_list
-    fc_for_cnet <- vectors$fc_for_cnet
-    top_genes <- vectors$top_genes
-
-    qc$n_input_rows <- nrow(df)
-    qc$n_non_na_log2fc <- sum(!is.na(df$log2fc))
-    qc$n_unique_gene_ids <- length(unique(df[[1]]))
-    qc$n_top_genes <- length(top_genes)
-    write_log_line(comparison_log, "INFO", comparison_name, "QC", paste0("rows=", qc$n_input_rows,
-                                                                            ", nonNA_log2fc=", qc$n_non_na_log2fc,
-                                                                            ", top_genes=", qc$n_top_genes))
-    print_progress_step(comparison_name, "QC", paste0("top_genes=", qc$n_top_genes), runtime_params$show_step_progress)
-
-    # ----------------------------------------------------
-    # GSEA (GO) WITH OPTIONAL SIMPLIFICATION
-    # ----------------------------------------------------
-    # Ensure OrgDb is passed as object
-    gse <- gseGO(geneList = gene_list, ont = ont, keyType = "UNIPROT", 
-                 minGSSize = analysis_params$min_gs_size,
-                 maxGSSize = analysis_params$max_gs_size,
-                 pvalueCutoff = analysis_params$pvalue_cutoff,
-                 verbose = FALSE,
-                 OrgDb = org_db_obj,
-                 pAdjustMethod = analysis_params$p_adjust_method)
-
-    # Perform simplification ONLY if requested
-    gse_simplified <- NULL  # Initialize as NULL
-
-    if (PERFORM_SIMPLIFICATION && !is.null(gse) && nrow(gse@result) > 0) {
-      gse_temp <- tryCatch({
-        simplify(gse, cutoff = SIMPLIFY_CUTOFF, by = "p.adjust", select_fun = min)
-      }, error = function(e) {
-        warning("Simplify failed for ", comparison_name, ": ", e$message)
-        NULL  # Return NULL on failure
-      })
-
-      # Validate S4 class
-      if (!is.null(gse_temp) && (is(gse_temp, "gseaResult") || is(gse_temp, "enrichResult"))) {
-        gse_simplified <- gse_temp
-      }
-    }
-
-    # Determine which version to use for plotting
-    if (PERFORM_SIMPLIFICATION && !is.null(gse_simplified)) {
-      gse_for_plot <- if(USE_SIMPLIFIED_FOR_PLOTS) gse_simplified else gse
-      plot_suffix <- if(USE_SIMPLIFIED_FOR_PLOTS) "_simplified" else "_full"
-    } else {
-      # No simplification performed - use full results only
-      gse_for_plot <- gse
-      plot_suffix <- "_full"
-    }
-
-    # Generate plots using selected version
-    if (!is.null(gse_for_plot) && nrow(gse_for_plot@result) > 0) {
-      plot_label <- if(PERFORM_SIMPLIFICATION && USE_SIMPLIFIED_FOR_PLOTS && !is.null(gse_simplified)) {
-        "(Simplified)"
-      } else {
-        "(Full)"
-      }
-
-      tryCatch({
-        gse_plot <- clusterProfiler::dotplot(gse_for_plot, showCategory = 10, split = ".sign") +
-          facet_wrap(~ .sign, nrow = 1) +
-          labs(title = paste("GSEA", ont, "of", comparison_name, plot_label), 
-               x = "Gene Ratio", y = "Gene Set") +
-          scale_fill_viridis_c(option = "cividis") + 
-          theme_minimal(base_size = 12) +
-          theme(
-            plot.title = element_text(size = 14, face = "bold", hjust = 0.5),
-            axis.text.x = element_text(angle = 45, hjust = 1),
-            axis.text.y = element_text(size = 10),
-            strip.text = element_text(size = 12, face = "plain"),
-            panel.grid.major = element_line(color = "grey85", size = 0.3),
-            panel.grid.minor = element_blank()
-          )
-        save_plot_organized(gse_plot, paste0("GSEA_", ont, "_dotplot", plot_suffix, ".svg"), dirs$plots_go)
-      }, error=function(e) warning("GSEA dotplot failed: ", e$message))
-
-      # Other plots
-      tryCatch({
-        save_plot_organized(emapplot(pairwise_termsim(gse_for_plot), showCategory = 10), 
-                            paste0("GSEA_", ont, "_emap", plot_suffix, ".svg"), dirs$plots_go)
-      }, error=function(e) NULL)
-
-      tryCatch({
-        save_plot_organized(cnetplot(gse_for_plot, categorySize = "pvalue", foldChange = fc_for_cnet), 
-                            paste0("GSEA_", ont, "_cnet", plot_suffix, ".svg"), dirs$plots_go)
-      }, error = function(e) warning("cnetplot failed: ", e$message))
-
-      tryCatch({
-        ridgeplot_gse <- ridgeplot(gse_for_plot) + 
-          labs(x = "Enrichment Distribution", 
-               title = paste("GSEA", ont, "Ridgeplot", plot_label)) + 
-          theme_minimal()
-        save_plot_organized(ridgeplot_gse, paste0("GSEA_", ont, "_ridge", plot_suffix, ".svg"), dirs$plots_go)
-      }, error=function(e) NULL)
-
-      tryCatch({
-        gseaplot_gse <- gseaplot(gse_for_plot, by = "all", 
-                                 title = gse_for_plot@result$Description[1], geneSetID = 1)
-        save_plot_organized(gseaplot_gse, paste0("GSEA_", ont, "_plot", plot_suffix, ".svg"), dirs$plots_go)
-      }, error=function(e) NULL)
-
-      tryCatch({
-        top_terms <- head(gse_for_plot@result$Description, 3)
-        pmcplot_gse <- pmcplot(top_terms, 2010:2025, proportion = FALSE) + 
-          labs(title = paste("Summary trends -", ont, plot_label))
-        save_plot_organized(pmcplot_gse, paste0("GSEA_", ont, "_pubmed", plot_suffix, ".svg"), dirs$plots_go)
-      }, error=function(e) NULL)
-    }
-
-    # Save results based on whether simplification was performed
-    write.csv(gse@result, 
-              file = file.path(dirs$go_ont, paste0("GSEA_", ont, "_results_full.csv")), 
-              row.names = FALSE)
-
-    if (PERFORM_SIMPLIFICATION && !is.null(gse_simplified)) {
-      write.csv(gse_simplified@result, 
-                file = file.path(dirs$go_ont, paste0("GSEA_", ont, "_results_simplified.csv")), 
-                row.names = FALSE)
-    }
-
-    # Save the version used for plots to core_enrich
-    gse_for_export <- if(PERFORM_SIMPLIFICATION && USE_SIMPLIFIED_FOR_PLOTS && !is.null(gse_simplified)) {
-      gse_simplified
-    } else {
-      gse
-    }
-
-    write.csv(gse_for_export@result, 
-              file = file.path(dirs$core_enrich, paste0(comparison_name, plot_suffix, ".csv")), 
-              row.names = FALSE)
-    write.csv(gse_for_export@result,
-          file = file.path(dirs$core_enrich_routed, paste0(comparison_name, plot_suffix, ".csv")),
-          row.names = FALSE)
-    qc$n_gsea_terms <- nrow(gse@result)
-    print_progress_step(comparison_name, "GSEA", paste0("terms=", qc$n_gsea_terms), runtime_params$show_step_progress)
-
-    # ----------------------------------------------------
-    # ORA WITH OPTIONAL SIMPLIFICATION
-    # ----------------------------------------------------
-    ora_universe <- if (length(background_universe) > 0) background_universe else names(gene_list)
-    if(length(top_genes) > 0) {
-      ora <- enrichGO(gene = top_genes, ont = ont, keyType = "UNIPROT", 
-                      universe = ora_universe,
-                      minGSSize = analysis_params$min_gs_size,
-                      maxGSSize = analysis_params$max_gs_size,
-                      pvalueCutoff = analysis_params$pvalue_cutoff,
-                      OrgDb = org_db_obj,
-                      pAdjustMethod = analysis_params$p_adjust_method)
-
-      # Simplify ONLY if requested
-      ora_simplified <- NULL
-
-      if (PERFORM_SIMPLIFICATION && nrow(ora@result) > 0) {
-        ora_simplified <- tryCatch({
-          simplify(ora, cutoff = SIMPLIFY_CUTOFF, by = "p.adjust", select_fun = min)
-        }, error = function(e) {
-          warning("ORA simplify failed for ", comparison_name, ": ", e$message)
-          NULL
-        })
-
-        # Validate S4 class
-        if (!is.null(ora_simplified) && !is(ora_simplified, "enrichResult")) {
-          ora_simplified <- NULL
-        }
-      }
-
-      # Determine version for plotting
-      if (PERFORM_SIMPLIFICATION && !is.null(ora_simplified)) {
-        ora_for_plot <- if(USE_SIMPLIFIED_FOR_PLOTS) ora_simplified else ora
-      } else {
-        ora_for_plot <- ora
-      }
-
-      if (nrow(ora_for_plot@result) > 0) {
-        plot_label <- if(PERFORM_SIMPLIFICATION && USE_SIMPLIFIED_FOR_PLOTS && !is.null(ora_simplified)) {
-          "(Simplified)"
-        } else {
-          "(Full)"
-        }
-
-        ora_plot <- clusterProfiler::dotplot(ora_for_plot, showCategory = 10) + 
-          labs(title = paste("ORA", ont, "- Top Regulated Genes", plot_label)) + 
-          scale_x_continuous(limits = c(0, 1))
-        save_plot_organized(ora_plot, paste0("ORA_", ont, "_dotplot", plot_suffix, ".svg"), dirs$plots_ora)
-      }
-
-      # Save results
-      write.csv(ora@result, 
-                file = file.path(dirs$ora, paste0("ORA_", ont, "_results_full.csv")), 
-                row.names = FALSE)
-
-      if (PERFORM_SIMPLIFICATION && !is.null(ora_simplified)) {
-        write.csv(ora_simplified@result, 
-                  file = file.path(dirs$ora, paste0("ORA_", ont, "_results_simplified.csv")), 
-                  row.names = FALSE)
-      }
-      qc$n_ora_terms <- nrow(ora@result)
-      print_progress_step(comparison_name, "ORA", paste0("terms=", qc$n_ora_terms), runtime_params$show_step_progress)
-    }
-
-    # ----------------------------------------------------
-    # KEGG GSEA (No simplification - KEGG specific)
-    # ----------------------------------------------------
-    ids <- tryCatch({
-      bitr(names(original_gene_list), fromType = "UNIPROT", toType = "ENTREZID", OrgDb = org_db_obj)
-    }, error = function(e) NULL)
-
-    if(!is.null(ids)) {
-      dedup_ids <- ids[!duplicated(ids$UNIPROT), ]
-      qc$n_id_mapped_uniprot_to_entrez <- nrow(dedup_ids)
-      df2 <- merge(df, dedup_ids, by.x = "gene_symbol", by.y = "UNIPROT")
-
-      kegg_gene_list <- df2$log2fc
-      names(kegg_gene_list) <- df2$ENTREZID
-      kegg_gene_list <- kegg_gene_list[!duplicated(names(kegg_gene_list))]
-      kegg_gene_list <- sort(na.omit(kegg_gene_list), decreasing = TRUE)
-
-      kk2 <- gseKEGG(geneList = kegg_gene_list, organism = "mmu", 
-                     minGSSize = analysis_params$min_gs_size,
-                     maxGSSize = analysis_params$max_gs_size,
-                     pvalueCutoff = analysis_params$pvalue_cutoff,
-                     pAdjustMethod = analysis_params$p_adjust_method,
-                     keyType = "ncbi-geneid", verbose = FALSE)
-
-      if (!is.null(kk2) && nrow(kk2@result) > 0) {
-        kegg_dot <- clusterProfiler::dotplot(kk2, showCategory = 10, split = ".sign") + 
-          facet_wrap(~ .sign, nrow = 1) + 
-          labs(title = "KEGG GSEA") + 
-          theme_minimal()
-        save_plot_organized(kegg_dot, "KEGG_dotplot.svg", dirs$plots_kegg)
-
-        tryCatch({
-          save_plot_organized(emapplot(pairwise_termsim(kk2), showCategory = 10), "KEGG_emap.svg", dirs$plots_kegg)
-        }, error=function(e){})
-
-        tryCatch({
-          save_plot_organized(cnetplot(kk2, categorySize = "pvalue", foldChange = gene_list), "KEGG_cnet.svg", dirs$plots_kegg)
-        }, error=function(e){})
-
-        tryCatch({
-          save_plot_organized(ridgeplot(kk2), "KEGG_ridge.svg", dirs$plots_kegg)
-        }, error=function(e){})
-
-        save_plot_organized(gseaplot(kk2, by = "all", title = kk2$Description[1], geneSetID = 1), "KEGG_plot.svg", dirs$plots_kegg)
-        write.csv(kk2@result, file = file.path(dirs$kegg, "KEGG_GSEA_results.csv"), row.names = FALSE)
-        # Also save the version used for plots to core_enrich
-        write.csv(kk2@result, file = file.path(dirs$core_enrich, paste0(comparison_name, "_KEGG.csv")), row.names = FALSE)
-        write.csv(kk2@result, file = file.path(dirs$core_enrich_routed, paste0(comparison_name, "_KEGG.csv")), row.names = FALSE)
-
-        # Additionally, save to core_enrich with ontology set to 'KEGG'
-        core_enrich_kegg_dir <- file.path(working_base, "Datasets/core_enrichment", "KEGG")
-        if (!dir.exists(core_enrich_kegg_dir)) dir.create(core_enrich_kegg_dir, recursive = TRUE)
-        write.csv(kk2@result, file = file.path(core_enrich_kegg_dir, paste0(comparison_name, "_KEGG.csv")), row.names = FALSE)
-
-        core_enrich_kegg_routed_dir <- file.path(working_base, "Datasets/core_enrichment", "KEGG", dirs$route_category, dirs$route_unit)
-        if (!dir.exists(core_enrich_kegg_routed_dir)) dir.create(core_enrich_kegg_routed_dir, recursive = TRUE)
-        write.csv(kk2@result, file = file.path(core_enrich_kegg_routed_dir, paste0(comparison_name, "_KEGG.csv")), row.names = FALSE)
-        qc$n_kegg_terms <- nrow(kk2@result)
-      } else {
-        # Create empty file so we know it ran but found nothing
-        write.csv(data.frame(), file = file.path(dirs$kegg, "KEGG_GSEA_results_EMPTY.csv"))
-        qc$n_kegg_terms <- 0
-      }
-      print_progress_step(comparison_name, "KEGG", paste0("terms=", qc$n_kegg_terms), runtime_params$show_step_progress)
-
-      # Pathview
-      pathview_dir <- normalizePath(dirs$pathview, winslash = "/", mustWork = FALSE)
-      if (length(path_ids) > 0) {
-        oldwd <- getwd()
-        tryCatch({
-          if (file.exists(pathview_dir)) setwd(pathview_dir)
-
-          lapply(path_ids, function(pid) {
-            try({
-              pathview(gene.data = kegg_gene_list, pathway.id = pid, species = "mmu", 
-                       low = "#6698CC", mid = "white", high = "#F08C21", file.type = "svg")
-            }, silent = TRUE)
-          })
-        }, error = function(e) {
-          warning("Pathview failed: ", e$message)
-        }, finally = {
-          setwd(oldwd)
-        })
-      } else {
-        message("No path_ids provided; skipping pathview for ", comparison_name)
-      }
-    }
-    
-    # ----------------------------------------------------
-    # EnrichGO Analysis (ALL ontologies) WITH OPTIONAL SIMPLIFICATION
-    # ----------------------------------------------------
-    go_universe <- if (length(background_universe) > 0) background_universe else names(gene_list)
-    go_enrich <- enrichGO(gene = names(gene_list), universe = go_universe, 
-                          OrgDb = org_db_obj, keyType = 'UNIPROT', readable = TRUE, 
-                ont = ont,
-                pvalueCutoff = analysis_params$pvalue_cutoff,
-                qvalueCutoff = analysis_params$qvalue_cutoff,
-                pAdjustMethod = analysis_params$p_adjust_method,
-                minGSSize = analysis_params$min_gs_size,
-                maxGSSize = analysis_params$max_gs_size)
-    
-    
-    # Initialize simplified version as NULL
-    go_enrich_simplified <- NULL
-    
-    # Process simplification ONLY if requested
-    if (PERFORM_SIMPLIFICATION) {
-      simplified_results_list <- list()
-      
-      for (ont_type in c("BP", "CC", "MF")) {
-        # Run enrichGO for this specific ontology
-        go_single <- tryCatch({
-          enrichGO(gene = names(gene_list), 
-                   universe = go_universe, 
-                   OrgDb = org_db_obj, 
-                   keyType = 'UNIPROT', 
-                   readable = TRUE, 
-                   ont = ont_type,
-                   pvalueCutoff = analysis_params$pvalue_cutoff,
-                   qvalueCutoff = analysis_params$qvalue_cutoff,
-                   pAdjustMethod = analysis_params$p_adjust_method,
-                   minGSSize = analysis_params$min_gs_size,
-                   maxGSSize = analysis_params$max_gs_size)
-        }, error = function(e) {
-          warning("enrichGO failed for ", ont_type, ": ", e$message)
-          NULL
-        })
-        
-        # Simplify if results exist
-        if (!is.null(go_single) && nrow(go_single@result) > 0) {
-          go_simplified <- tryCatch({
-            simplify(go_single, cutoff = SIMPLIFY_CUTOFF, by = "p.adjust", select_fun = min)
-          }, error = function(e) {
-            warning("Simplify failed for ", ont_type, ": ", e$message)
-            go_single
-          })
-          
-          # Store results as data.frame
-          if (is(go_simplified, "enrichResult")) {
-            simplified_results_list[[ont_type]] <- go_simplified@result
-          } else if (is.data.frame(go_simplified)) {
-            simplified_results_list[[ont_type]] <- go_simplified
-          } else {
-            simplified_results_list[[ont_type]] <- go_single@result
-          }
-        }
-      }
-      
-      # Combine simplified results
-      if (length(simplified_results_list) > 0) {
-        go_enrich_simplified <- go_enrich
-        go_enrich_simplified@result <- do.call(rbind, simplified_results_list)
-      }
-    }
-    
-    
-    # Choose version for plotting
-    if (PERFORM_SIMPLIFICATION && !is.null(go_enrich_simplified)) {
-      go_enrich_for_plot <- if(USE_SIMPLIFIED_FOR_PLOTS) go_enrich_simplified else go_enrich
-    } else {
-      go_enrich_for_plot <- go_enrich
-    }
-    
-    
-    # Plot with selected version
-    if (nrow(go_enrich_for_plot@result) > 0) {
-      plot_label <- if(PERFORM_SIMPLIFICATION && USE_SIMPLIFIED_FOR_PLOTS && !is.null(go_enrich_simplified)) {
-        "(Simplified)"
-      } else {
-        "(Full)"
-      }
-      
-      p4 <- clusterProfiler::dotplot(go_enrich_for_plot, showCategory = 20, split = "ONTOLOGY") +
-        facet_grid(ONTOLOGY ~ ., scales = "free_y") +
-        labs(title = paste("GO Enrichment Dotplot", plot_label), 
-             x = "Gene Ratio", y = "GO Term", color = "p.adjust", size = "Count") +
-        scale_color_viridis_c(option = "magma", direction = -1) +
-        theme_minimal(base_size = 12) +
-        theme(plot.title = element_text(hjust = 0.5, size = 14, face = "bold"), 
-              axis.text.x = element_text(angle = 45, hjust = 1))
-      
-      save_plot_organized(p4, paste0("GOenrich_dotplot", plot_suffix, ".svg"), dirs$plots_go)
-    }
-    
-    
-    # Save results
-    write.csv(go_enrich@result, 
-              file = file.path(dirs$go_ont, paste0("enrichGO_ALL_results_full.csv")), 
-              row.names = FALSE)
-    print_progress_step(comparison_name, "enrichGO", paste0("terms=", nrow(go_enrich@result)), runtime_params$show_step_progress)
-    
-    if (PERFORM_SIMPLIFICATION && !is.null(go_enrich_simplified)) {
-      write.csv(go_enrich_simplified@result, 
-                file = file.path(dirs$go_ont, paste0("enrichGO_ALL_results_simplified.csv")), 
-                row.names = FALSE)
-    }
-    
-    # ----------------------------------------------------
-    # KEGG GSEA with Predefined UniProt IDs
-    # ----------------------------------------------------
-     selected_entrez <- NULL
-     if (length(selected_uniprot) > 0) {
-      selected_entrez <- tryCatch({
-        bitr(selected_uniprot, fromType = "UNIPROT", toType = "ENTREZID", OrgDb = org_db_obj)
-      }, error=function(e) NULL)
-     }
-    
-    if(!is.null(selected_entrez)) {
-      selected_df <- merge(df, selected_entrez, by.x = "gene_symbol", by.y = "UNIPROT")
-      if(nrow(selected_df) > 0) {
-        selected_kegg_list <- selected_df$log2fc
-        names(selected_kegg_list) <- selected_df$ENTREZID
-        selected_kegg_list <- selected_kegg_list[!duplicated(names(selected_kegg_list))]
-        selected_kegg_list <- sort(na.omit(selected_kegg_list), decreasing = TRUE)
-        
-        gsea_kegg_selected <- gseKEGG(geneList = selected_kegg_list, organism = "mmu", 
-                                      minGSSize = analysis_params$min_gs_size,
-                                      maxGSSize = analysis_params$max_gs_size,
-                                      pvalueCutoff = analysis_params$pvalue_cutoff,
-                                      pAdjustMethod = analysis_params$p_adjust_method,
-                                      keyType = "ncbi-geneid", verbose = FALSE)
-        
-        if (!is.null(gsea_kegg_selected) && nrow(gsea_kegg_selected@result) > 0) {
-          kegg_selected_dot <- clusterProfiler::dotplot(gsea_kegg_selected, showCategory = 10, split = ".sign") + 
-            facet_wrap(~ .sign, nrow = 1) + 
-            labs(title = "KEGG GSEA (Predefined)") + 
-            theme_minimal()
-          save_plot_organized(kegg_selected_dot, "KEGG_Predefined_dotplot.svg", dirs$plots_kegg)
-          write.csv(gsea_kegg_selected@result, file = file.path(dirs$kegg, "KEGG_GSEA_Predefined_UniProt.csv"), row.names = FALSE)
-          
-          tryCatch({
-            save_plot_organized(emapplot(pairwise_termsim(gsea_kegg_selected), showCategory = 10), "KEGG_Predefined_emap.svg", dirs$plots_kegg)
-          }, error=function(e){})
-          
-          tryCatch({
-            save_plot_organized(cnetplot(gsea_kegg_selected, categorySize = "pvalue", foldChange = selected_kegg_list), "KEGG_Predefined_cnet.svg", dirs$plots_kegg)
-          }, error=function(e){})
-          
-          tryCatch({
-            save_plot_organized(ridgeplot(gsea_kegg_selected), "KEGG_Predefined_ridge.svg", dirs$plots_kegg)
-          }, error=function(e){})
-          
-          save_plot_organized(gseaplot(gsea_kegg_selected, by = "all", title = gsea_kegg_selected$Description[1], geneSetID = 1), "KEGG_Predefined_plot.svg", dirs$plots_kegg)
-        }
-      }
-    }
-    
-    # ----------------------------------------------------
-    # Custom GSEA: NK3R-signalling (No simplification needed)
-    # ----------------------------------------------------
-    if (length(nk3r_genes) > 0) {
-      term2gene_nk3r <- data.frame(term = rep("NK3R-signalling", length(nk3r_genes)), gene = nk3r_genes)
-      custom_gene_list <- df$log2fc
-      names(custom_gene_list) <- df$gene_symbol
-      custom_gene_list <- sort(na.omit(custom_gene_list), decreasing = TRUE)
-      custom_gene_list <- custom_gene_list[!duplicated(names(custom_gene_list))]
-      
-      gsea_nk3r <- clusterProfiler::GSEA(geneList = custom_gene_list, TERM2GENE = term2gene_nk3r, 
-                                         pvalueCutoff = analysis_params$pvalue_cutoff,
-                                         minGSSize = 1,
-                                         maxGSSize = 500,
-                                         verbose = FALSE)
-      
-      if (!is.null(gsea_nk3r) && nrow(gsea_nk3r@result) > 0) {
-        nk3r_dot <- clusterProfiler::dotplot(gsea_nk3r, showCategory = 10, split = ".sign") + 
-          facet_wrap(~ .sign, nrow = 1) + 
-          labs(title = "NK3R-signalling GSEA") + 
-          theme_minimal()
-        save_plot_organized(nk3r_dot, "NK3R_dotplot.svg", dirs$plots_custom)
-        
-        nk3r_plot <- gseaplot(gsea_nk3r, by = "all", title = "NK3R-signalling", geneSetID = 1)
-        save_plot_organized(nk3r_plot, "NK3R_gsea_plot.svg", dirs$plots_custom)
-        openxlsx::write.xlsx(gsea_nk3r@result, file = file.path(dirs$custom, "NK3R_GSEA_results.xlsx"))
-      }
-    } else {
-      message("No nk3r_genes provided; skipping custom NK3R GSEA for ", comparison_name)
-    }
-    
-    qc$status <- "SUCCESS"
-    qc$runtime_seconds <- as.numeric(difftime(Sys.time(), run_start, units = "secs"))
-    write.csv(qc, file.path(dirs$results, "QC_summary.csv"), row.names = FALSE)
-    write_completed_checkpoint(dirs)
-    write_log_line(comparison_log, "INFO", comparison_name, "DONE", paste0("Completed in ", round(qc$runtime_seconds, 2), " sec"))
-    print_progress_step(comparison_name, "DONE", paste0("runtime_sec=", round(qc$runtime_seconds, 2)), runtime_params$show_step_progress)
-    return(list(status = "SUCCESS", comparison = comparison_name, error = NA_character_, qc = qc))
-    
-  }, error = function(e) {
-    qc$status <- "ERROR"
-    qc$runtime_seconds <- as.numeric(difftime(Sys.time(), run_start, units = "secs"))
-    write_log_line(comparison_log, "ERROR", comparison_name, "UNHANDLED", conditionMessage(e))
-    return(list(status = "ERROR", comparison = comparison_name, error = conditionMessage(e), qc = qc))
-  })
+  list(value = value, warnings = unique(warnings))
 }
 
-# ----------------------------------------------------
-# 6. RUN PARALLEL ANALYSIS WITH FUTURE
-# ----------------------------------------------------
-cat("\n==============================================\n")
-cat("STARTING PARALLEL GSEA ANALYSIS\n")
-cat("==============================================\n\n")
-cat("Launching", length(comparison_list), "comparisons across", n_cores, "workers...\n")
-if (length(comparison_list) < n_cores) {
-  cat("[WARNING] Number of comparisons (", length(comparison_list), ") < workers (", n_cores, ")\n")
-  cat("[WARNING] Not all workers will be used; consider increasing comparison_list or reducing workers.\n")
-}
-cat("Progress updates now reflect both STARTED and FINISHED states.\n\n")
-
-# Verify the plan before execution
-cat("[DEBUG PARALLEL] Before future_lapply:\n")
-cat("[DEBUG PARALLEL]   Current plan:", toString(class(plan())), "\n")
-cat("[DEBUG PARALLEL]   Number of workers:", nbrOfWorkers(), "\n")
-cat("[DEBUG PARALLEL]   Number of comparisons to process:", length(comparison_list), "\n")
-cat("[DEBUG PARALLEL]   Future.seed setting: TRUE\n")
-
-if (isTRUE(runtime_params$show_progress)) {
-  progressr::handlers("txtprogressbar")
-  results <- progressr::with_progress({
-    p <- progressr::progressor(steps = max(1L, 2L * length(comparison_list)))
-    future_lapply(comparison_list, function(cell_types) {
-      comparison_name <- paste(cell_types, collapse = "_")
-      p(message = paste0(comparison_name, " -> STARTED"))
-      res <- analyze_comparison(cell_types, working_base, mapped_data_base, organism, ont,
-                                nk3r_genes, selected_uniprot, path_ids,
-                                analysis_params = analysis_params,
-                                runtime_params = runtime_params,
-                                run_log_dir = run_log_dir,
-                                background_universe = background_universe)
-      p(message = paste0(res$comparison, " -> ", res$status))
-      res
-    }, future.seed = TRUE)
-  })
-} else {
-  results <- future_lapply(comparison_list, function(cell_types) {
-    analyze_comparison(cell_types, working_base, mapped_data_base, organism, ont,
-                       nk3r_genes, selected_uniprot, path_ids,
-                       analysis_params = analysis_params,
-                       runtime_params = runtime_params,
-                       run_log_dir = run_log_dir,
-                       background_universe = background_universe)
-  }, future.seed = TRUE)
+run_seeded <- function(expression, comparison, analysis) {
+  seed <- derive_neha_enrichment_seed(config$gsea_seed_base, comparison, analysis)
+  captured <- capture_warnings(with_neha_enrichment_seed(seed, expression))
+  captured$seed <- seed
+  captured
 }
 
-cat("[DEBUG PARALLEL] After future_lapply completed\n")
-cat("[DEBUG PARALLEL]   Number of results:", length(results), "\n")
+result_count <- function(result) nrow(neha_enrichment_result_table(result))
 
-# Reset to sequential processing
-plan(sequential)
-
-# Print summary
-cat("\n==============================================\n")
-cat("PARALLEL ANALYSIS SUMMARY\n")
-cat("==============================================\n\n")
-
-for (result in results) {
-  if (result$status == "SUCCESS") {
-    cat("✓", result$comparison, "- COMPLETED\n")
-  } else if (result$status == "SKIPPED") {
-    cat("○", result$comparison, "- SKIPPED (checkpoint exists)\n")
-  } else {
-    cat("✗", result$comparison, "- FAILED:", result$error, "\n")
-  }
+write_result <- function(result, path) {
+  table <- neha_enrichment_result_table(result)
+  write_neha_enrichment_csv(table, path)
 }
 
-cat("\n==============================================\n")
-cat("ALL COMPARISONS COMPLETED!\n")
-cat("==============================================\n\n")
+save_dotplot <- function(result, path, title) {
+  if (!isTRUE(config$plots_enabled) || result_count(result) == 0L) return(NA_character_)
+  plot <- enrichplot::dotplot(result, showCategory = min(20L, result_count(result))) +
+    ggplot2::ggtitle(title)
+  dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
+  ggplot2::ggsave(path, plot = plot, width = 10, height = 7, dpi = 300)
+  neha_enrichment_normalize_path(path, must_work = TRUE)
+}
 
-# ----------------------------------------------------
-# 7. RUN-LEVEL SUMMARY OUTPUTS
-# ----------------------------------------------------
-summary_dir <- file.path(working_base, "Results")
-dir.create(summary_dir, recursive = TRUE, showWarnings = FALSE)
+run_go_gsea <- function(rank, comparison) {
+  run_seeded(
+    clusterProfiler::gseGO(
+      geneList = rank,
+      ont = config$ontology,
+      keyType = "UNIPROT",
+      OrgDb = org.Mm.eg.db::org.Mm.eg.db,
+      exponent = 1,
+      minGSSize = config$min_gs_size,
+      maxGSSize = config$max_gs_size,
+      eps = 1e-10,
+      pvalueCutoff = config$pvalue_cutoff,
+      pAdjustMethod = config$p_adjust_method,
+      verbose = FALSE,
+      seed = TRUE,
+      by = "fgsea"
+    ),
+    comparison,
+    paste0("GO_", config$ontology, "_GSEA")
+  )
+}
 
-status_vec <- vapply(results, function(x) x$status, character(1))
-error_vec <- vapply(results, function(x) ifelse(is.null(x$error), NA_character_, x$error), character(1))
-comparison_vec <- vapply(results, function(x) x$comparison, character(1))
+run_go_ora <- function(gene, universe) {
+  if (!length(gene)) return(list(value = NULL, warnings = character()))
+  capture_warnings(clusterProfiler::enrichGO(
+    gene = gene,
+    universe = universe,
+    OrgDb = org.Mm.eg.db::org.Mm.eg.db,
+    keyType = "UNIPROT",
+    ont = config$ontology,
+    pAdjustMethod = config$p_adjust_method,
+    pvalueCutoff = config$pvalue_cutoff,
+    qvalueCutoff = config$qvalue_cutoff,
+    minGSSize = config$min_gs_size,
+    maxGSSize = config$max_gs_size,
+    readable = FALSE
+  ))
+}
 
-run_summary <- data.frame(
-  comparison = comparison_vec,
-  status = status_vec,
-  error = error_vec,
+build_kegg_rank <- function(collapsed) {
+  conversion <- suppressMessages(AnnotationDbi::select(
+    org.Mm.eg.db::org.Mm.eg.db,
+    keys = unique(as.character(collapsed$uniprot_accession)),
+    keytype = "UNIPROT",
+    columns = "ENTREZID"
+  ))
+  conversion <- conversion[!is.na(conversion$ENTREZID) & nzchar(conversion$ENTREZID), , drop = FALSE]
+  conversion <- conversion[order(conversion$UNIPROT, conversion$ENTREZID, method = "radix"), , drop = FALSE]
+  conversion <- conversion[!duplicated(conversion$UNIPROT), , drop = FALSE]
+  candidate <- merge(
+    collapsed[, c("uniprot_accession", "original_protein_id", "source_row_id", "log2fc"), drop = FALSE],
+    conversion,
+    by.x = "uniprot_accession", by.y = "UNIPROT", all = FALSE, sort = FALSE
+  )
+  candidate$log2fc <- suppressWarnings(as.numeric(candidate$log2fc))
+  candidate <- candidate[is.finite(candidate$log2fc), , drop = FALSE]
+  candidate <- candidate[order(
+    candidate$ENTREZID, -abs(candidate$log2fc), candidate$source_row_id,
+    candidate$uniprot_accession, method = "radix"
+  ), , drop = FALSE]
+  candidate$selected_representative <- !duplicated(candidate$ENTREZID)
+  selected <- candidate[candidate$selected_representative, , drop = FALSE]
+  selected <- selected[order(-selected$log2fc, selected$ENTREZID, method = "radix"), , drop = FALSE]
+  rank <- selected$log2fc
+  names(rank) <- selected$ENTREZID
+  if (anyDuplicated(names(rank)) || any(!is.finite(rank))) stop("Invalid KEGG rank after Entrez collapse.", call. = FALSE)
+  candidate$selection_rule <- "one_Entrez_per_UniProt_then_largest_absolute_log2fc_per_Entrez;ties_by_source_row_id_then_UniProt"
+  list(rank = rank, audit = candidate, conversion = conversion)
+}
+
+run_kegg_gsea <- function(rank, comparison, analysis = "KEGG_GSEA") {
+  if (!length(rank)) return(list(value = NULL, warnings = character(), seed = NA_integer_))
+  run_seeded(
+    clusterProfiler::gseKEGG(
+      geneList = rank,
+      organism = "mmu",
+      keyType = "ncbi-geneid",
+      exponent = 1,
+      minGSSize = config$min_gs_size,
+      maxGSSize = config$max_gs_size,
+      eps = 1e-10,
+      pvalueCutoff = config$pvalue_cutoff,
+      pAdjustMethod = config$p_adjust_method,
+      verbose = FALSE,
+      seed = TRUE,
+      by = "fgsea"
+    ),
+    comparison,
+    analysis
+  )
+}
+
+run_custom_gsea <- function(rank, genes, comparison, analysis, term_name) {
+  if (!length(genes)) return(list(value = NULL, warnings = character(), seed = NA_integer_))
+  term2gene <- data.frame(term = term_name, gene = unique(genes), stringsAsFactors = FALSE)
+  run_seeded(
+    clusterProfiler::GSEA(
+      geneList = rank,
+      TERM2GENE = term2gene,
+      exponent = 1,
+      minGSSize = 1,
+      maxGSSize = 500,
+      eps = 1e-10,
+      pvalueCutoff = config$pvalue_cutoff,
+      pAdjustMethod = config$p_adjust_method,
+      verbose = FALSE,
+      seed = TRUE,
+      by = "fgsea"
+    ),
+    comparison,
+    analysis
+  )
+}
+
+empty_warning_table <- function() data.frame(
+  canonical_comparison = character(), analysis = character(), warning = character(),
   stringsAsFactors = FALSE
 )
 
-run_summary_file <- file.path(summary_dir, paste0("clusterProfiler_run_summary_", run_id, ".csv"))
-write.csv(run_summary, run_summary_file, row.names = FALSE)
-
-qc_rows <- lapply(results, function(x) x$qc)
-qc_rows <- qc_rows[!vapply(qc_rows, is.null, logical(1))]
-if (length(qc_rows) > 0) {
-  run_qc <- dplyr::bind_rows(qc_rows)
-  run_qc_file <- file.path(summary_dir, paste0("clusterProfiler_qc_summary_", run_id, ".csv"))
-  write.csv(run_qc, run_qc_file, row.names = FALSE)
+append_warnings <- function(table, comparison, analysis, warnings) {
+  if (!length(warnings)) return(table)
+  rbind(table, data.frame(
+    canonical_comparison = comparison,
+    analysis = analysis,
+    warning = as.character(warnings),
+    stringsAsFactors = FALSE
+  ))
 }
 
-summary_txt <- file.path(summary_dir, paste0("clusterProfiler_run_summary_", run_id, ".txt"))
-summary_lines <- c(
-  "clusterProfiler parallel run summary",
-  paste0("Run ID: ", run_id),
-  paste0("Timestamp: ", format(Sys.time(), "%Y-%m-%d %H:%M:%S")),
-  paste0("Config: ", config_path),
-  paste0("Total comparisons: ", length(results)),
-  paste0("SUCCESS: ", sum(status_vec == "SUCCESS")),
-  paste0("SKIPPED: ", sum(status_vec == "SKIPPED")),
-  paste0("FAILED/ERROR: ", sum(status_vec %in% c("FAILED", "ERROR"))),
-  paste0("Master log: ", master_log),
-  paste0("Run summary CSV: ", run_summary_file)
-)
-writeLines(summary_lines, con = summary_txt)
-write_log_line(master_log, "INFO", "GLOBAL", "SUMMARY", paste0("Run summary written: ", run_summary_file))
+write_comparison_manifest <- function(record, path) {
+  values <- vapply(record, function(value) {
+    if (!length(value) || all(is.na(value))) "" else paste(as.character(value), collapse = ";")
+  }, character(1))
+  write_neha_enrichment_csv(
+    data.frame(field = names(values), value = unname(values), stringsAsFactors = FALSE),
+    path
+  )
+}
 
+process_comparison <- function(index_row) {
+  comparison <- as.character(index_row$canonical_comparison)
+  comparison_dir <- file.path(per_comparison_root, comparison)
+  audit_dir <- file.path(audit_root, comparison)
+  dir.create(comparison_dir, recursive = TRUE, showWarnings = FALSE)
+  dir.create(audit_dir, recursive = TRUE, showWarnings = FALSE)
+  started <- Sys.time()
+  warning_rows <- empty_warning_table()
+
+  record <- list(
+    canonical_comparison = comparison,
+    canonical_contrast = as.character(index_row$canonical_contrast),
+    sample_class = as.character(index_row$sample_class),
+    numerator_condition = as.character(index_row$numerator_condition),
+    denominator_condition = as.character(index_row$denominator_condition),
+    historical_comparison_alias = as.character(index_row$historical_comparison_alias),
+    mapping_direction = as.character(index_row$mapping_direction),
+    mapped_input_path = as.character(index_row$mapped_input_path),
+    mapped_input_sha256 = as.character(index_row$mapped_output_sha256),
+    mapped_index_path = as.character(index_row$mapped_index_path),
+    mapped_index_sha256 = as.character(index_row$mapped_index_sha256),
+    source_split_index_path = as.character(index_row$source_split_index_path),
+    source_split_index_sha256 = as.character(index_row$source_split_index_sha256),
+    source_split_sha256 = as.character(index_row$source_split_sha256),
+    source_gct_sha256 = as.character(index_row$source_gct_sha256),
+    mapping_reference_path = as.character(index_row$mapping_reference_path),
+    mapping_reference_version = as.character(index_row$mapping_reference_version),
+    mapping_reference_snapshot_date_utc = as.character(index_row$mapping_reference_snapshot_date_utc),
+    mapping_reference_sha256 = as.character(index_row$mapping_reference_sha256),
+    ranking_statistic = "log2fc",
+    rank_direction = "positive_is_higher_in_canonical_numerator",
+    duplicate_uniprot_rule = "largest_absolute_log2fc;finite_preferred;ties_by_source_row_id_then_original_protein_id",
+    ora_universe_definition = "all_unique_successfully_mapped_measured_uniprot_accessions",
+    ontology = config$ontology,
+    pvalue_cutoff = config$pvalue_cutoff,
+    qvalue_cutoff = config$qvalue_cutoff,
+    p_adjust_method = config$p_adjust_method,
+    fdr_threshold = config$fdr_threshold,
+    top_abs_log2fc_threshold = config$top_abs_log2fc,
+    min_gs_size = config$min_gs_size,
+    max_gs_size = config$max_gs_size,
+    simplify_enabled = config$simplify,
+    simplify_cutoff = config$simplify_cutoff,
+    execution_status = "failed",
+    error_message = NA_character_
+  )
+
+  tryCatch({
+    mapped <- read_neha_enrichment_mapped_file(
+      record$mapped_input_path,
+      expected_rows = index_row$n_output_mapped_rows,
+      expected_sha256 = record$mapped_input_sha256
+    )
+    collapsed_info <- collapse_neha_enrichment_accessions(mapped, "log2fc")
+    collapsed <- collapsed_info$collapsed
+    rank_info <- build_neha_gsea_rank(collapsed, "log2fc")
+    ora_sets <- build_neha_ora_sets(collapsed, config$fdr_threshold, config$top_abs_log2fc)
+
+    record$n_source_protein_rows <- nrow(mapped)
+    record$n_mapped_protein_rows <- nrow(mapped)
+    record$n_unique_mapped_uniprot <- length(ora_sets$universe)
+    record$n_duplicate_rows_collapsed <- collapsed_info$n_duplicate_rows_collapsed
+    record$n_duplicated_uniprot_accessions <- collapsed_info$n_duplicated_accessions
+    record$rank_vector_size <- length(rank_info$rank)
+    record$ora_universe_size <- length(ora_sets$universe)
+    record$fdr_significant_protein_count <- length(ora_sets$all_significant)
+    record$fdr_significant_up_count <- length(ora_sets$up_significant)
+    record$fdr_significant_down_count <- length(ora_sets$down_significant)
+    record$top_abs_log2fc_count <- length(ora_sets$top_abs_log2fc)
+
+    record$duplicate_uniprot_audit <- write_neha_enrichment_csv(
+      collapsed_info$duplicate_audit, file.path(audit_dir, "duplicate_uniprot_audit.csv")
+    )
+    record$collapsed_mapped_audit <- write_neha_enrichment_csv(
+      collapsed, file.path(audit_dir, "mapped_uniprot_collapsed.csv")
+    )
+    record$gsea_rank_audit <- write_neha_enrichment_csv(
+      rank_info$audit, file.path(audit_dir, "gsea_rank_audit.csv")
+    )
+    record$ora_membership_audit <- write_neha_enrichment_csv(
+      data.frame(
+        uniprot_accession = ora_sets$universe,
+        fdr_significant = ora_sets$universe %in% ora_sets$all_significant,
+        fdr_significant_up = ora_sets$universe %in% ora_sets$up_significant,
+        fdr_significant_down = ora_sets$universe %in% ora_sets$down_significant,
+        top_abs_log2fc = ora_sets$universe %in% ora_sets$top_abs_log2fc,
+        stringsAsFactors = FALSE
+      ),
+      file.path(audit_dir, "ora_measured_universe_audit.csv")
+    )
+
+    go_gsea <- run_go_gsea(rank_info$rank, comparison)
+    warning_rows <- append_warnings(warning_rows, comparison, paste0("GO_", config$ontology, "_GSEA"), go_gsea$warnings)
+    go_gsea_table <- neha_enrichment_result_table(go_gsea$value)
+    record$go_gsea_seed <- go_gsea$seed
+    record$go_gsea_term_count <- nrow(go_gsea_table)
+    record$go_gsea_fdr_term_count <- sum(is.finite(go_gsea_table$p.adjust) & go_gsea_table$p.adjust < config$fdr_threshold)
+    record$go_gsea_output <- write_result(go_gsea$value, file.path(comparison_dir, paste0("GSEA_GO_", config$ontology, ".csv")))
+    record$go_gsea_plot <- save_dotplot(
+      go_gsea$value,
+      file.path(comparison_dir, paste0("GSEA_GO_", config$ontology, "_dotplot.png")),
+      paste(comparison, "GO", config$ontology, "GSEA")
+    )
+
+    if (isTRUE(config$simplify) && nrow(go_gsea_table)) {
+      simplified <- capture_warnings(clusterProfiler::simplify(
+        go_gsea$value, cutoff = config$simplify_cutoff, by = "p.adjust",
+        select_fun = min, measure = "Wang", semData = NULL
+      ))
+      warning_rows <- append_warnings(warning_rows, comparison, "GO_GSEA_simplify", simplified$warnings)
+      record$go_gsea_simplified_term_count <- result_count(simplified$value)
+      record$go_gsea_simplified_output <- write_result(
+        simplified$value, file.path(comparison_dir, paste0("GSEA_GO_", config$ontology, "_simplified.csv"))
+      )
+    } else {
+      record$go_gsea_simplified_term_count <- NA_integer_
+      record$go_gsea_simplified_output <- NA_character_
+    }
+
+    ora_definitions <- list(
+      fdr_all = ora_sets$all_significant,
+      fdr_up = ora_sets$up_significant,
+      fdr_down = ora_sets$down_significant,
+      top_abs_log2fc = ora_sets$top_abs_log2fc
+    )
+    for (ora_name in names(ora_definitions)) {
+      ora <- run_go_ora(ora_definitions[[ora_name]], ora_sets$universe)
+      warning_rows <- append_warnings(warning_rows, comparison, paste0("GO_ORA_", ora_name), ora$warnings)
+      record[[paste0("go_ora_", ora_name, "_term_count")]] <- result_count(ora$value)
+      record[[paste0("go_ora_", ora_name, "_output")]] <- write_result(
+        ora$value, file.path(comparison_dir, paste0("ORA_GO_", config$ontology, "_", ora_name, ".csv"))
+      )
+      if (isTRUE(config$simplify) && result_count(ora$value)) {
+        simplified_ora <- capture_warnings(clusterProfiler::simplify(
+          ora$value, cutoff = config$simplify_cutoff, by = "p.adjust",
+          select_fun = min, measure = "Wang", semData = NULL
+        ))
+        warning_rows <- append_warnings(warning_rows, comparison, paste0("GO_ORA_", ora_name, "_simplify"), simplified_ora$warnings)
+        record[[paste0("go_ora_", ora_name, "_simplified_term_count")]] <- result_count(simplified_ora$value)
+        record[[paste0("go_ora_", ora_name, "_simplified_output")]] <- write_result(
+          simplified_ora$value,
+          file.path(comparison_dir, paste0("ORA_GO_", config$ontology, "_", ora_name, "_simplified.csv"))
+        )
+      } else {
+        record[[paste0("go_ora_", ora_name, "_simplified_term_count")]] <- NA_integer_
+        record[[paste0("go_ora_", ora_name, "_simplified_output")]] <- NA_character_
+      }
+    }
+
+    if (isTRUE(config$kegg_enabled)) {
+      kegg <- build_kegg_rank(collapsed)
+      record$kegg_rank_vector_size <- length(kegg$rank)
+      record$kegg_mapping_audit <- write_neha_enrichment_csv(
+        kegg$audit, file.path(audit_dir, "kegg_entrez_collapse_audit.csv")
+      )
+      kegg_gsea <- run_kegg_gsea(kegg$rank, comparison)
+      warning_rows <- append_warnings(warning_rows, comparison, "KEGG_GSEA", kegg_gsea$warnings)
+      record$kegg_gsea_seed <- kegg_gsea$seed
+      record$kegg_gsea_term_count <- result_count(kegg_gsea$value)
+      record$kegg_gsea_output <- write_result(kegg_gsea$value, file.path(comparison_dir, "GSEA_KEGG.csv"))
+      record$kegg_gsea_plot <- save_dotplot(
+        kegg_gsea$value, file.path(comparison_dir, "GSEA_KEGG_dotplot.png"),
+        paste(comparison, "KEGG GSEA")
+      )
+
+      if (length(config$selected_uniprot)) {
+        selected_entrez <- unique(kegg$audit$ENTREZID[kegg$audit$uniprot_accession %in% config$selected_uniprot])
+        selected_rank <- kegg$rank[names(kegg$rank) %in% selected_entrez]
+        selected_rank <- sort(selected_rank, decreasing = TRUE)
+        selected_gsea <- run_kegg_gsea(selected_rank, comparison, "KEGG_selected_UniProt_GSEA")
+        warning_rows <- append_warnings(warning_rows, comparison, "KEGG_selected_UniProt_GSEA", selected_gsea$warnings)
+        record$custom_selected_uniprot_term_count <- result_count(selected_gsea$value)
+        record$custom_selected_uniprot_output <- write_result(
+          selected_gsea$value, file.path(comparison_dir, "GSEA_KEGG_selected_uniprot.csv")
+        )
+      } else {
+        record$custom_selected_uniprot_term_count <- 0L
+        record$custom_selected_uniprot_output <- NA_character_
+      }
+
+      if (length(config$path_ids)) {
+        if (!requireNamespace("pathview", quietly = TRUE)) {
+          stop("NEHA_ENRICHMENT_PATH_IDS was configured but package 'pathview' is unavailable.", call. = FALSE)
+        }
+        pathview_dir <- file.path(comparison_dir, "pathview")
+        dir.create(pathview_dir, recursive = TRUE, showWarnings = FALSE)
+        withr::with_dir(pathview_dir, {
+          for (path_id in config$path_ids) {
+            pathview_result <- capture_warnings(pathview::pathview(
+              gene.data = kegg$rank, pathway.id = path_id, species = "mmu",
+              gene.idtype = "entrez", out.suffix = comparison, kegg.native = TRUE
+            ))
+            warning_rows <- append_warnings(
+              warning_rows, comparison, paste0("pathview_", path_id), pathview_result$warnings
+            )
+          }
+        })
+        record$custom_pathview_output_directory <- neha_enrichment_normalize_path(pathview_dir, must_work = TRUE)
+      } else {
+        record$custom_pathview_output_directory <- NA_character_
+      }
+    } else {
+      record$kegg_rank_vector_size <- 0L
+      record$kegg_gsea_term_count <- 0L
+      record$kegg_gsea_output <- NA_character_
+      record$kegg_mapping_audit <- NA_character_
+      record$custom_selected_uniprot_term_count <- 0L
+      record$custom_selected_uniprot_output <- NA_character_
+      record$custom_pathview_output_directory <- NA_character_
+    }
+
+    if (length(config$nk3r_genes)) {
+      nk3r_gsea <- run_custom_gsea(
+        rank_info$rank, config$nk3r_genes, comparison,
+        "custom_NK3R_GSEA", "NK3R-signalling"
+      )
+      warning_rows <- append_warnings(warning_rows, comparison, "custom_NK3R_GSEA", nk3r_gsea$warnings)
+      record$custom_nk3r_seed <- nk3r_gsea$seed
+      record$custom_nk3r_member_count <- sum(names(rank_info$rank) %in% config$nk3r_genes)
+      record$custom_nk3r_term_count <- result_count(nk3r_gsea$value)
+      record$custom_nk3r_output <- write_result(
+        nk3r_gsea$value, file.path(comparison_dir, "custom_NK3R_GSEA.csv")
+      )
+    } else {
+      record$custom_nk3r_output <- NA_character_
+      record$custom_nk3r_member_count <- 0L
+      record$custom_nk3r_term_count <- 0L
+      record$custom_nk3r_seed <- NA_integer_
+    }
+
+    record$warning_count <- nrow(warning_rows)
+    record$warnings_path <- write_neha_enrichment_csv(warning_rows, file.path(audit_dir, "warnings.csv"))
+    record$execution_status <- "success"
+  }, error = function(e) {
+    record$error_message <<- conditionMessage(e)
+    record$warning_count <<- nrow(warning_rows)
+    record$warnings_path <<- write_neha_enrichment_csv(warning_rows, file.path(audit_dir, "warnings.csv"))
+  })
+
+  record$runtime_seconds <- as.numeric(difftime(Sys.time(), started, units = "secs"))
+  record$run_timestamp_utc <- timestamp_utc
+  record$package_versions_path <- package_versions_path
+  record$run_parameters_path <- parameters_path
+  manifest_path <- file.path(audit_dir, "comparison_manifest.csv")
+  record$comparison_manifest_path <- neha_enrichment_normalize_path(manifest_path)
+  write_comparison_manifest(record, manifest_path)
+  record$comparison_manifest_path <- neha_enrichment_normalize_path(manifest_path, must_work = TRUE)
+  as.data.frame(record, stringsAsFactors = FALSE, check.names = FALSE)
+}
+
+message("Canonical mapped index: ", config$mapped_index)
+message("Canonical enrichment output: ", config$output_root)
+message("Processing exactly ", nrow(mapped_index), " forward comparisons...")
+
+records <- lapply(seq_len(nrow(mapped_index)), function(i) {
+  comparison <- mapped_index$canonical_comparison[[i]]
+  message("  [", i, "/", nrow(mapped_index), "] ", comparison)
+  process_comparison(mapped_index[i, , drop = FALSE])
+})
+record_columns <- unique(unlist(lapply(records, names), use.names = FALSE))
+records <- lapply(records, function(record) {
+  missing <- setdiff(record_columns, names(record))
+  for (field in missing) record[[field]] <- NA
+  record[, record_columns, drop = FALSE]
+})
+enrichment_index <- do.call(rbind, records)
+rownames(enrichment_index) <- NULL
+write_neha_enrichment_csv(enrichment_index, index_path)
+
+run_contract <- data.frame(
+  field = c(
+    "run_timestamp_utc", "mapped_index_path", "mapped_index_sha256", "output_root",
+    "expected_primary_comparisons", "observed_primary_comparisons", "successful_comparisons",
+    "mapping_direction", "rank_direction", "ora_universe", "historical_outputs_written",
+    "package_versions_path", "run_parameters_path"
+  ),
+  value = c(
+    timestamp_utc, config$mapped_index, neha_enrichment_sha256(config$mapped_index), config$output_root,
+    12L, nrow(enrichment_index), sum(enrichment_index$execution_status == "success"),
+    "forward", "positive_is_higher_in_canonical_numerator",
+    "all_unique_successfully_mapped_measured_uniprot_accessions_per_comparison",
+    "false", package_versions_path, parameters_path
+  ),
+  stringsAsFactors = FALSE
+)
+write_neha_enrichment_csv(run_contract, file.path(audit_root, "run_contract_manifest.csv"))
+
+failed <- enrichment_index$execution_status != "success"
+if (any(failed)) {
+  stop(
+    "Canonical enrichment failed for: ",
+    paste(enrichment_index$canonical_comparison[failed], collapse = ", "),
+    ". See indexEnrichmentComparisons.csv and per-comparison audits.",
+    call. = FALSE
+  )
+}
+validate_neha_enrichment_index(enrichment_index, require_files = TRUE)
+message("Canonical animal-level enrichment completed: ", index_path)
