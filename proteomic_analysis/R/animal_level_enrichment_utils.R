@@ -106,6 +106,14 @@ neha_enrichment_env_vector <- function(name) {
   unique(out[nzchar(out)])
 }
 
+neha_enrichment_env_choice <- function(name, choices, default) {
+  value <- tolower(trimws(Sys.getenv(name, unset = default)))
+  if (length(value) != 1L || !value %in% choices) {
+    stop(name, " must be one of: ", paste(choices, collapse = ", "), ".", call. = FALSE)
+  }
+  value
+}
+
 resolve_neha_enrichment_config <- function(
     mapped_root = Sys.getenv("NEHA_ENRICHMENT_MAPPED_ROOT", unset = ""),
     mapped_index = Sys.getenv("NEHA_ENRICHMENT_MAPPED_INDEX", unset = ""),
@@ -137,6 +145,7 @@ resolve_neha_enrichment_config <- function(
   min_gs_size <- neha_enrichment_env_number("NEHA_ENRICHMENT_MIN_GS_SIZE", 10, 1, Inf, integer = TRUE)
   max_gs_size <- neha_enrichment_env_number("NEHA_ENRICHMENT_MAX_GS_SIZE", 800, 1, Inf, integer = TRUE)
   if (min_gs_size > max_gs_size) stop("Minimum gene-set size exceeds maximum gene-set size.", call. = FALSE)
+  gsea_rank <- neha_enrichment_env_choice("NEHA_ENRICHMENT_GSEA_RANK", c("t", "log2fc"), "t")
 
   list(
     mapped_root = mapped_root,
@@ -154,6 +163,8 @@ resolve_neha_enrichment_config <- function(
     max_gs_size = max_gs_size,
     simplify = neha_enrichment_env_flag("NEHA_ENRICHMENT_SIMPLIFY", FALSE),
     simplify_cutoff = neha_enrichment_env_number("NEHA_ENRICHMENT_SIMPLIFY_CUTOFF", 0.7, 0, 1),
+    gsea_rank = gsea_rank,
+    gsea_sensitivity_rank = if (identical(gsea_rank, "t")) "log2fc" else NA_character_,
     gsea_seed_base = neha_enrichment_env_number("NEHA_ENRICHMENT_GSEA_SEED_BASE", 20260824, 1, 2147483646, integer = TRUE),
     kegg_enabled = neha_enrichment_env_flag("NEHA_ENRICHMENT_KEGG", TRUE),
     plots_enabled = neha_enrichment_env_flag("NEHA_ENRICHMENT_PLOTS", TRUE),
@@ -351,15 +362,46 @@ collapse_neha_enrichment_accessions <- function(x, ranking_statistic = "log2fc")
   )
 }
 
-build_neha_gsea_rank <- function(collapsed, ranking_statistic = "log2fc") {
+neha_gsea_tie_diagnostics <- function(values) {
+  values <- suppressWarnings(as.numeric(values))
+  finite <- values[is.finite(values)]
+  n_finite <- length(finite)
+  counts <- if (n_finite) table(finite, useNA = "no") else integer()
+  tied_counts <- counts[counts > 1L]
+  n_unique <- length(counts)
+  rows_participating_in_ties <- if (length(tied_counts)) sum(tied_counts) else 0L
+  data.frame(
+    n_finite = as.integer(n_finite),
+    n_unique = as.integer(n_unique),
+    redundancy_fraction = if (n_finite) (n_finite - n_unique) / n_finite else NA_real_,
+    rows_participating_in_ties = as.integer(rows_participating_in_ties),
+    tied_row_fraction = if (n_finite) rows_participating_in_ties / n_finite else NA_real_,
+    largest_tie = as.integer(if (length(counts)) max(counts) else 0L),
+    stringsAsFactors = FALSE
+  )
+}
+
+build_neha_gsea_rank <- function(collapsed, ranking_statistic = "t", analysis_role = "canonical") {
+  if (!ranking_statistic %in% c("t", "log2fc")) {
+    stop("GSEA ranking statistic must be 't' or 'log2fc'.", call. = FALSE)
+  }
+  if (!analysis_role %in% c("canonical", "sensitivity")) {
+    stop("GSEA analysis role must be canonical or sensitivity.", call. = FALSE)
+  }
   values <- suppressWarnings(as.numeric(collapsed[[ranking_statistic]]))
   ids <- as.character(collapsed$uniprot_accession)
   included <- is.finite(values) & !is.na(ids) & nzchar(ids)
+  if (identical(ranking_statistic, "t") && any(!included)) {
+    stop("Moderated t GSEA rank must contain one finite value for every selected UniProt row.", call. = FALSE)
+  }
+  tie_diagnostics <- neha_gsea_tie_diagnostics(values[included])
   rank_audit <- data.frame(
     uniprot_accession = ids,
     original_protein_id = as.character(collapsed$original_protein_id),
     source_row_id = as.integer(collapsed$source_row_id),
     ranking_statistic = ranking_statistic,
+    rank_source_column = ranking_statistic,
+    analysis_role = analysis_role,
     ranking_value = values,
     included_in_gsea = included,
     exclusion_reason = ifelse(included, NA_character_, "non_finite_ranking_statistic"),
@@ -376,7 +418,14 @@ build_neha_gsea_rank <- function(collapsed, ranking_statistic = "log2fc") {
   if (length(ranks) && !identical(ranks, sort(ranks, decreasing = TRUE))) {
     stop("GSEA rank is not deterministically decreasing.", call. = FALSE)
   }
-  list(rank = ranks, audit = rank_audit, statistic = ranking_statistic)
+  list(
+    rank = ranks,
+    audit = rank_audit,
+    statistic = ranking_statistic,
+    rank_source_column = ranking_statistic,
+    analysis_role = analysis_role,
+    tie_diagnostics = tie_diagnostics
+  )
 }
 
 build_neha_ora_sets <- function(collapsed, fdr_threshold = 0.05, top_abs_log2fc = 1) {
@@ -474,8 +523,10 @@ validate_neha_enrichment_index <- function(index, require_files = TRUE) {
     "canonical_comparison", "canonical_contrast", "sample_class",
     "numerator_condition", "denominator_condition", "historical_comparison_alias",
     "mapping_direction", "mapped_input_path", "mapped_input_sha256",
-    "execution_status", "rank_vector_size", "ora_universe_size",
-    "go_gsea_output", "comparison_manifest_path"
+    "execution_status", "ranking_statistic", "rank_source_column", "gsea_analysis_role",
+    "rank_vector_size", "rank_n_finite", "rank_n_unique", "rank_redundancy_fraction",
+    "rank_rows_participating_in_ties", "rank_tied_row_fraction", "rank_largest_tie",
+    "ora_universe_size", "gsea_rank_audit", "go_gsea_output", "comparison_manifest_path"
   )
   missing <- setdiff(required, names(index))
   if (length(missing)) stop("Enrichment index is missing: ", paste(missing, collapse = ", "), call. = FALSE)
@@ -483,6 +534,29 @@ validate_neha_enrichment_index <- function(index, require_files = TRUE) {
     stop("Enrichment index must contain exactly 12 unique comparisons and input paths.", call. = FALSE)
   }
   if (any(index$mapping_direction != "forward")) stop("Enrichment index contains a non-forward comparison.", call. = FALSE)
+  if (any(!index$ranking_statistic %in% c("t", "log2fc")) ||
+      any(index$rank_source_column != index$ranking_statistic) ||
+      any(index$gsea_analysis_role != "canonical")) {
+    stop("Enrichment index has an invalid canonical GSEA rank contract.", call. = FALSE)
+  }
+  t_primary <- index$ranking_statistic == "t"
+  if (any(t_primary)) {
+    sensitivity_required <- c(
+      "sensitivity_ranking_statistic", "sensitivity_rank_source_column",
+      "sensitivity_gsea_analysis_role", "sensitivity_rank_vector_size",
+      "sensitivity_gsea_rank_audit", "sensitivity_go_gsea_output"
+    )
+    missing_sensitivity <- setdiff(sensitivity_required, names(index))
+    if (length(missing_sensitivity)) {
+      stop("t-primary enrichment index is missing log2fc sensitivity fields: ",
+           paste(missing_sensitivity, collapse = ", "), call. = FALSE)
+    }
+    if (any(index$sensitivity_ranking_statistic[t_primary] != "log2fc") ||
+        any(index$sensitivity_rank_source_column[t_primary] != "log2fc") ||
+        any(index$sensitivity_gsea_analysis_role[t_primary] != "sensitivity")) {
+      stop("t-primary enrichment index has an invalid log2fc sensitivity contract.", call. = FALSE)
+    }
+  }
   expected <- neha_primary_contrast_manifest()
   index_ordered <- index[match(expected$canonical_comparison, index$canonical_comparison), , drop = FALSE]
   contract <- list(
@@ -500,7 +574,11 @@ validate_neha_enrichment_index <- function(index, require_files = TRUE) {
   }
   if (isTRUE(require_files)) {
     success <- index$execution_status == "success"
-    for (field in c("mapped_input_path", "go_gsea_output", "comparison_manifest_path")) {
+    file_fields <- c("mapped_input_path", "gsea_rank_audit", "go_gsea_output", "comparison_manifest_path")
+    if (any(t_primary & success)) {
+      file_fields <- c(file_fields, "sensitivity_gsea_rank_audit", "sensitivity_go_gsea_output")
+    }
+    for (field in file_fields) {
       paths <- as.character(index[[field]][success])
       if (any(!file.exists(paths))) stop("Successful enrichment row references missing ", field, ".", call. = FALSE)
     }

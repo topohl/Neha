@@ -4,8 +4,8 @@
 #
 # This stage consumes only the validated, forward MapThatProt manifest.  It does
 # not discover files by name and it cannot fall back to the historical mapped
-# or enrichment trees.  Positive log2fc values always mean higher abundance in
-# the canonical numerator recorded in indexMappedComparisons.csv.
+# or enrichment trees. Positive moderated t and log2fc values always mean
+# higher abundance in the canonical numerator recorded in the mapped index.
 
 script_file <- grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE)
 script_file <- if (length(script_file)) sub("^--file=", "", script_file[[1]]) else "04_differential_expression_enrichment/01_clusterProfiler.r"
@@ -50,18 +50,22 @@ package_versions_path <- write_neha_enrichment_csv(
 
 parameters <- data.frame(
   parameter = c(
-    "ontology", "ranking_statistic", "rank_direction", "pvalue_cutoff",
+    "ontology", "ranking_statistic", "rank_source_column", "gsea_analysis_role",
+    "sensitivity_ranking_statistic", "sensitivity_analysis_role", "rank_direction", "pvalue_cutoff",
     "qvalue_cutoff", "p_adjust_method", "fdr_threshold", "top_abs_log2fc",
     "min_gs_size", "max_gs_size", "simplify", "simplify_cutoff",
-    "gsea_seed_base", "kegg_enabled", "plots_enabled",
+    "gsea_seed_base", "log2fc_sensitivity_in_standard_t_run", "kegg_enabled", "plots_enabled",
     "duplicate_uniprot_rule", "ora_universe"
   ),
   value = c(
-    config$ontology, "log2fc", "positive_is_higher_in_canonical_numerator",
+    config$ontology, config$gsea_rank, config$gsea_rank, "canonical",
+    config$gsea_sensitivity_rank,
+    if (is.na(config$gsea_sensitivity_rank)) NA_character_ else "sensitivity",
+    "positive_is_higher_in_canonical_numerator",
     config$pvalue_cutoff, config$qvalue_cutoff, config$p_adjust_method,
     config$fdr_threshold, config$top_abs_log2fc, config$min_gs_size,
     config$max_gs_size, config$simplify, config$simplify_cutoff,
-    config$gsea_seed_base, config$kegg_enabled, config$plots_enabled,
+    config$gsea_seed_base, !is.na(config$gsea_sensitivity_rank), config$kegg_enabled, config$plots_enabled,
     "largest_absolute_log2fc;finite_preferred;ties_by_source_row_id_then_original_protein_id",
     "all_unique_successfully_mapped_measured_uniprot_accessions_per_comparison"
   ),
@@ -143,22 +147,31 @@ run_go_ora <- function(gene, universe) {
   ))
 }
 
-build_kegg_rank <- function(collapsed) {
-  conversion <- suppressMessages(AnnotationDbi::select(
-    org.Mm.eg.db::org.Mm.eg.db,
-    keys = unique(as.character(collapsed$uniprot_accession)),
-    keytype = "UNIPROT",
-    columns = "ENTREZID"
-  ))
+build_kegg_rank <- function(collapsed, ranking_statistic = "t", analysis_role = "canonical", conversion = NULL) {
+  if (!ranking_statistic %in% c("t", "log2fc")) {
+    stop("KEGG GSEA ranking statistic must be 't' or 'log2fc'.", call. = FALSE)
+  }
+  if (!analysis_role %in% c("canonical", "sensitivity")) {
+    stop("KEGG GSEA analysis role must be canonical or sensitivity.", call. = FALSE)
+  }
+  if (is.null(conversion)) {
+    conversion <- suppressMessages(AnnotationDbi::select(
+      org.Mm.eg.db::org.Mm.eg.db,
+      keys = unique(as.character(collapsed$uniprot_accession)),
+      keytype = "UNIPROT",
+      columns = "ENTREZID"
+    ))
+  }
   conversion <- conversion[!is.na(conversion$ENTREZID) & nzchar(conversion$ENTREZID), , drop = FALSE]
   conversion <- conversion[order(conversion$UNIPROT, conversion$ENTREZID, method = "radix"), , drop = FALSE]
   conversion <- conversion[!duplicated(conversion$UNIPROT), , drop = FALSE]
   candidate <- merge(
-    collapsed[, c("uniprot_accession", "original_protein_id", "source_row_id", "log2fc"), drop = FALSE],
+    collapsed[, c("uniprot_accession", "original_protein_id", "source_row_id", "log2fc", "t"), drop = FALSE],
     conversion,
     by.x = "uniprot_accession", by.y = "UNIPROT", all = FALSE, sort = FALSE
   )
   candidate$log2fc <- suppressWarnings(as.numeric(candidate$log2fc))
+  candidate$t <- suppressWarnings(as.numeric(candidate$t))
   candidate <- candidate[is.finite(candidate$log2fc), , drop = FALSE]
   candidate <- candidate[order(
     candidate$ENTREZID, -abs(candidate$log2fc), candidate$source_row_id,
@@ -166,12 +179,34 @@ build_kegg_rank <- function(collapsed) {
   ), , drop = FALSE]
   candidate$selected_representative <- !duplicated(candidate$ENTREZID)
   selected <- candidate[candidate$selected_representative, , drop = FALSE]
-  selected <- selected[order(-selected$log2fc, selected$ENTREZID, method = "radix"), , drop = FALSE]
-  rank <- selected$log2fc
+  ranking_value <- selected[[ranking_statistic]]
+  if (identical(ranking_statistic, "t") && any(!is.finite(ranking_value))) {
+    stop("Moderated t KEGG rank must contain one finite value for every selected Entrez row.", call. = FALSE)
+  }
+  included <- is.finite(ranking_value)
+  selected <- selected[included, , drop = FALSE]
+  ranking_value <- ranking_value[included]
+  ordering <- order(-ranking_value, selected$ENTREZID, method = "radix")
+  selected <- selected[ordering, , drop = FALSE]
+  ranking_value <- ranking_value[ordering]
+  rank <- ranking_value
   names(rank) <- selected$ENTREZID
   if (anyDuplicated(names(rank)) || any(!is.finite(rank))) stop("Invalid KEGG rank after Entrez collapse.", call. = FALSE)
+  candidate$ranking_statistic <- ranking_statistic
+  candidate$rank_source_column <- ranking_statistic
+  candidate$analysis_role <- analysis_role
+  candidate$ranking_value <- candidate[[ranking_statistic]]
   candidate$selection_rule <- "one_Entrez_per_UniProt_then_largest_absolute_log2fc_per_Entrez;ties_by_source_row_id_then_UniProt"
-  list(rank = rank, audit = candidate, conversion = conversion)
+  list(
+    rank = rank,
+    audit = candidate,
+    conversion = conversion,
+    selected = selected,
+    statistic = ranking_statistic,
+    rank_source_column = ranking_statistic,
+    analysis_role = analysis_role,
+    tie_diagnostics = neha_gsea_tie_diagnostics(rank)
+  )
 }
 
 run_kegg_gsea <- function(rank, comparison, analysis = "KEGG_GSEA") {
@@ -243,6 +278,17 @@ write_comparison_manifest <- function(record, path) {
   )
 }
 
+add_rank_diagnostics <- function(record, rank_info, prefix = "rank") {
+  diagnostics <- rank_info$tie_diagnostics[1, , drop = FALSE]
+  record[[paste0(prefix, "_n_finite")]] <- diagnostics$n_finite
+  record[[paste0(prefix, "_n_unique")]] <- diagnostics$n_unique
+  record[[paste0(prefix, "_redundancy_fraction")]] <- diagnostics$redundancy_fraction
+  record[[paste0(prefix, "_rows_participating_in_ties")]] <- diagnostics$rows_participating_in_ties
+  record[[paste0(prefix, "_tied_row_fraction")]] <- diagnostics$tied_row_fraction
+  record[[paste0(prefix, "_largest_tie")]] <- diagnostics$largest_tie
+  record
+}
+
 process_comparison <- function(index_row) {
   comparison <- as.character(index_row$canonical_comparison)
   comparison_dir <- file.path(per_comparison_root, comparison)
@@ -272,7 +318,12 @@ process_comparison <- function(index_row) {
     mapping_reference_version = as.character(index_row$mapping_reference_version),
     mapping_reference_snapshot_date_utc = as.character(index_row$mapping_reference_snapshot_date_utc),
     mapping_reference_sha256 = as.character(index_row$mapping_reference_sha256),
-    ranking_statistic = "log2fc",
+    ranking_statistic = config$gsea_rank,
+    rank_source_column = config$gsea_rank,
+    gsea_analysis_role = "canonical",
+    sensitivity_ranking_statistic = config$gsea_sensitivity_rank,
+    sensitivity_rank_source_column = config$gsea_sensitivity_rank,
+    sensitivity_gsea_analysis_role = if (is.na(config$gsea_sensitivity_rank)) NA_character_ else "sensitivity",
     rank_direction = "positive_is_higher_in_canonical_numerator",
     duplicate_uniprot_rule = "largest_absolute_log2fc;finite_preferred;ties_by_source_row_id_then_original_protein_id",
     ora_universe_definition = "all_unique_successfully_mapped_measured_uniprot_accessions",
@@ -298,7 +349,12 @@ process_comparison <- function(index_row) {
     )
     collapsed_info <- collapse_neha_enrichment_accessions(mapped, "log2fc")
     collapsed <- collapsed_info$collapsed
-    rank_info <- build_neha_gsea_rank(collapsed, "log2fc")
+    rank_info <- build_neha_gsea_rank(collapsed, config$gsea_rank, "canonical")
+    sensitivity_rank_info <- if (!is.na(config$gsea_sensitivity_rank)) {
+      build_neha_gsea_rank(collapsed, config$gsea_sensitivity_rank, "sensitivity")
+    } else {
+      NULL
+    }
     ora_sets <- build_neha_ora_sets(collapsed, config$fdr_threshold, config$top_abs_log2fc)
 
     record$n_source_protein_rows <- nrow(mapped)
@@ -307,6 +363,17 @@ process_comparison <- function(index_row) {
     record$n_duplicate_rows_collapsed <- collapsed_info$n_duplicate_rows_collapsed
     record$n_duplicated_uniprot_accessions <- collapsed_info$n_duplicated_accessions
     record$rank_vector_size <- length(rank_info$rank)
+    record <- add_rank_diagnostics(record, rank_info, "rank")
+    if (!is.null(sensitivity_rank_info)) {
+      record$sensitivity_rank_vector_size <- length(sensitivity_rank_info$rank)
+      record <- add_rank_diagnostics(record, sensitivity_rank_info, "sensitivity_rank")
+      if (!identical(rank_info$audit$source_row_id, sensitivity_rank_info$audit$source_row_id) ||
+          !identical(rank_info$audit$uniprot_accession, sensitivity_rank_info$audit$uniprot_accession)) {
+        stop("Canonical and sensitivity GSEA ranks do not use the same selected UniProt/source rows.", call. = FALSE)
+      }
+    } else {
+      record$sensitivity_rank_vector_size <- NA_integer_
+    }
     record$ora_universe_size <- length(ora_sets$universe)
     record$fdr_significant_protein_count <- length(ora_sets$all_significant)
     record$fdr_significant_up_count <- length(ora_sets$up_significant)
@@ -322,6 +389,14 @@ process_comparison <- function(index_row) {
     record$gsea_rank_audit <- write_neha_enrichment_csv(
       rank_info$audit, file.path(audit_dir, "gsea_rank_audit.csv")
     )
+    if (!is.null(sensitivity_rank_info)) {
+      record$sensitivity_gsea_rank_audit <- write_neha_enrichment_csv(
+        sensitivity_rank_info$audit,
+        file.path(audit_dir, paste0("gsea_rank_audit_", config$gsea_sensitivity_rank, "_sensitivity.csv"))
+      )
+    } else {
+      record$sensitivity_gsea_rank_audit <- NA_character_
+    }
     record$ora_membership_audit <- write_neha_enrichment_csv(
       data.frame(
         uniprot_accession = ora_sets$universe,
@@ -346,6 +421,33 @@ process_comparison <- function(index_row) {
       file.path(comparison_dir, paste0("GSEA_GO_", config$ontology, "_dotplot.png")),
       paste(comparison, "GO", config$ontology, "GSEA")
     )
+
+    if (!is.null(sensitivity_rank_info)) {
+      sensitivity_go_gsea <- run_go_gsea(sensitivity_rank_info$rank, comparison)
+      warning_rows <- append_warnings(
+        warning_rows, comparison,
+        paste0("GO_", config$ontology, "_GSEA_", config$gsea_sensitivity_rank, "_sensitivity"),
+        sensitivity_go_gsea$warnings
+      )
+      sensitivity_go_table <- neha_enrichment_result_table(sensitivity_go_gsea$value)
+      record$sensitivity_go_gsea_seed <- sensitivity_go_gsea$seed
+      record$sensitivity_go_gsea_term_count <- nrow(sensitivity_go_table)
+      record$sensitivity_go_gsea_fdr_term_count <- sum(
+        is.finite(sensitivity_go_table$p.adjust) & sensitivity_go_table$p.adjust < config$fdr_threshold
+      )
+      record$sensitivity_go_gsea_output <- write_result(
+        sensitivity_go_gsea$value,
+        file.path(
+          comparison_dir,
+          paste0("GSEA_GO_", config$ontology, "_", config$gsea_sensitivity_rank, "_sensitivity.csv")
+        )
+      )
+    } else {
+      record$sensitivity_go_gsea_seed <- NA_integer_
+      record$sensitivity_go_gsea_term_count <- NA_integer_
+      record$sensitivity_go_gsea_fdr_term_count <- NA_integer_
+      record$sensitivity_go_gsea_output <- NA_character_
+    }
 
     if (isTRUE(config$simplify) && nrow(go_gsea_table)) {
       simplified <- capture_warnings(clusterProfiler::simplify(
@@ -393,8 +495,12 @@ process_comparison <- function(index_row) {
     }
 
     if (isTRUE(config$kegg_enabled)) {
-      kegg <- build_kegg_rank(collapsed)
+      kegg <- build_kegg_rank(collapsed, config$gsea_rank, "canonical")
       record$kegg_rank_vector_size <- length(kegg$rank)
+      record$kegg_ranking_statistic <- kegg$statistic
+      record$kegg_rank_source_column <- kegg$rank_source_column
+      record$kegg_gsea_analysis_role <- kegg$analysis_role
+      record <- add_rank_diagnostics(record, kegg, "kegg_rank")
       record$kegg_mapping_audit <- write_neha_enrichment_csv(
         kegg$audit, file.path(audit_dir, "kegg_entrez_collapse_audit.csv")
       )
@@ -408,6 +514,60 @@ process_comparison <- function(index_row) {
         paste(comparison, "KEGG GSEA")
       )
 
+      sensitivity_kegg <- if (!is.na(config$gsea_sensitivity_rank)) {
+        build_kegg_rank(
+          collapsed, config$gsea_sensitivity_rank, "sensitivity",
+          conversion = kegg$conversion
+        )
+      } else {
+        NULL
+      }
+      if (!is.null(sensitivity_kegg)) {
+        canonical_selected <- sort(
+          paste(kegg$selected$ENTREZID, kegg$selected$source_row_id, sep = "\r"), method = "radix"
+        )
+        sensitivity_selected <- sort(
+          paste(sensitivity_kegg$selected$ENTREZID, sensitivity_kegg$selected$source_row_id, sep = "\r"),
+          method = "radix"
+        )
+        if (!identical(canonical_selected, sensitivity_selected)) {
+          stop("Canonical and sensitivity KEGG ranks do not use the same selected source rows.", call. = FALSE)
+        }
+        record$sensitivity_kegg_rank_vector_size <- length(sensitivity_kegg$rank)
+        record$sensitivity_kegg_ranking_statistic <- sensitivity_kegg$statistic
+        record$sensitivity_kegg_rank_source_column <- sensitivity_kegg$rank_source_column
+        record$sensitivity_kegg_gsea_analysis_role <- sensitivity_kegg$analysis_role
+        record <- add_rank_diagnostics(record, sensitivity_kegg, "sensitivity_kegg_rank")
+        record$sensitivity_kegg_mapping_audit <- write_neha_enrichment_csv(
+          sensitivity_kegg$audit,
+          file.path(
+            audit_dir,
+            paste0("kegg_entrez_collapse_audit_", config$gsea_sensitivity_rank, "_sensitivity.csv")
+          )
+        )
+        sensitivity_kegg_gsea <- run_kegg_gsea(sensitivity_kegg$rank, comparison)
+        warning_rows <- append_warnings(
+          warning_rows, comparison,
+          paste0("KEGG_GSEA_", config$gsea_sensitivity_rank, "_sensitivity"),
+          sensitivity_kegg_gsea$warnings
+        )
+        record$sensitivity_kegg_gsea_seed <- sensitivity_kegg_gsea$seed
+        record$sensitivity_kegg_gsea_term_count <- result_count(sensitivity_kegg_gsea$value)
+        record$sensitivity_kegg_gsea_output <- write_result(
+          sensitivity_kegg_gsea$value,
+          file.path(comparison_dir, paste0("GSEA_KEGG_", config$gsea_sensitivity_rank, "_sensitivity.csv"))
+        )
+      } else {
+        record$sensitivity_kegg_rank_vector_size <- NA_integer_
+        record$sensitivity_kegg_ranking_statistic <- NA_character_
+        record$sensitivity_kegg_rank_source_column <- NA_character_
+        record$sensitivity_kegg_gsea_analysis_role <- NA_character_
+        record$sensitivity_kegg_mapping_audit <- NA_character_
+        record$sensitivity_kegg_gsea_seed <- NA_integer_
+        record$sensitivity_kegg_gsea_term_count <- NA_integer_
+        record$sensitivity_kegg_gsea_output <- NA_character_
+      }
+
       if (length(config$selected_uniprot)) {
         selected_entrez <- unique(kegg$audit$ENTREZID[kegg$audit$uniprot_accession %in% config$selected_uniprot])
         selected_rank <- kegg$rank[names(kegg$rank) %in% selected_entrez]
@@ -415,11 +575,17 @@ process_comparison <- function(index_row) {
         selected_gsea <- run_kegg_gsea(selected_rank, comparison, "KEGG_selected_UniProt_GSEA")
         warning_rows <- append_warnings(warning_rows, comparison, "KEGG_selected_UniProt_GSEA", selected_gsea$warnings)
         record$custom_selected_uniprot_term_count <- result_count(selected_gsea$value)
+        record$custom_selected_uniprot_ranking_statistic <- config$gsea_rank
+        record$custom_selected_uniprot_rank_source_column <- config$gsea_rank
+        record$custom_selected_uniprot_gsea_analysis_role <- "canonical"
         record$custom_selected_uniprot_output <- write_result(
           selected_gsea$value, file.path(comparison_dir, "GSEA_KEGG_selected_uniprot.csv")
         )
       } else {
         record$custom_selected_uniprot_term_count <- 0L
+        record$custom_selected_uniprot_ranking_statistic <- config$gsea_rank
+        record$custom_selected_uniprot_rank_source_column <- config$gsea_rank
+        record$custom_selected_uniprot_gsea_analysis_role <- "canonical"
         record$custom_selected_uniprot_output <- NA_character_
       }
 
@@ -430,9 +596,16 @@ process_comparison <- function(index_row) {
         pathview_dir <- file.path(comparison_dir, "pathview")
         dir.create(pathview_dir, recursive = TRUE, showWarnings = FALSE)
         withr::with_dir(pathview_dir, {
+          pathview_rank <- if (!is.null(sensitivity_kegg) && identical(sensitivity_kegg$statistic, "log2fc")) {
+            sensitivity_kegg$rank
+          } else if (identical(kegg$statistic, "log2fc")) {
+            kegg$rank
+          } else {
+            stop("Pathview requires the preserved log2fc rank.", call. = FALSE)
+          }
           for (path_id in config$path_ids) {
             pathview_result <- capture_warnings(pathview::pathview(
-              gene.data = kegg$rank, pathway.id = path_id, species = "mmu",
+              gene.data = pathview_rank, pathway.id = path_id, species = "mmu",
               gene.idtype = "entrez", out.suffix = comparison, kegg.native = TRUE
             ))
             warning_rows <- append_warnings(
@@ -441,17 +614,34 @@ process_comparison <- function(index_row) {
           }
         })
         record$custom_pathview_output_directory <- neha_enrichment_normalize_path(pathview_dir, must_work = TRUE)
+        record$custom_pathview_value_statistic <- "log2fc"
       } else {
         record$custom_pathview_output_directory <- NA_character_
+        record$custom_pathview_value_statistic <- "log2fc"
       }
     } else {
       record$kegg_rank_vector_size <- 0L
       record$kegg_gsea_term_count <- 0L
       record$kegg_gsea_output <- NA_character_
       record$kegg_mapping_audit <- NA_character_
+      record$kegg_ranking_statistic <- config$gsea_rank
+      record$kegg_rank_source_column <- config$gsea_rank
+      record$kegg_gsea_analysis_role <- "canonical"
+      record$sensitivity_kegg_rank_vector_size <- NA_integer_
+      record$sensitivity_kegg_ranking_statistic <- config$gsea_sensitivity_rank
+      record$sensitivity_kegg_rank_source_column <- config$gsea_sensitivity_rank
+      record$sensitivity_kegg_gsea_analysis_role <- if (is.na(config$gsea_sensitivity_rank)) NA_character_ else "sensitivity"
+      record$sensitivity_kegg_mapping_audit <- NA_character_
+      record$sensitivity_kegg_gsea_seed <- NA_integer_
+      record$sensitivity_kegg_gsea_term_count <- NA_integer_
+      record$sensitivity_kegg_gsea_output <- NA_character_
       record$custom_selected_uniprot_term_count <- 0L
+      record$custom_selected_uniprot_ranking_statistic <- config$gsea_rank
+      record$custom_selected_uniprot_rank_source_column <- config$gsea_rank
+      record$custom_selected_uniprot_gsea_analysis_role <- "canonical"
       record$custom_selected_uniprot_output <- NA_character_
       record$custom_pathview_output_directory <- NA_character_
+      record$custom_pathview_value_statistic <- "log2fc"
     }
 
     if (length(config$nk3r_genes)) {
@@ -461,6 +651,9 @@ process_comparison <- function(index_row) {
       )
       warning_rows <- append_warnings(warning_rows, comparison, "custom_NK3R_GSEA", nk3r_gsea$warnings)
       record$custom_nk3r_seed <- nk3r_gsea$seed
+      record$custom_nk3r_ranking_statistic <- config$gsea_rank
+      record$custom_nk3r_rank_source_column <- config$gsea_rank
+      record$custom_nk3r_gsea_analysis_role <- "canonical"
       record$custom_nk3r_member_count <- sum(names(rank_info$rank) %in% config$nk3r_genes)
       record$custom_nk3r_term_count <- result_count(nk3r_gsea$value)
       record$custom_nk3r_output <- write_result(
@@ -471,6 +664,9 @@ process_comparison <- function(index_row) {
       record$custom_nk3r_member_count <- 0L
       record$custom_nk3r_term_count <- 0L
       record$custom_nk3r_seed <- NA_integer_
+      record$custom_nk3r_ranking_statistic <- config$gsea_rank
+      record$custom_nk3r_rank_source_column <- config$gsea_rank
+      record$custom_nk3r_gsea_analysis_role <- "canonical"
     }
 
     record$warning_count <- nrow(warning_rows)
@@ -516,13 +712,18 @@ run_contract <- data.frame(
   field = c(
     "run_timestamp_utc", "mapped_index_path", "mapped_index_sha256", "output_root",
     "expected_primary_comparisons", "observed_primary_comparisons", "successful_comparisons",
-    "mapping_direction", "rank_direction", "ora_universe", "historical_outputs_written",
+    "mapping_direction", "ranking_statistic", "rank_source_column", "gsea_analysis_role",
+    "sensitivity_ranking_statistic", "sensitivity_analysis_role", "rank_direction",
+    "ora_universe", "historical_outputs_written",
     "package_versions_path", "run_parameters_path"
   ),
   value = c(
     timestamp_utc, config$mapped_index, neha_enrichment_sha256(config$mapped_index), config$output_root,
     12L, nrow(enrichment_index), sum(enrichment_index$execution_status == "success"),
-    "forward", "positive_is_higher_in_canonical_numerator",
+    "forward", config$gsea_rank, config$gsea_rank, "canonical",
+    config$gsea_sensitivity_rank,
+    if (is.na(config$gsea_sensitivity_rank)) NA_character_ else "sensitivity",
+    "positive_is_higher_in_canonical_numerator",
     "all_unique_successfully_mapped_measured_uniprot_accessions_per_comparison",
     "false", package_versions_path, parameters_path
   ),

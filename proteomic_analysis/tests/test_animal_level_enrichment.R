@@ -37,7 +37,7 @@ make_mapped <- function(multiplier = 1) data.frame(
   multi_protein = FALSE,
   log2fc = c(1.5, 0.5, -2, -0.25) * multiplier,
   aveExpr = c(10, 11, 12, 13),
-  t = c(3, 1, -4, -0.5),
+  t = c(3, 10, 1, -0.5),
   pval = c(0.001, 0.2, 0.002, 0.8),
   padj = c(0.01, 0.3, 0.02, 0.9),
   B = c(2, -1, 3, -4),
@@ -86,6 +86,37 @@ assert_equal(read_index$mapped_input_path, unname(vapply(paths, neha_enrichment_
 assert_equal(read_index$source_gct_sha256, rep("gct-hash", 12L), "Mapped provenance was not propagated.")
 assert_equal(read_index$historical_comparison_alias, manifest$historical_comparison_name, "Aliases must be retained as metadata.")
 
+old_rank_env <- Sys.getenv("NEHA_ENRICHMENT_GSEA_RANK", unset = NA_character_)
+on.exit({
+  if (is.na(old_rank_env)) Sys.unsetenv("NEHA_ENRICHMENT_GSEA_RANK") else Sys.setenv(NEHA_ENRICHMENT_GSEA_RANK = old_rank_env)
+}, add = TRUE)
+Sys.unsetenv("NEHA_ENRICHMENT_GSEA_RANK")
+default_config <- resolve_neha_enrichment_config(
+  mapped_root = mapped_root,
+  mapped_index = index_path,
+  output_root = file.path(fixture_root, "enrichment_default_t")
+)
+assert_equal(default_config$gsea_rank, "t", "Default canonical GSEA rank must be moderated t.")
+assert_equal(default_config$gsea_sensitivity_rank, "log2fc", "Default t run must retain log2fc sensitivity GSEA.")
+Sys.setenv(NEHA_ENRICHMENT_GSEA_RANK = "log2fc")
+legacy_config <- resolve_neha_enrichment_config(
+  mapped_root = mapped_root,
+  mapped_index = index_path,
+  output_root = file.path(fixture_root, "enrichment_legacy_log2fc")
+)
+assert_equal(legacy_config$gsea_rank, "log2fc", "Explicit log2fc GSEA rank option was ignored.")
+assert_true(is.na(legacy_config$gsea_sensitivity_rank), "A log2fc-primary run must not duplicate itself as sensitivity output.")
+Sys.setenv(NEHA_ENRICHMENT_GSEA_RANK = "unsupported")
+assert_error(
+  resolve_neha_enrichment_config(
+    mapped_root = mapped_root,
+    mapped_index = index_path,
+    output_root = file.path(fixture_root, "enrichment_bad_rank")
+  ),
+  "must be one of", "Unsupported GSEA ranking statistics must fail closed."
+)
+Sys.unsetenv("NEHA_ENRICHMENT_GSEA_RANK")
+
 mapped <- read_neha_enrichment_mapped_file(read_index$mapped_input_path[[1]], expected_rows = 4L, expected_sha256 = hashes[[1]])
 assert_true(is.logical(mapped$significant), "Mapped significant flags must remain logical.")
 collapsed <- collapse_neha_enrichment_accessions(mapped, "log2fc")
@@ -94,19 +125,56 @@ assert_equal(collapsed$n_duplicated_accessions, 1L, "Exactly one duplicated UniP
 selected <- collapsed$collapsed[collapsed$collapsed$uniprot_accession == "O54931", , drop = FALSE]
 assert_equal(selected$original_protein_id, "PALM2_MOUSE", "Largest absolute log2FC representative was not selected.")
 assert_equal(selected$log2fc, -2, "Duplicate collapse did not preserve the selected statistic sign.")
+assert_equal(selected$t, 1, "The t rank did not retain the log2FC-selected duplicate representative.")
 assert_true(all(c("AKAP2_MOUSE", "PALM2_MOUSE") %in% collapsed$duplicate_audit$original_protein_id), "Duplicate audit omitted contributing protein IDs.")
 assert_equal(sum(collapsed$duplicate_audit$selected_representative), 1L, "Duplicate audit must mark one representative.")
 
-rank_one <- build_neha_gsea_rank(collapsed$collapsed, "log2fc")$rank
+t_rank_info <- build_neha_gsea_rank(collapsed$collapsed, "t", "canonical")
+log2fc_rank_info <- build_neha_gsea_rank(collapsed$collapsed, "log2fc", "sensitivity")
+t_rank_one <- t_rank_info$rank
+rank_one <- log2fc_rank_info$rank
 reordered <- mapped[c(4, 2, 1, 3), , drop = FALSE]
-rank_two <- build_neha_gsea_rank(collapse_neha_enrichment_accessions(reordered, "log2fc")$collapsed, "log2fc")$rank
+reordered_collapsed <- collapse_neha_enrichment_accessions(reordered, "log2fc")$collapsed
+t_rank_two <- build_neha_gsea_rank(reordered_collapsed, "t", "canonical")$rank
+rank_two <- build_neha_gsea_rank(reordered_collapsed, "log2fc", "sensitivity")$rank
+assert_equal(t_rank_one, t_rank_two, "Moderated t GSEA rank must be deterministic under source-row reordering.")
 assert_equal(rank_one, rank_two, "GSEA rank construction must be deterministic under source-row reordering.")
+assert_equal(t_rank_info$audit$ranking_statistic, rep("t", nrow(t_rank_info$audit)), "Canonical rank audit does not label moderated t.")
+assert_equal(t_rank_info$audit$rank_source_column, rep("t", nrow(t_rank_info$audit)), "Canonical rank audit source column is incorrect.")
+assert_equal(t_rank_info$audit$analysis_role, rep("canonical", nrow(t_rank_info$audit)), "Canonical rank audit role is incorrect.")
+assert_equal(log2fc_rank_info$audit$ranking_statistic, rep("log2fc", nrow(log2fc_rank_info$audit)), "Sensitivity rank audit does not label log2fc.")
+assert_equal(log2fc_rank_info$audit$analysis_role, rep("sensitivity", nrow(log2fc_rank_info$audit)), "Sensitivity rank audit role is incorrect.")
+assert_equal(t_rank_info$audit$source_row_id, log2fc_rank_info$audit$source_row_id, "t and log2fc ranks did not use identical selected source rows.")
+assert_equal(t_rank_info$audit$uniprot_accession, log2fc_rank_info$audit$uniprot_accession, "t and log2fc ranks did not use identical selected UniProt IDs.")
+assert_true(!anyDuplicated(names(t_rank_one)), "Moderated t GSEA identifiers must be unique.")
 assert_true(!anyDuplicated(names(rank_one)), "GSEA identifiers must be unique after audited collapse.")
+assert_true(all(is.finite(t_rank_one)), "Moderated t GSEA ranks must not contain NA or infinite values.")
 assert_true(all(is.finite(rank_one)), "GSEA ranks must not contain NA or infinite values.")
+assert_equal(names(t_rank_one)[[1]], "P11111", "Moderated t rank direction or deterministic ordering is incorrect.")
+assert_equal(unname(t_rank_one[[length(t_rank_one)]]), -0.5, "Negative moderated t rank was inverted.")
 assert_equal(names(rank_one)[[1]], "P11111", "Deterministic GSEA sorting or positive numerator direction is incorrect.")
 assert_equal(unname(rank_one[[length(rank_one)]]), -2, "Negative numerator-direction rank was inverted.")
 
+bad_t <- collapsed$collapsed
+bad_t$t[[1]] <- NA_real_
+assert_error(
+  build_neha_gsea_rank(bad_t, "t", "canonical"),
+  "finite value for every selected", "Non-finite moderated t must fail closed."
+)
+
+tie_test <- neha_gsea_tie_diagnostics(c(3, 3, 1, 0, 0, 0, -1, NA))
+assert_equal(tie_test$n_finite, 7L, "Tie diagnostics finite count is incorrect.")
+assert_equal(tie_test$n_unique, 4L, "Tie diagnostics unique count is incorrect.")
+assert_equal(tie_test$redundancy_fraction, 3 / 7, "Tie redundancy fraction is incorrect.")
+assert_equal(tie_test$rows_participating_in_ties, 5L, "Rows participating in ties are incorrect.")
+assert_equal(tie_test$tied_row_fraction, 5 / 7, "Formal tied-row fraction is incorrect.")
+assert_equal(tie_test$largest_tie, 3L, "Largest tie size is incorrect.")
+assert_true(tie_test$redundancy_fraction != tie_test$tied_row_fraction, "Redundancy and tied-row fractions were conflated.")
+
 ora <- build_neha_ora_sets(collapsed$collapsed, fdr_threshold = 0.05, top_abs_log2fc = 1)
+ora_after_t_rank <- build_neha_ora_sets(collapsed$collapsed, fdr_threshold = 0.05, top_abs_log2fc = 1)
+ora_after_log2fc_rank <- build_neha_ora_sets(collapsed$collapsed, fdr_threshold = 0.05, top_abs_log2fc = 1)
+assert_equal(ora_after_t_rank, ora_after_log2fc_rank, "ORA changed with GSEA rank selection.")
 assert_equal(ora$universe, sort(unique(mapped$uniprot_accession)), "ORA universe must be the measured successfully mapped proteome.")
 assert_equal(length(ora$universe), 3L, "Duplicate UniProt accessions inflated the ORA universe.")
 assert_equal(length(ora$all_significant), 2L, "FDR-significant ORA list is incorrect.")
@@ -150,5 +218,15 @@ seeded_one <- with_neha_enrichment_seed(1234L, stats::runif(5))
 assert_equal(.Random.seed, rng_before, "Deterministic enrichment seed helper changed caller RNG state.")
 seeded_two <- with_neha_enrichment_seed(1234L, stats::runif(5))
 assert_equal(seeded_one, seeded_two, "Deterministic enrichment seed helper is not reproducible.")
+assert_equal(
+  derive_neha_enrichment_seed(20260824L, manifest$canonical_comparison[[1]], "GO_BP_GSEA"),
+  1044498339L,
+  "The established GO GSEA seed changed for the first canonical comparison."
+)
+assert_equal(
+  derive_neha_enrichment_seed(20260824L, manifest$canonical_comparison[[1]], "KEGG_GSEA"),
+  1792436004L,
+  "The established KEGG GSEA seed changed for the first canonical comparison."
+)
 
 cat("All animal-level enrichment tests passed.\n")
