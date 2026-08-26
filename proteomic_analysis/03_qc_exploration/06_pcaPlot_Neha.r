@@ -10,7 +10,7 @@ if (!requireNamespace("pacman", quietly = TRUE)) {
 pacman::p_load(
     data.table, ggplot2, factoextra, reshape2, stats, ggrepel, tools,
     grid, uwot, RColorBrewer, pheatmap, Rtsne, aricode, rospca, irlba,
-    pandoc, treemapify, dplyr
+    pandoc, treemapify, dplyr, digest
 )
 
 # Try to load aricode separately (it's only used for clustering metrics)
@@ -22,13 +22,42 @@ if (!requireNamespace("aricode", quietly = TRUE)) {
 
 set.seed(42)
 
+script_arg <- grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE)
+script_path <- if (length(script_arg)) sub("^--file=", "", script_arg[[1]]) else file.path("03_qc_exploration", "06_pcaPlot_Neha.r")
+repo_root <- normalizePath(file.path(dirname(script_path), ".."), winslash = "/", mustWork = FALSE)
+if (!file.exists(file.path(repo_root, "R", "protigy_input_utils.R"))) {
+    repo_root <- normalizePath(getwd(), winslash = "/", mustWork = TRUE)
+}
+source(file.path(repo_root, "R", "analysis_labels.R"))
+source(file.path(repo_root, "R", "protigy_input_utils.R"))
+source(file.path(repo_root, "R", "pca_animal_level_utils.R"))
+
 # =============== Config =================
-#gct_file   <- "S:/Lab_Member/Tobi/Experiments/Exp9_Social-Stress/proteomics/msdap/E9_pg_matrix_protigy.gct"
-#output_dir <- "S:/Lab_Member/Tobi/Experiments/Exp9_Social-Stress/proteomics/pca_plots"
-gct_file <- "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/Datasets/gct/data/pg.matrix_filtered_pcaAdjusted.gct"
-output_dir <- "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/Results/pca_plots"
-if (!file.exists(gct_file)) stop(sprintf("Input file not found: %s", gct_file))
+option_or_env <- function(option_name, env_name, default) {
+    option_value <- getOption(option_name)
+    if (!is.null(option_value) && nzchar(trimws(as.character(option_value)))) return(as.character(option_value))
+    env_value <- Sys.getenv(env_name, unset = "")
+    if (nzchar(trimws(env_value))) return(env_value)
+    default
+}
+
+gct_file <- option_or_env(
+    "neha.pca_animal_level_input",
+    "NEHA_PCA_ANIMAL_LEVEL_INPUT",
+    "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/Datasets/gct/data/protigy_input_animal_level/neha_protigy_input_animal_level_primary.gct"
+)
+historical_output_dir <- "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/Results/pca_plots"
+output_dir <- validate_neha_pca_output_root(
+    option_or_env(
+        "neha.pca_output_root",
+        "NEHA_PCA_OUTPUT_ROOT",
+        "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/Results/pca_plots_animal_level"
+    ),
+    historical_output_dir
+)
 dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
+pca_audit_path <- file.path(output_dir, "tables", "meta", "animal_level_pca_audit.csv")
+optional_visualization_audit_path <- file.path(output_dir, "tables", "meta", "optional_visualization_audit.csv")
 
 # =============== Helpers =================
 trim_ws <- function(x){
@@ -86,132 +115,50 @@ save_table <- function(subfolder, filename, df, row.names=FALSE){
     invisible(f)
 }
 
-# =============== Reader with audits =================
-read_gct <- function(path) {
-    cat("Reading GCT file:", path, "\n")
-    
-    all_lines <- readLines(path)
-    
-    # Line 1: version marker
-    version <- trimws(all_lines[1])
-    if (version != "#1.3") {
-        warning("Expected '#1.3', found: ", version)
-    }
-    
-    # Line 2: dimensions
-    dims_parts <- strsplit(all_lines[2], "\t")[[1]]
-    dims <- as.numeric(dims_parts)
-    
-    # Line 3: sample IDs (first element is "id", skip it)
-    line3_parts <- strsplit(all_lines[3], "\t")[[1]]
-    sample_ids <- line3_parts[-1]
-    
-    # Lines 4-12: metadata (9 rows total)
-    # sampleNumber, shortname, plate, replicate_unit, AnimalID, ReplicateGroup, sample_class, condition_code, sample_class_group
-    meta_lines <- all_lines[4:12]
-    meta_split <- lapply(meta_lines, function(x) strsplit(x, "\t")[[1]])
-    
-    meta_keys <- sapply(meta_split, `[`, 1)
-    meta_values_list <- lapply(meta_split, function(x) x[-1])
-    
-    # Build metadata dataframe
-    meta_mat <- do.call(rbind, meta_values_list)
-    meta_df <- as.data.frame(t(meta_mat), stringsAsFactors = FALSE)
-    colnames(meta_df) <- meta_keys
-    rownames(meta_df) <- sample_ids
-    
-    # Convert numeric columns
-    for (col in colnames(meta_df)) {
-        suppressWarnings({
-            x_num <- as.numeric(meta_df[[col]])
-            if (!any(is.na(x_num))) meta_df[[col]] <- x_num
-        })
-    }
-    
-    # Lines 13+: expression data
-    expr_lines <- all_lines[13:length(all_lines)]
-    expr_split <- lapply(expr_lines, function(x) strsplit(x, "\t")[[1]])
-    
-    proteins <- sapply(expr_split, `[`, 1)
-    expr_values_list <- lapply(expr_split, function(x) as.numeric(x[-1]))
-    
-    expr_mat <- do.call(rbind, expr_values_list)
-    rownames(expr_mat) <- proteins
-    colnames(expr_mat) <- sample_ids
-    
-    # Filter rows: keep only those containing "_MOUSE"
-    mouse_rows <- grepl("_MOUSE", rownames(expr_mat))
-    expr_mat <- expr_mat[mouse_rows, , drop = FALSE]
-    
-    # Keep only first protein name if multiple names separated by ";"
-    rownames(expr_mat) <- sapply(strsplit(rownames(expr_mat), ";"), `[`, 1)
-    
-    # Remove "_MOUSE" suffix from rownames
-    rownames(expr_mat) <- sub("_MOUSE$", "", rownames(expr_mat))
-    
-    cat("Success!\n")
-    cat("Expression matrix:", nrow(expr_mat), "proteins x", ncol(expr_mat), "samples\n")
-    cat("Metadata:", nrow(meta_df), "samples x", ncol(meta_df), "fields\n")
-    cat("Metadata fields:", paste(colnames(meta_df), collapse = ", "), "\n")
-    
-    list(mat = expr_mat, meta = meta_df)
+optional_visualization_audit <- data.frame(
+    visualization = character(), execution_status = character(), reason = character(),
+    n_input_rows = integer(), n_usable_rows = integer(), output_path = character(),
+    stringsAsFactors = FALSE
+)
+record_optional_visualization <- function(result) {
+    optional_visualization_audit <<- rbind(optional_visualization_audit, result)
+    write_dt(optional_visualization_audit, optional_visualization_audit_path)
+    invisible(result)
 }
-
 
 # ================== Build mat/meta with checks ==================
-g <- read_gct(gct_file)
-mat  <- g$mat
-meta <- g$meta
+cat("Reading validated animal-level GCT:", gct_file, "\n")
+source_sha256 <- if (file.exists(gct_file)) digest::digest(file = gct_file, algo = "sha256") else NA_character_
+core_input <- tryCatch({
+    parsed_gct <- validate_protigy_gct_v13(gct_file)
+    validated_input <- validate_neha_pca_animal_input(parsed_gct, expected_n = 3L)
+    prepared_pca <- prepare_neha_animal_pca(
+        validated_input$expression_matrix,
+        center = TRUE,
+        scale. = TRUE
+    )
+    list(validated = validated_input, prepared = prepared_pca)
+}, error = function(e) {
+    failure_audit <- make_neha_pca_audit(
+        source_path = gct_file,
+        source_sha256 = source_sha256,
+        output_paths = c(pca_audit = pca_audit_path),
+        execution_status = "failed",
+        error_message = conditionMessage(e)
+    )
+    write_dt(failure_audit, pca_audit_path)
+    stop(e)
+})
+mat <- core_input$prepared$matrix
+meta <- core_input$validated$sample_metadata
+pca <- core_input$prepared$pca
 
 # ================== PCA pipeline ==================
-mat[!is.finite(mat)] <- NA
-if (!is.matrix(mat) || nrow(mat) < 2 || ncol(mat) < 2)
-    stop(sprintf("Parsed matrix has dim %s; need at least 2x2.", paste(dim(mat), collapse="x")))
-
-keep_cols <- colMeans(is.na(mat)) <= 0.80
-if (!all(keep_cols)) {
-    message("Dropping high-missing samples: ", paste(colnames(mat)[!keep_cols], collapse = ", "))
-    mat  <- mat[, keep_cols, drop = FALSE]
-    meta <- meta[colnames(mat), , drop = FALSE]
-}
-
-keep_rows <- rowSums(is.na(mat)) < ncol(mat)
-mat <- mat[keep_rows, , drop = FALSE]
-if (nrow(mat) < 2 || ncol(mat) < 2)
-    stop(sprintf("Matrix too small after filtering: %dx%d.", nrow(mat), ncol(mat)))
-
-vz <- apply(mat, 1, stats::var, na.rm = TRUE)
-if (any(!is.finite(vz) | vz == 0)) mat <- mat[which(vz > 0 & is.finite(vz)), , drop = FALSE]
-
-if (requireNamespace("impute", quietly = TRUE)) {
-    mat <- impute::impute.knn(mat)$data
-} else {
-    med <- apply(mat, 1, median, na.rm = TRUE)
-    idx <- which(is.na(mat), arr.ind = TRUE)
-    if (nrow(idx) > 0) mat[idx] <- med[idx[,1]]
-}
-
-pca <- prcomp(t(mat), center = TRUE, scale. = TRUE)
-
-# Align names
-clean_names <- trim_ws(colnames(mat))
-colnames(mat)    <- clean_names
-rownames(pca$x)  <- clean_names
-rownames(meta)   <- trim_ws(rownames(meta))
-meta             <- meta[rownames(pca$x), , drop = FALSE]
 stopifnot(identical(rownames(meta), rownames(pca$x)))
 
 # Derived labels based on actual metadata fields
-# Available fields: sampleNumber, shortname, plate, replicate_unit, AnimalID, ReplicateGroup, sample_class, condition_code, sample_class_group
-if ("sample_class" %in% names(meta) && "replicate_unit" %in% names(meta)) {
-    meta$sample_class_replicate_unit <- paste(meta$sample_class, meta$replicate_unit, sep = "_")
-}
-if ("sample_class" %in% names(meta) && "condition_code" %in% names(meta)) {
-    meta$sample_class_condition <- paste(meta$sample_class, meta$condition_code, sep = "_")
-}
-if ("ReplicateGroup" %in% names(meta) && "sample_class" %in% names(meta)) {
-    meta$ReplicateGroup_sample_class <- paste(meta$ReplicateGroup, meta$sample_class, sep = "_")
-}
+# AnimalID, condition_code, condition, sample_class, and phenotypeWithinUnit are validated GCT metadata.
+meta$sample_class_condition <- paste(meta$sample_class, meta$condition, sep = "_")
 
 # ================== Minimal modern styling ==================
 theme_pca_min <- function() {
@@ -314,34 +261,71 @@ plot_and_save_group <- function(key, title_prefix, out_file, point_size = 8) {
 }
 
 # ================== Generate and save base plots (SVG) ==================
-plot_and_save_group("ReplicateGroup",       "PCA", "pca_by_replicate_group.svg")
-plot_and_save_group("sample_class",             "PCA", "pca_by_sample_class.svg")
+primary_output_paths <- c(
+  pca_by_sample_class = file.path(output_dir, "plots", "base", "pca_by_sample_class.svg"),
+  pca_by_condition = file.path(output_dir, "plots", "base", "pca_by_condition.svg"),
+  pca_by_animal_id = file.path(output_dir, "plots", "base", "pca_by_animal_id.svg"),
+  pca_by_phenotype = file.path(output_dir, "plots", "base", "pca_by_phenotype_within_unit.svg"),
+  pca_scree = file.path(output_dir, "plots", "variance", "pca_scree.svg"),
+  pca_cumulative_variance = file.path(output_dir, "plots", "variance", "pca_cumulative_variance.svg"),
+  parsed_metadata = file.path(output_dir, "tables", "meta", "sample_metadata_parsed.csv"),
+  variance_explained = file.path(output_dir, "tables", "variance", "pca_variance_explained.csv"),
+  pca_audit = pca_audit_path
+)
+tryCatch({
+  plot_and_save_group("sample_class", "PCA", "pca_by_sample_class.svg")
+  plot_and_save_group("condition", "PCA", "pca_by_condition.svg")
+  plot_and_save_group("AnimalID", "PCA", "pca_by_animal_id.svg")
+  plot_and_save_group("phenotypeWithinUnit", "PCA", "pca_by_phenotype_within_unit.svg")
 
-# Export parsed metadata
-save_table("tables/meta", "sample_metadata_parsed.csv", meta, row.names = TRUE)
+  # Export parsed metadata
+  save_table("tables/meta", "sample_metadata_parsed.csv", meta, row.names = TRUE)
+
+  # 1) Scree and cumulative variance
+  var_explained <- (pca$sdev^2) / sum(pca$sdev^2)
+  df_scree <- data.frame(PC = seq_along(var_explained),
+                         Variance = var_explained,
+                         Cumulative = cumsum(var_explained))
+  save_table("tables/variance", "pca_variance_explained.csv", df_scree)
+
+  p_scree <- ggplot(df_scree, aes(PC, Variance)) +
+    geom_col(fill="#6B5B95") +
+    geom_point() + geom_line(group=1) +
+    scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+    theme_pca_min() + labs(title="PCA Scree", x="Principal Component", y="Variance Explained")
+  save_plot("plots/variance", "pca_scree.svg", p_scree)
+
+  p_cum <- ggplot(df_scree, aes(PC, Cumulative)) +
+    geom_point(color="#66C1A4") + geom_line(color="#66C1A4") +
+    geom_hline(yintercept = 0.8, linetype="dashed", color="#B2B2B2") +
+    scale_y_continuous(labels = scales::percent_format(accuracy = 1), limits=c(0,1)) +
+    theme_pca_min() + labs(title="Cumulative Variance", x="Principal Component", y="Cumulative Fraction")
+  save_plot("plots/variance", "pca_cumulative_variance.svg", p_cum)
+}, error = function(e) {
+  failure_audit <- make_neha_pca_audit(
+    validated_input = core_input$validated,
+    prepared_pca = core_input$prepared,
+    source_path = gct_file,
+    source_sha256 = source_sha256,
+    output_paths = primary_output_paths,
+    execution_status = "failed",
+    error_message = conditionMessage(e)
+  )
+  write_dt(failure_audit, pca_audit_path)
+  stop(e)
+})
+pca_audit <- make_neha_pca_audit(
+  validated_input = core_input$validated,
+  prepared_pca = core_input$prepared,
+  source_path = gct_file,
+  source_sha256 = source_sha256,
+  output_paths = primary_output_paths,
+  execution_status = "success"
+)
+write_dt(pca_audit, pca_audit_path)
 
 # ================== Extensions ==================
-
-# 1) Scree and cumulative variance
-var_explained <- (pca$sdev^2) / sum(pca$sdev^2)
-df_scree <- data.frame(PC = seq_along(var_explained),
-                       Variance = var_explained,
-                       Cumulative = cumsum(var_explained))
-save_table("tables/variance", "pca_variance_explained.csv", df_scree)
-
-p_scree <- ggplot(df_scree, aes(PC, Variance)) +
-  geom_col(fill="#6B5B95") +
-  geom_point() + geom_line(group=1) +
-  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
-  theme_pca_min() + labs(title="PCA Scree", x="Principal Component", y="Variance Explained")
-save_plot("plots/variance", "pca_scree.svg", p_scree)
-
-p_cum <- ggplot(df_scree, aes(PC, Cumulative)) +
-  geom_point(color="#66C1A4") + geom_line(color="#66C1A4") +
-  geom_hline(yintercept = 0.8, linetype="dashed", color="#B2B2B2") +
-  scale_y_continuous(labels = scales::percent_format(accuracy = 1), limits=c(0,1)) +
-  theme_pca_min() + labs(title="Cumulative Variance", x="Principal Component", y="Cumulative Fraction")
-save_plot("plots/variance", "pca_cumulative_variance.svg", p_cum)
+tryCatch({
 
 # 2) PC ~ metadata ANOVA with effect sizes (sample_class and condition_code), robust and always writes a file
 pc_df <- as.data.frame(pca$x)
@@ -465,8 +449,9 @@ if (!is.null(um)) {
     save_plot("plots/umap", out_file, p)
     invisible(p)
   }
-  plot_umap_group("ReplicateGroup", "umap_by_replicate_group.svg")
-  plot_umap_group("sample_class",       "umap_by_sample_class.svg")
+  plot_umap_group("sample_class", "umap_by_sample_class.svg")
+  plot_umap_group("condition", "umap_by_condition.svg")
+  plot_umap_group("AnimalID", "umap_by_animal_id.svg")
 }
 # detect switched samples / outliers based on umap
 if (!is.null(um)) {
@@ -613,7 +598,7 @@ for (k in best_k) {
   sil_tab[[length(sil_tab)+1]] <- data.frame(k=k, silhouette=sil_avg)
 
   if (requireNamespace("aricode", quietly = TRUE)) {
-    for (lab in c("sample_class","ReplicateGroup")) {
+    for (lab in c("sample_class", "condition", "AnimalID")) {
       if (!lab %in% names(meta)) next
       ref <- factor(meta[[lab]])
       pred <- factor(km$cluster, levels = sort(unique(km$cluster)))
@@ -1692,7 +1677,7 @@ message("All additional supplementary and main figure plots completed!")
 # AD) Side-by-side PCA plots for different groupings (report quality)
 combined_pca_panels <- function() {
     # Create 2x2 panel of key groupings
-    groupings <- c("sample_class", "condition_code", "ReplicateGroup", "plate")
+    groupings <- c("sample_class", "condition", "AnimalID", "phenotypeWithinUnit")
     groupings <- intersect(groupings, names(meta))
     
     if (length(groupings) < 2) {
@@ -2413,23 +2398,25 @@ variance_sunburst <- function() {
     if (!requireNamespace("treemap", quietly = TRUE) || !requireNamespace("d3r", quietly = TRUE)) {
         message("treemap/d3r not available; trying basic treemap")
         var_exp <- (pca$sdev^2) / sum(pca$sdev^2) * 100
-        n_show <- min(20, length(var_exp))
-        
-        df <- data.frame(
-            PC = paste0("PC", 1:n_show),
-            Category = ifelse(1:n_show <= 5, "Top 5", 
-                            ifelse(1:n_show <= 10, "PC 6-10", "PC 11-20")),
-            Variance = var_exp[1:n_show]
+        df <- prepare_neha_pca_variance_treemap_data(var_exp, max_pcs = 20L)
+        output_path <- file.path(output_dir, "plots", "innovative", "variance_treemap.svg")
+        result <- run_neha_pca_optional_plot(
+            plot_name = "variance_treemap",
+            usable_data = df,
+            output_path = output_path,
+            n_input_rows = attr(df, "n_input_rows"),
+            render_fun = function(plot_data, output_path) {
+                p <- ggplot(plot_data, aes(area = Variance, fill = Category, label = PC)) +
+                    treemapify::geom_treemap() +
+                    treemapify::geom_treemap_text(color = "white", place = "centre") +
+                    scale_fill_manual(values = c("#6B5B95", "#88B04B", "#B2B2B2")) +
+                    theme_minimal() +
+                    labs(title = "Variance Contribution Treemap")
+
+                save_plot("plots/innovative", basename(output_path), p, width = 10, height = 8)
+            }
         )
-        
-        p <- ggplot(df, aes(area = Variance, fill = Category, label = PC)) +
-            treemapify::geom_treemap() +
-            treemapify::geom_treemap_text(color = "white", place = "centre") +
-            scale_fill_manual(values = c("#6B5B95", "#88B04B", "#B2B2B2")) +
-            theme_minimal() +
-            labs(title = "Variance Contribution Treemap")
-        
-        save_plot("plots/innovative", "variance_treemap.svg", p, width = 10, height = 8)
+        record_optional_visualization(result)
         return(NULL)
     }
 }
@@ -2464,33 +2451,39 @@ chord_diagram_groups <- function(group_key = "sample_class", pc_threshold = 2) {
         return(NULL)
     }
     
-    # Calculate group centroids in PC space
-    groups <- factor(meta[rownames(pca$x), group_key])
-    groups <- groups[!is.na(groups)]
-    
-    centroids <- aggregate(pca$x[names(groups), 1:5], 
-                          by = list(group = groups), 
-                          FUN = mean)
-    rownames(centroids) <- centroids$group
-    centroids$group <- NULL
-    
-    # Calculate pairwise distances between group centroids
-    dist_mat <- as.matrix(dist(centroids))
-    
-    # Convert to flow matrix (inverse of distance)
-    flow_mat <- 1 / (1 + dist_mat)
-    diag(flow_mat) <- 0
-    
-    png(file.path(ensure_dir(subdir("plots/innovative")), "chord_diagram_groups.png"),
-        width = 10, height = 10, units = "in", res = 300)
-    
-    circlize::chordDiagram(flow_mat, 
-                          grid.col = make_modern_palette(nrow(flow_mat)),
-                          transparency = 0.5)
-    title("Group Relationships in PC Space")
-    
-    dev.off()
-    circlize::circos.clear()
+    # Calculate group centroids from sample IDs, not names(factor), which is NULL.
+    centroids <- prepare_neha_pca_group_centroids(pca$x, meta, group_key, n_pcs = 5L)
+    output_path <- file.path(output_dir, "plots", "innovative", "chord_diagram_groups.png")
+    result <- run_neha_pca_optional_plot(
+        plot_name = "chord_diagram_groups",
+        usable_data = centroids,
+        output_path = output_path,
+        n_input_rows = attr(centroids, "n_input_rows"),
+        render_fun = function(plot_data, output_path) {
+            rownames(plot_data) <- plot_data$group
+            plot_data$group <- NULL
+
+            # Calculate pairwise distances between group centroids.
+            dist_mat <- as.matrix(dist(plot_data))
+
+            # Convert to flow matrix (inverse of distance).
+            flow_mat <- 1 / (1 + dist_mat)
+            diag(flow_mat) <- 0
+
+            png(output_path, width = 10, height = 10, units = "in", res = 300)
+            on.exit({
+                if (grDevices::dev.cur() > 1L) grDevices::dev.off()
+                circlize::circos.clear()
+            }, add = TRUE)
+            circlize::chordDiagram(
+                flow_mat,
+                grid.col = make_modern_palette(nrow(flow_mat)),
+                transparency = 0.5
+            )
+            title("Group Relationships in PC Space")
+        }
+    )
+    record_optional_visualization(result)
 }
 chord_diagram_groups("sample_class")
 
@@ -2564,10 +2557,18 @@ hexbin_umap_with_marginals <- function(group_key = "sample_class") {
            p_marg, width = 10, height = 8, dpi = 300)
 }
 hexbin_umap_with_marginals("sample_class")
-hexbin_umap_with_marginals("condition_code")
-hexbin_umap_with_marginals("ReplicateGroup")
-
-
-
-
-
+hexbin_umap_with_marginals("condition")
+hexbin_umap_with_marginals("AnimalID")
+}, error = function(e) {
+  failure_audit <- make_neha_pca_audit(
+    validated_input = core_input$validated,
+    prepared_pca = core_input$prepared,
+    source_path = gct_file,
+    source_sha256 = source_sha256,
+    output_paths = primary_output_paths,
+    execution_status = "failed",
+    error_message = conditionMessage(e)
+  )
+  write_dt(failure_audit, pca_audit_path)
+  stop(e)
+})

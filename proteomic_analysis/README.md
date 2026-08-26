@@ -126,6 +126,12 @@ Run the animal-level EWCE sampling-unit checks:
 Rscript tests/test_ewce_animal_level.R
 ```
 
+Run the downstream animal-level PCA/QC checks:
+
+```bash
+Rscript tests/test_pca_animal_level.R
+```
+
 ## Running On Your Own Data
 
 Use the shared label helper in `R/analysis_labels.R` when adding or modifying scripts. Input metadata should contain `sample_id`; if `sample_class` or `condition_code` are absent, active preprocessing scripts infer them from canonical labels where possible.
@@ -165,6 +171,8 @@ Canonical enrichment defaults can be overridden with `NEHA_ENRICHMENT_MAPPED_ROO
 The 2024 Neha instrument IDs do not contain `_L_`/`_R_`. For that historical dataset only, the stage requires the original annotation's explicit `_left`/`_right` label and independently verifies its one-to-one agreement with both archived `ReplicateGroup` fields and the instrument sample identity. Reusable aggregation helpers otherwise accept only `Left`/`L` and `Right`/`R` and require the sample-ID hemisphere token.
 
 The EWCE differential branch consumes `protigy_input_animal_level/neha_protigy_input_animal_level_primary.gct`, the validated handoff containing one equal-weight Left/Right mean per `AnimalID × sample_class`. It fits four 12-animal limma models and the 12 forward comparisons from `neha_primary_contrast_manifest()`, requiring exactly three animals per condition before fitting. It does not repeat aggregation or add normalization, filtering, or imputation to the animal-level abundances; the existing EWCE gene-symbol annotation step is otherwise unchanged. Differential sampling-unit provenance and the existing EWCE parameters are written to `03_QC_Mapping_Logs/animal_level_differential_audit.csv`. Override the input and isolated output root with `NEHA_EWCE_ANIMAL_LEVEL_INPUT` and `NEHA_EWCE_OUTPUT_ROOT`; the historical `Results/EWCE_Results` root is rejected.
+
+The downstream biological PCA in `03_qc_exploration/06_pcaPlot_Neha.r` reads that same validated primary animal-level GCT with `validate_protigy_gct_v13()`. Each PCA point is one `AnimalID × sample_class` unit; all 48 units and three animals per sample-class/condition are required. The processed/imputed animal-level abundances are not normalized, filtered for missingness, or imputed again. The primary `prcomp()` remains centered and scaled, with only zero-variance protein rows removed because scaled PCA cannot use them; every removal is audited. Animal-level plots include sample class, condition, AnimalID, and phenotype, and a machine-readable audit is written under the isolated `Results/pca_plots_animal_level` root. Override paths with `NEHA_PCA_ANIMAL_LEVEL_INPUT` and `NEHA_PCA_OUTPUT_ROOT`; the historical `Results/pca_plots` root is rejected. Acquisition-level protein/peptide QC and rank-abundance scripts remain sample-level because they evaluate technical acquisition and sample-class intensity behavior rather than downstream biological independence.
 
 ## License
 
