@@ -27,7 +27,7 @@ option_or_env <- function(option_name, env_name, default) {
 data_root <- option_or_env(
   "neha.animal_level_data_root",
   "NEHA_ANIMAL_LEVEL_DATA_ROOT",
-  "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/Datasets/gct/data"
+  "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/02_data/gct"
 )
 project_root <- option_or_env(
   "neha.project_data_root",
@@ -47,7 +47,8 @@ description_xlsx <- option_or_env(
 sample_info_xlsx <- option_or_env(
   "neha.animal_level_sample_info",
   "NEHA_ANIMAL_LEVEL_SAMPLE_INFO",
-  file.path(data_root, "sample_info.xlsx")
+  # hand-maintained metadata lives under 01_input/, not with derived data
+  "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/01_input/metadata/sample_info.xlsx"
 )
 sample_annotation_xlsx <- option_or_env(
   "neha.animal_level_sample_annotation",
@@ -57,7 +58,7 @@ sample_annotation_xlsx <- option_or_env(
 output_dir <- option_or_env(
   "neha.animal_level_output_dir",
   "NEHA_ANIMAL_LEVEL_OUTPUT_DIR",
-  file.path(data_root, "protigy_input_animal_level")
+  "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/02_data/animal_level/input_gct"
 )
 
 inputs <- c(
@@ -278,15 +279,17 @@ feature_audit <- data.frame(
 utils::write.csv(feature_audit, feature_audit_path, row.names = FALSE, na = "")
 
 contrast_manifest <- neha_primary_contrast_manifest()
+# Historical hemisphere-level evidence: former Datasets/mapped/ is now
+# 99_historical/datasets_mapped/ after the 2026-08-26 restructure.
 evidence_subdir <- c(
-  paired_cno_vs_paired_veh = "mapped/effects_chemogenetic_inhibition/paired",
-  paired_veh_vs_unpaired_veh = "mapped/learning_signature/memory_ensemble",
-  unpaired_cno_vs_unpaired_veh = "mapped/effects_chemogenetic_inhibition/unpaired"
+  paired_cno_vs_paired_veh = "datasets_mapped/effects_chemogenetic_inhibition/paired",
+  paired_veh_vs_unpaired_veh = "datasets_mapped/learning_signature/memory_ensemble",
+  unpaired_cno_vs_unpaired_veh = "datasets_mapped/effects_chemogenetic_inhibition/unpaired"
 )
 contrast_manifest$historical_evidence_file <- file.path(
   project_root,
   "clusterProfiler",
-  "Datasets",
+  "99_historical",
   unname(evidence_subdir[contrast_manifest$contrast_family]),
   paste0(contrast_manifest$historical_comparison_name, ".csv")
 )

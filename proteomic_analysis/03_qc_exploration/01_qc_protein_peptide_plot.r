@@ -20,9 +20,56 @@ suppressPackageStartupMessages({
 # 1. Paths
 # ================================================================
 
-input_file <- "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/Datasets/pg_matrix/raw/quicksearch.stats.annotated.xlsx"
+option_or_env <- function(option_name, env_name, default) {
+  value <- getOption(option_name)
+  if (!is.null(value) && nzchar(trimws(as.character(value)))) return(as.character(value))
+  value <- Sys.getenv(env_name, unset = "")
+  if (nzchar(trimws(value))) return(value)
+  default
+}
 
-out_dir <- "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/Results/QC/"
+project_root <- "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler"
+
+# NOTE: this script plots ACQUISITION-LEVEL TECHNICAL QC METRICS (identification depth,
+# MS1/MS2 signal, peak width, mass accuracy, normalisation instability, RT prediction
+# accuracy) per acquisition sample. Its PCA is a PCA *of those instrument QC metrics* --
+# it is NOT a protein-abundance PCA. For protein-abundance PCA see 06_pcaPlot_Neha.r.
+#
+# Its input, quicksearch.stats.annotated.xlsx, is a DIA-NN/instrument QC export that is not
+# present anywhere in the current project tree (its former Datasets/pg_matrix/ parent did
+# not exist either). Repeated audits could therefore not evaluate acquisition-level QC.
+input_file <- option_or_env(
+  "neha.qc_quicksearch_stats", "NEHA_QC_QUICKSEARCH_STATS",
+  file.path(project_root, "01_input", "qc", "quicksearch.stats.annotated.xlsx")
+)
+
+out_dir <- option_or_env(
+  "neha.qc_output_dir", "NEHA_QC_OUTPUT_DIR",
+  file.path(project_root, "03_output", "qc")
+)
+
+if (!file.exists(input_file)) {
+  stop(
+    "Acquisition QC export not found: ", input_file,
+    "\nThis file (quicksearch.stats.annotated.xlsx) is a DIA-NN/instrument QC report and has",
+    "\nnever been present in the Neha project tree.",
+    "\n",
+    "\nProvenance note (resolved 2026-08-27): a filesystem-wide search found this filename only",
+    "\nunder Exp9_Social-Stress, never under Collabs/Neha. The former hardcoded default here was",
+    "\n  <Neha>/clusterProfiler/Datasets/pg_matrix/raw/quicksearch.stats.annotated.xlsx",
+    "\nwhose tail is byte-identical to the real Exp9 path",
+    "\n  <Exp9_Social-Stress>/proteomics/Datasets/pg_matrix/raw/quicksearch.stats.annotated.xlsx",
+    "\nso this default appears to be boilerplate inherited from that project rather than a path",
+    "\nthat ever held Neha data. The Exp9 file has the right 33 columns but contains 0 Neha",
+    "\nsamples (different instrument and acquisition date), so it is NOT a substitute.",
+    "\n",
+    "\nTo run this script you must re-export the QC report for the Neha acquisition, then set",
+    "\nNEHA_QC_QUICKSEARCH_STATS / options(neha.qc_quicksearch_stats=) to point at it.",
+    "\nUntil then no acquisition-level technical QC (protein/precursor counts, MS1/MS2 signal,",
+    "\nmass accuracy, normalisation instability) can be evaluated for this dataset.",
+    call. = FALSE
+  )
+}
 dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
 
 # ================================================================

@@ -41,7 +41,9 @@ file_path <- option_or_env(
 folder_path <- option_or_env(
     "neha.excel_convert_folder",
     "NEHA_EXCEL_CONVERT_FOLDER",
-    "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/Datasets/gct/data/imputed/grouped"
+    # Default follows the 2026-08-26 restructure. The former imputed/grouped folder is not
+    # present in the current tree; override this if you have those grouped workbooks.
+    "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/02_data/gct/imputed/grouped"
 )
 metadata_path <- option_or_env(
     "neha.metadata_path",

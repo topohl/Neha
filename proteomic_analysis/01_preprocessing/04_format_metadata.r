@@ -7,8 +7,27 @@ if (any(!installed)) {
 lapply(packages, library, character.only = TRUE)
 source(file.path("R", "analysis_labels.R"))
 
-# Define the file path
-file_path <- "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/Datasets/sample_metadata/sample_metadata.xlsx"
+# Define the file path (overridable; default follows the 2026-08-26 restructure)
+option_or_env <- function(option_name, env_name, default) {
+    value <- getOption(option_name)
+    if (!is.null(value) && nzchar(trimws(as.character(value)))) return(as.character(value))
+    value <- Sys.getenv(env_name, unset = "")
+    if (nzchar(trimws(value))) return(value)
+    default
+}
+project_root <- "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler"
+file_path <- option_or_env(
+    "neha.format_metadata_input", "NEHA_FORMAT_METADATA_INPUT",
+    file.path(project_root, "01_input", "metadata", "sample_metadata.xlsx")
+)
+if (!file.exists(file_path)) {
+    stop(
+        "Sample metadata workbook not found: ", file_path,
+        "\nThe former Datasets/sample_metadata/ folder is not present in the current tree.",
+        "\nSet NEHA_FORMAT_METADATA_INPUT / options(neha.format_metadata_input=) to its location.",
+        call. = FALSE
+    )
+}
 
 # Get available sheet names
 sheet_names <- excel_sheets(file_path)
@@ -42,4 +61,9 @@ df <- df %>%
   )
 
 # save as excel file using writexl package
-write_xlsx(df, "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/Datasets/sample_metadata/sample_metadata_processed.xlsx")
+output_path <- option_or_env(
+    "neha.format_metadata_output", "NEHA_FORMAT_METADATA_OUTPUT",
+    file.path(project_root, "01_input", "metadata", "sample_metadata_processed.xlsx")
+)
+dir.create(dirname(output_path), recursive = TRUE, showWarnings = FALSE)
+write_xlsx(df, output_path)

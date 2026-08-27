@@ -6,6 +6,7 @@ script_path <- if (length(file_arg) == 1L) {
   file.path("tests", "test_mapthatprot_animal_level.R")
 }
 repo_root <- normalizePath(file.path(dirname(script_path), ".."), winslash = "/", mustWork = FALSE)
+source(file.path(repo_root, "R", "neha_path_utils.R"))
 if (!file.exists(file.path(repo_root, "R", "mapthatprot_animal_level_utils.R"))) {
   repo_root <- normalizePath(getwd(), winslash = "/", mustWork = TRUE)
 }

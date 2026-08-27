@@ -2,6 +2,7 @@ args <- commandArgs(trailingOnly = FALSE)
 file_arg <- grep("^--file=", args, value = TRUE)
 script_path <- if (length(file_arg) == 1L) sub("^--file=", "", file_arg) else file.path("tests", "test_pca_optional_visualizations.R")
 repo_root <- normalizePath(file.path(dirname(script_path), ".."), winslash = "/", mustWork = FALSE)
+source(file.path(repo_root, "R", "neha_path_utils.R"))
 if (!file.exists(file.path(repo_root, "R", "pca_animal_level_utils.R"))) {
   repo_root <- normalizePath(getwd(), winslash = "/", mustWork = TRUE)
 }

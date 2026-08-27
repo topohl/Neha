@@ -1,18 +1,17 @@
 # Focused sampling-unit contracts for the Neha animal-level EWCE branch.
 
-neha_ewce_normalize_path <- function(path, must_work = FALSE) {
-  normalizePath(path, winslash = "/", mustWork = must_work)
+if (!exists("neha_normalize_path", mode = "function")) {
+  stop("R/neha_path_utils.R must be sourced before R/ewce_animal_level_utils.R", call. = FALSE)
 }
 
-neha_ewce_path_is_within <- function(path, root) {
-  path <- tolower(neha_ewce_normalize_path(path, must_work = FALSE))
-  root <- sub("/+$", "", tolower(neha_ewce_normalize_path(root, must_work = FALSE)))
-  identical(path, root) || startsWith(path, paste0(root, "/"))
-}
+# Retained names delegate to the shared primitives in R/neha_path_utils.R.
+neha_ewce_normalize_path <- function(path, must_work = FALSE) neha_normalize_path(path, must_work)
+neha_ewce_path_is_within <- function(path, root) neha_path_is_within(path, root)
 
 validate_neha_ewce_output_root <- function(output_root, historical_root) {
-  output_root <- neha_ewce_normalize_path(output_root, must_work = FALSE)
-  historical_root <- neha_ewce_normalize_path(historical_root, must_work = FALSE)
+  # Message text is asserted by tests/test_ewce_animal_level.R; keep it verbatim.
+  output_root <- neha_ewce_normalize_path(output_root)
+  historical_root <- neha_ewce_normalize_path(historical_root)
   if (neha_ewce_path_is_within(output_root, historical_root)) {
     stop(
       "Animal-level EWCE output cannot overwrite the historical EWCE root: ",

@@ -20,6 +20,7 @@ if (!file.exists(file.path(repo_root, "R", "analysis_labels.R"))) {
 }
 source(file.path(repo_root, "R", "analysis_labels.R"))
 source(file.path(repo_root, "R", "protigy_input_utils.R"))
+source(file.path(repo_root, "R", "neha_path_utils.R"))
 source(file.path(repo_root, "R", "ewce_animal_level_utils.R"))
 
 if (!require("BiocManager", quietly = TRUE)) install.packages("BiocManager")
@@ -64,14 +65,17 @@ option_or_env <- function(option_name, env_name, default) {
 data_path <- option_or_env(
   "neha.ewce_animal_level_input",
   "NEHA_EWCE_ANIMAL_LEVEL_INPUT",
-  "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/Datasets/gct/data/protigy_input_animal_level/neha_protigy_input_animal_level_primary.gct"
+  "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/02_data/animal_level/input_gct/neha_protigy_input_animal_level_primary.gct"
 )
-historical_results <- "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/Results/EWCE_Results"
+# Legacy hemisphere-level EWCE results now live under 99_historical/ewce_legacy.
+# NOTE: the previous default here was Results/EWCE_Results, a path that never existed on
+# disk, so this guard silently protected nothing before the 2026-08-26 restructure.
+historical_results <- "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/99_historical/ewce_legacy"
 base_results <- validate_neha_ewce_output_root(
   option_or_env(
     "neha.ewce_output_root",
     "NEHA_EWCE_OUTPUT_ROOT",
-    "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/Results/EWCE_Results_animal_level"
+    "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/03_output/ewce"
   ),
   historical_results
 )

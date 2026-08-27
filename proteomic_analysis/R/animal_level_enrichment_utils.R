@@ -1,23 +1,16 @@
 # Canonical software contracts for the Neha animal-level enrichment branch.
 # Biological comparison definitions remain owned by R/analysis_labels.R.
 
-neha_enrichment_normalize_path <- function(path, must_work = FALSE) {
-  normalizePath(path.expand(trimws(as.character(path))), winslash = "/", mustWork = must_work)
+if (!exists("neha_normalize_path", mode = "function")) {
+  stop("R/neha_path_utils.R must be sourced before R/animal_level_enrichment_utils.R", call. = FALSE)
 }
 
-neha_enrichment_path_is_within <- function(path, parent) {
-  path <- neha_enrichment_normalize_path(path)
-  parent <- sub("/+$", "", neha_enrichment_normalize_path(parent))
-  if (.Platform$OS.type == "windows") {
-    path <- tolower(path)
-    parent <- tolower(parent)
-  }
-  identical(path, parent) || startsWith(path, paste0(parent, "/"))
-}
-
-neha_enrichment_paths_overlap <- function(left, right) {
-  neha_enrichment_path_is_within(left, right) || neha_enrichment_path_is_within(right, left)
-}
+# Retained names delegate to the shared primitives in R/neha_path_utils.R.
+# Behaviour change on non-Windows only: comparison is now case-insensitive everywhere
+# (previously case-sensitive off Windows). See the note in R/neha_path_utils.R.
+neha_enrichment_normalize_path <- function(path, must_work = FALSE) neha_normalize_path(path, must_work)
+neha_enrichment_path_is_within <- function(path, parent) neha_path_is_within(path, parent)
+neha_enrichment_paths_overlap <- function(left, right) neha_paths_overlap(left, right)
 
 neha_enrichment_sha256 <- function(path) {
   if (!requireNamespace("digest", quietly = TRUE)) {
@@ -28,21 +21,22 @@ neha_enrichment_sha256 <- function(path) {
 }
 
 neha_enrichment_default_paths <- function() {
+  # Paths reflect the 2026-08-26 input/data/output restructure; see CANONICAL_OUTPUTS.md.
   project_root <- "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler"
-  dataset_root <- file.path(project_root, "Datasets")
-  animal_root <- file.path(dataset_root, "data", "protigy_animal_level")
+  animal_root <- file.path(project_root, "02_data", "animal_level")
+  historical_root <- file.path(project_root, "99_historical")
   list(
     project_root = project_root,
-    dataset_root = dataset_root,
+    dataset_root = file.path(project_root, "02_data"),
     mapped_root = file.path(animal_root, "mapped"),
     mapped_index = file.path(animal_root, "mapped", "indexMappedComparisons.csv"),
-    output_root = file.path(animal_root, "enrichment"),
+    output_root = file.path(project_root, "03_output", "enrichment"),
     split_root = file.path(animal_root, "split"),
-    historical_input_roots = file.path(dataset_root, c("raw", "mapped")),
+    historical_input_roots = file.path(historical_root, c("datasets_raw", "datasets_mapped")),
     historical_output_roots = c(
-      file.path(dataset_root, "core_enrichment"),
-      file.path(project_root, "Results"),
-      file.path(project_root, "Plots")
+      file.path(historical_root, "core_enrichment"),
+      historical_root,
+      file.path(historical_root, "plots_pairwise")
     )
   )
 }

@@ -2,6 +2,7 @@
 
 repo_root <- normalizePath(file.path(dirname(sub("^--file=", "", grep("^--file=", commandArgs(FALSE), value = TRUE)[1])), ".."), winslash = "/", mustWork = TRUE)
 source(file.path(repo_root, "R", "analysis_labels.R"))
+source(file.path(repo_root, "R", "neha_path_utils.R"))
 source(file.path(repo_root, "R", "animal_level_enrichment_utils.R"))
 
 assert_true <- function(value, message) if (!isTRUE(value)) stop(message, call. = FALSE)

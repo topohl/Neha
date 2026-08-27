@@ -1,18 +1,19 @@
 # Focused input, preprocessing, and audit contracts for Neha animal-level PCA.
 
-neha_pca_normalize_path <- function(path, must_work = FALSE) {
-  normalizePath(path, winslash = "/", mustWork = must_work)
+if (!exists("neha_normalize_path", mode = "function")) {
+  stop("R/neha_path_utils.R must be sourced before R/pca_animal_level_utils.R", call. = FALSE)
 }
 
-neha_pca_path_is_within <- function(path, root) {
-  path <- tolower(neha_pca_normalize_path(path, must_work = FALSE))
-  root <- sub("/+$", "", tolower(neha_pca_normalize_path(root, must_work = FALSE)))
-  identical(path, root) || startsWith(path, paste0(root, "/"))
-}
+# Retained names delegate to the shared primitives in R/neha_path_utils.R.
+neha_pca_normalize_path <- function(path, must_work = FALSE) neha_normalize_path(path, must_work)
+neha_pca_path_is_within <- function(path, root) neha_path_is_within(path, root)
 
 validate_neha_pca_output_root <- function(output_root, historical_root) {
-  output_root <- neha_pca_normalize_path(output_root, must_work = FALSE)
-  historical_root <- neha_pca_normalize_path(historical_root, must_work = FALSE)
+  # Message text is asserted by tests/test_pca_animal_level.R; keep it verbatim. Note the
+  # historical root (not the output root) is named, which is why this does not use the
+  # shared neha_validate_output_root() helper.
+  output_root <- neha_pca_normalize_path(output_root)
+  historical_root <- neha_pca_normalize_path(historical_root)
   if (neha_pca_path_is_within(output_root, historical_root)) {
     stop(
       "Animal-level PCA output cannot overwrite the historical PCA root: ",

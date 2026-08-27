@@ -2,6 +2,7 @@ args <- commandArgs(trailingOnly = FALSE)
 file_arg <- grep("^--file=", args, value = TRUE)
 script_path <- if (length(file_arg) == 1L) sub("^--file=", "", file_arg) else file.path("tests", "test_pca_animal_level.R")
 repo_root <- normalizePath(file.path(dirname(script_path), ".."), winslash = "/", mustWork = FALSE)
+source(file.path(repo_root, "R", "neha_path_utils.R"))
 if (!file.exists(file.path(repo_root, "R", "pca_animal_level_utils.R"))) {
   repo_root <- normalizePath(getwd(), winslash = "/", mustWork = TRUE)
 }
@@ -210,7 +211,20 @@ expect_identical(nrow(failure_audit), 1L, "A failed PCA input must produce one m
 expect_identical(failure_audit$execution_status, "failed", "Failed PCA audit status is incorrect.")
 expect_identical(failure_audit$error_message, "fixture failure", "Failed PCA audit did not retain the error message.")
 
-pca_script <- paste(readLines(file.path(repo_root, "03_qc_exploration", "06_pcaPlot_Neha.r"), warn = FALSE), collapse = "\n")
+# The PCA workflow was split (2026-08-26) from one monolith into an orchestrator plus ordered
+# parts under 03_qc_exploration/pca/. These contract assertions are about the workflow as a
+# whole, so read the entry point together with every part rather than just the entry point.
+pca_script_files <- c(
+  file.path(repo_root, "03_qc_exploration", "06_pcaPlot_Neha.r"),
+  sort(list.files(file.path(repo_root, "03_qc_exploration", "pca"),
+                  pattern = "\\.r$", full.names = TRUE))
+)
+expect_true(length(pca_script_files) >= 2,
+            "PCA workflow parts under 03_qc_exploration/pca/ were not found.")
+pca_script <- paste(
+  unlist(lapply(pca_script_files, function(f) readLines(f, warn = FALSE))),
+  collapse = "\n"
+)
 expect_true(grepl("validate_protigy_gct_v13(gct_file)", pca_script, fixed = TRUE),
             "PCA script does not use the established robust GCT v1.3 parser.")
 expect_true(!grepl("all_lines\\[4:12\\]|all_lines\\[13", pca_script),

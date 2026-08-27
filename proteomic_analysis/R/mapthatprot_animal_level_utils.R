@@ -2,44 +2,40 @@
 # animal-level MapThatProt branch. The protein-resolution cascade remains in
 # 02_id_mapping/01_MapThatProt_batch.r.
 
+if (!exists("neha_normalize_path", mode = "function")) {
+  stop("R/neha_path_utils.R must be sourced before R/mapthatprot_animal_level_utils.R", call. = FALSE)
+}
+
+# Branch-specific: no shared counterpart, kept here.
 mapthatprot_is_absolute_path <- function(path) {
   grepl("^([A-Za-z]:[\\\\/]|\\\\\\\\|/)", path)
 }
 
-normalize_mapthatprot_path <- function(path, must_work = FALSE) {
-  normalizePath(path.expand(trimws(as.character(path))), winslash = "/", mustWork = must_work)
-}
+# Retained names delegate to the shared primitives in R/neha_path_utils.R.
+# Behaviour change on non-Windows only: comparison is now case-insensitive everywhere
+# (previously case-sensitive off Windows). See the note in R/neha_path_utils.R.
+normalize_mapthatprot_path <- function(path, must_work = FALSE) neha_normalize_path(path, must_work)
+mapthatprot_path_is_within <- function(path, parent) neha_path_is_within(path, parent)
 
 mapthatprot_paths_equal <- function(left, right) {
-  left <- normalize_mapthatprot_path(left)
-  right <- normalize_mapthatprot_path(right)
-  if (.Platform$OS.type == "windows") {
-    left <- tolower(left)
-    right <- tolower(right)
-  }
-  identical(left, right)
-}
-
-mapthatprot_path_is_within <- function(path, parent) {
-  path <- normalize_mapthatprot_path(path)
-  parent <- sub("/+$", "", normalize_mapthatprot_path(parent))
-  if (.Platform$OS.type == "windows") {
-    path <- tolower(path)
-    parent <- tolower(parent)
-  }
-  identical(path, parent) || startsWith(path, paste0(parent, "/"))
+  identical(tolower(neha_normalize_path(left)), tolower(neha_normalize_path(right)))
 }
 
 neha_mapthatprot_default_paths <- function() {
+  # Paths reflect the 2026-08-26 input/data/output restructure; see CANONICAL_OUTPUTS.md.
   project_root <- "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler"
-  dataset_root <- file.path(project_root, "Datasets")
+  animal_root <- file.path(project_root, "02_data", "animal_level")
+  historical_root <- file.path(project_root, "99_historical")
   list(
     project_root = project_root,
-    split_root = file.path(dataset_root, "data", "protigy_animal_level", "split"),
-    output_root = file.path(dataset_root, "data", "protigy_animal_level", "mapped"),
-    uniprot_mapping_file = file.path(dataset_root, "MOUSE_10090_idmapping.dat"),
-    manual_mapping_file = file.path(dataset_root, "manual_mapping.xlsx"),
-    historical_roots = file.path(dataset_root, c("raw", "mapped", "unmapped", "mapping_reports"))
+    split_root = file.path(animal_root, "split"),
+    output_root = file.path(animal_root, "mapped"),
+    uniprot_mapping_file = file.path(project_root, "01_input", "references", "MOUSE_10090_idmapping.dat"),
+    manual_mapping_file = file.path(project_root, "01_input", "references", "manual_mapping.xlsx"),
+    historical_roots = file.path(
+      historical_root,
+      c("datasets_raw", "datasets_mapped", "datasets_unmapped", "mapping_reports")
+    )
   )
 }
 

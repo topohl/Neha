@@ -2,6 +2,7 @@ args <- commandArgs(trailingOnly = FALSE)
 file_arg <- grep("^--file=", args, value = TRUE)
 script_path <- if (length(file_arg) == 1L) sub("^--file=", "", file_arg) else file.path("tests", "test_ewce_animal_level.R")
 repo_root <- normalizePath(file.path(dirname(script_path), ".."), winslash = "/", mustWork = FALSE)
+source(file.path(repo_root, "R", "neha_path_utils.R"))
 if (!file.exists(file.path(repo_root, "R", "ewce_animal_level_utils.R"))) {
   repo_root <- normalizePath(getwd(), winslash = "/", mustWork = TRUE)
 }
@@ -244,6 +245,17 @@ expect_error(
   "cannot overwrite the historical EWCE root",
   "Animal-level EWCE output must reject the historical result root."
 )
+
+# Accept path: an isolated root outside the historical tree must be returned unchanged.
+# (Previously only the reject path was covered here, unlike tests/test_pca_animal_level.R.)
+ewce_isolated_root <- validate_neha_ewce_output_root(
+  file.path(tempdir(), "animal_ewce"),
+  file.path(tempdir(), "historical")
+)
+expect_true(grepl("animal_ewce$", ewce_isolated_root),
+            "Animal-level EWCE output must accept and return an isolated output root.")
+expect_true(!neha_ewce_path_is_within(ewce_isolated_root, file.path(tempdir(), "historical")),
+            "Isolated EWCE output root must not be reported as inside the historical root.")
 
 ewce_script <- paste(readLines(file.path(repo_root, "05_celltype_enrichment_EWCE", "01_EWCE.r"), warn = FALSE), collapse = "\n")
 expect_true(grepl("validate_neha_ewce_animal_input\\(animal_gct", ewce_script),

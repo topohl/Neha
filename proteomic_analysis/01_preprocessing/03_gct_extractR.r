@@ -32,12 +32,12 @@ option_or_env <- function(option_name, env_name, default) {
 input_gct <- option_or_env(
   "neha.protigy_stat_gct_input",
   "NEHA_PROTIGY_STAT_GCT_INPUT",
-  "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/Datasets/data/protigy_animal_level/stat_results_for_ssGSEA_neha_proteome.gct"
+  "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/02_data/animal_level/stat_results_for_ssGSEA_neha_proteome.gct"
 )
 output_root <- option_or_env(
   "neha.protigy_stat_gct_output_root",
   "NEHA_PROTIGY_STAT_GCT_OUTPUT_ROOT",
-  "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/Datasets/data/protigy_animal_level/split"
+  "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/02_data/animal_level/split"
 )
 input_gct <- normalizePath(input_gct, winslash = "/", mustWork = TRUE)
 output_root <- normalizePath(output_root, winslash = "/", mustWork = FALSE)
@@ -48,11 +48,14 @@ path_is_within <- function(path, parent) {
   identical(path, parent) || startsWith(path, paste0(parent, "/"))
 }
 
-historical_dataset_root <- "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/Datasets"
-protected_roots <- file.path(historical_dataset_root, c("raw", "mapped"))
+# Historical hemisphere-level trees were consolidated under 99_historical/ during the
+# 2026-08-26 restructure (see CANONICAL_OUTPUTS.md). The former Datasets/raw and
+# Datasets/mapped are now 99_historical/datasets_raw and 99_historical/datasets_mapped.
+historical_root <- "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/99_historical"
+protected_roots <- c(historical_root, file.path(historical_root, c("datasets_raw", "datasets_mapped")))
 if (any(vapply(protected_roots, function(path) path_is_within(output_root, path), logical(1)))) {
   stop(
-    "Refusing to write animal-level ProTigy splits under historical Datasets/raw or Datasets/mapped: ",
+    "Refusing to write animal-level ProTigy splits under the historical 99_historical tree: ",
     output_root,
     call. = FALSE
   )

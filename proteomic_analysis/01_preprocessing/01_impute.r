@@ -4,10 +4,47 @@ library(dplyr)
 library(writexl)
 source(file.path("R", "analysis_labels.R"))
 
-# Paths
-metadata_path <- ""
-input_path <- "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/Datasets/gct/data/pg.matrix_raw.tsv"
-output_dir <- "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/Datasets/gct/data"
+# Paths (overridable; defaults follow the 2026-08-26 restructure -- see CANONICAL_OUTPUTS.md)
+option_or_env <- function(option_name, env_name, default) {
+    value <- getOption(option_name)
+    if (!is.null(value) && nzchar(trimws(as.character(value)))) return(as.character(value))
+    value <- Sys.getenv(env_name, unset = "")
+    if (nzchar(trimws(value))) return(value)
+    default
+}
+
+project_root <- "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler"
+metadata_path <- option_or_env(
+    "neha.impute_metadata", "NEHA_IMPUTE_METADATA",
+    file.path(project_root, "01_input", "metadata", "sample_info.xlsx")
+)
+input_path <- option_or_env(
+    "neha.impute_input", "NEHA_IMPUTE_INPUT",
+    file.path(project_root, "01_input", "raw_proteomics", "pg.matrix_raw.tsv")
+)
+output_dir <- option_or_env(
+    "neha.impute_output_dir", "NEHA_IMPUTE_OUTPUT_DIR",
+    file.path(project_root, "02_data", "gct")
+)
+
+# This is a historical preprocessing stage: its raw .tsv input is not present in the current
+# project tree (the validated pipeline consumes the already-imputed matrix under 02_data/gct).
+# Fail with an actionable message rather than an opaque file-not-found.
+if (!file.exists(input_path)) {
+    stop(
+        "Raw input matrix not found: ", input_path,
+        "\nThis stage needs a raw pg.matrix .tsv that is not part of the current validated tree.",
+        "\nPlace it there, or set NEHA_IMPUTE_INPUT / options(neha.impute_input=) to its location.",
+        call. = FALSE
+    )
+}
+if (!file.exists(metadata_path)) {
+    stop(
+        "Sample metadata not found: ", metadata_path,
+        "\nSet NEHA_IMPUTE_METADATA / options(neha.impute_metadata=) to its location.",
+        call. = FALSE
+    )
+}
 
 # Read metadata
 metadata <- read_excel(metadata_path)

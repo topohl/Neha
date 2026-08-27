@@ -13,6 +13,7 @@ script_dir <- dirname(normalizePath(script_file, winslash = "/", mustWork = FALS
 project_root <- normalizePath(file.path(script_dir, ".."), winslash = "/", mustWork = TRUE)
 
 source(file.path(project_root, "R", "analysis_labels.R"))
+source(file.path(project_root, "R", "neha_path_utils.R"))
 source(file.path(project_root, "R", "animal_level_enrichment_utils.R"))
 
 required_packages <- c(

@@ -11,8 +11,35 @@ suppressPackageStartupMessages({
   library(svglite)
 })
 
-input_dir <- "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/Datasets/gct/data/imputed"
-saving_dir <- "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/Results/QC/rank_abundance"
+option_or_env <- function(option_name, env_name, default) {
+  value <- getOption(option_name)
+  if (!is.null(value) && nzchar(trimws(as.character(value)))) return(as.character(value))
+  value <- Sys.getenv(env_name, unset = "")
+  if (nzchar(trimws(value))) return(value)
+  default
+}
+
+project_root <- "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler"
+
+# Per-sample-class imputed matrices. The former Datasets/gct/data/imputed/ folder is not
+# present in the current tree; override the default if you have those per-class workbooks.
+input_dir <- option_or_env(
+  "neha.rank_abundance_input_dir", "NEHA_RANK_ABUNDANCE_INPUT_DIR",
+  file.path(project_root, "02_data", "gct", "imputed")
+)
+saving_dir <- option_or_env(
+  "neha.rank_abundance_output_dir", "NEHA_RANK_ABUNDANCE_OUTPUT_DIR",
+  file.path(project_root, "03_output", "qc", "rank_abundance")
+)
+
+if (!dir.exists(input_dir)) {
+  stop(
+    "Per-sample-class imputed input directory not found: ", input_dir,
+    "\nThis stage expects pgmatrix_imputed_<sample_class>.xlsx workbooks. Set",
+    "\nNEHA_RANK_ABUNDANCE_INPUT_DIR / options(neha.rank_abundance_input_dir=) to their location.",
+    call. = FALSE
+  )
+}
 dir.create(saving_dir, recursive = TRUE, showWarnings = FALSE)
 
 sample_classes <- c("mcherry", "neuropil", "cfos", "neuron")
