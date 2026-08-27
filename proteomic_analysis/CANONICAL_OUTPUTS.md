@@ -61,7 +61,9 @@ Condition codes: `1`=paired_cno, `2`=paired_veh, `3`=unpaired_cno, `4`=unpaired_
   byte-identical to the real Exp9 path
   `<Exp9_Social-Stress>/proteomics/Datasets/pg_matrix/raw/quicksearch.stats.annotated.xlsx`,
   so it appears to be boilerplate inherited when this repo was seeded from that project (the
-  same reason `01_preprocessing/05_metadata_create.r` still points at `Exp9_Social-Stress`).
+  same reason the old `01_preprocessing/05_metadata_create.r` pointed at `Exp9_Social-Stress`;
+  that script is now quarantined at `99_out_of_scope/05_metadata_create_EXP9.r` behind an
+  explicit `NEHA_ALLOW_EXP9` opt-in — see the caveat below).
   The Exp9 file has the correct 33 columns but contains **0 of 326** Neha samples — different
   instrument (`Bluto` vs `Olive`) and acquisition date (2025-07-03 vs 2024-12-17) — so it is
   **not** a usable substitute. Consequence: acquisition-level technical QC (identification
@@ -73,6 +75,15 @@ Condition codes: `1`=paired_cno, `2`=paired_veh, `3`=unpaired_cno, `4`=unpaired_
   `03_qc_exploration/06_pcaPlot_Neha.r`.
 - `99_historical/datasets_unmapped/` holds header-only CSVs (`gene_symbol` + newline). These are
   legitimate "zero unmapped proteins for this comparison" records, not stray files.
+- **`99_out_of_scope/05_metadata_create_EXP9.r` writes into a different project.** It reads
+  `TPE9_*` workbooks from `Exp9_Social-Stress` and writes `TPE9_samples_males_processed.tsv` and
+  `TPE9_samples_males_long_with_metadata.xlsx` back into that project's folder. It reads no Neha
+  input and produces no Neha output. Until 2026-08-27 it sat at
+  `01_preprocessing/05_metadata_create.r` inside the numbered active sequence with no guard and no
+  path override, and on the shared drive every precondition for an accidental overwrite was
+  satisfied (the Exp9 folder, both inputs, and the target `.tsv` all exist). It is now quarantined
+  and refuses to run unless `NEHA_ALLOW_EXP9=true`; `NEHA_EXP9_WORK_DIR` redirects the target.
+  See `99_out_of_scope/README.md`.
 
 ## Overriding defaults
 

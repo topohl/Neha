@@ -160,7 +160,7 @@ if ($Tier -ne "Fast") {
     Record "04_format_metadata"      "SKIP" "input sample_metadata.xlsx absent from project tree" 0
     Record "01_qc_protein_peptide"   "SKIP" "input quicksearch.stats.annotated.xlsx absent (known gap)" 0
     Record "02_rank_abundance"       "SKIP" "input per-class imputed/ workbooks absent" 0
-    Record "05_metadata_create"      "SKIP" "belongs to a different project (Exp9_Social-Stress)" 0
+    Record "05_metadata_create_EXP9" "SKIP" "out of scope: Exp9_Social-Stress; quarantined in 99_out_of_scope/, guarded by NEHA_ALLOW_EXP9" 0
 }
 
 # ------------------------------------------------------------ 4. slow stages

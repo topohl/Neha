@@ -194,6 +194,17 @@ Full-analysis paths on shared storage are still supported when these settings po
 
 Large input files and some generated results are kept outside Git. Active QC scripts remain under `03_qc_exploration/`.
 
+### Out-of-scope code
+
+`99_out_of_scope/` holds code that lives here for historical reasons but is **not** part of this
+analysis. Nothing in it reads or writes Neha data, nothing is invoked by `run_pipeline_check.ps1`,
+and everything in it refuses to run without an explicit opt-in.
+
+Currently one script: `05_metadata_create_EXP9.r`, which belongs to **Exp9_Social-Stress** and
+writes back into that project's folder. It was inherited when this repository was seeded from Exp9
+and until 2026-08-27 sat at `01_preprocessing/05_metadata_create.r` inside the numbered active
+sequence, unguarded. See [`99_out_of_scope/README.md`](99_out_of_scope/README.md).
+
 ### Data layout on shared storage
 
 Restructured **2026-08-26** under `S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/`:
