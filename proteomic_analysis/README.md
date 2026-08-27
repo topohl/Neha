@@ -194,6 +194,30 @@ Full-analysis paths on shared storage are still supported when these settings po
 
 Large input files and some generated results are kept outside Git. Active QC scripts remain under `03_qc_exploration/`.
 
+### Known unrunnable stages
+
+Five stages cannot run against the current project tree. `run_pipeline_check.ps1` records each as
+`SKIP` with a reason; the same list is reproduced here so it is discoverable without reading the
+PowerShell runner. None of these blocks the animal-level pipeline, which runs end to end.
+
+| Stage | Why it is skipped |
+|---|---|
+| `01_preprocessing/01_impute.r` | input `pg.matrix_raw.tsv` absent from the project tree |
+| `01_preprocessing/04_format_metadata.r` | input `sample_metadata.xlsx` absent from the project tree |
+| `03_qc_exploration/01_qc_protein_peptide_plot.r` | input `quicksearch.stats.annotated.xlsx` has never existed for this project — see the caveat in [`CANONICAL_OUTPUTS.md`](CANONICAL_OUTPUTS.md), which also gives the recovery route |
+| `03_qc_exploration/02_rank_abundance_by_sample_class.r` | default input `02_data/gct/imputed/` (per-class imputed workbooks) is absent. The rank-abundance panels in the manuscript revision were regenerated from the animal-level GCT instead — see `06_manuscript_figure_revision/` |
+| `99_out_of_scope/05_metadata_create_EXP9.r` | out of scope: belongs to Exp9_Social-Stress, quarantined and guarded by `NEHA_ALLOW_EXP9` |
+
+Each script stops with an explanatory error naming the missing input and the environment variable
+that redirects it, so a skipped stage is never silently a no-op.
+
+### Manuscript figure revision
+
+`06_manuscript_figure_revision/` holds the code that regenerated the manuscript proteomics figures
+after the statistical unit was corrected from hemisphere-level to animal-level. It is a
+version-control snapshot rather than a runnable copy — the scripts still resolve their paths to
+the shared drive. See [`06_manuscript_figure_revision/README.md`](06_manuscript_figure_revision/README.md).
+
 ### Out-of-scope code
 
 `99_out_of_scope/` holds code that lives here for historical reasons but is **not** part of this
