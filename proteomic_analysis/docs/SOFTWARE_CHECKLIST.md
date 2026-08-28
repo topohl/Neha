@@ -1,6 +1,6 @@
 # Software Checklist
 
-This document maps checklist items to repository files for the Neha proteomics analysis workflow.
+This document maps checklist items to repository files for the Associative Memory Proteomics analysis workflow.
 
 | Requirement | Repository location |
 | --- | --- |
@@ -19,6 +19,6 @@ This document maps checklist items to repository files for the Neha proteomics a
 | Optional full reproduction instructions | `proteomic_analysis/README.md` and stage folders under `proteomic_analysis/` |
 | License | `LICENSE` |
 | Citation | `CITATION.cff` |
-| Code repository link | `https://github.com/topohl/Neha` |
+| Code repository link | `https://github.com/topohl/AssociativeMemoryProteomics` |
 
 The lightweight demo is designed to run without private shared-drive paths or heavy enrichment analysis.

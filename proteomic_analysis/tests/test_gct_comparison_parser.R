@@ -84,28 +84,28 @@ expect_identical(
   c("mcherry_paired_cno_over_mcherry_paired_veh", "mcherry_1_over_mcherry_2"),
   "Comparison separators were not canonicalized."
 )
-parsed_styles <- parse_neha_protigy_comparison(stat_fields$comparison)
+parsed_styles <- parse_protigy_comparison(stat_fields$comparison)
 expect_identical(
   parsed_styles$canonical_comparison,
   rep("mcherry_paired_cno_over_mcherry_paired_veh", 2),
   "Corrected and historical labels did not resolve to one biological comparison."
 )
 
-# The shared Neha manifest is exactly the requested 4 classes x 3 contrasts.
-manifest <- neha_primary_contrast_manifest()
-expect_identical(nrow(manifest), 12L, "The Neha primary manifest must contain exactly 12 contrasts.")
+# The shared contrast manifest is exactly the requested 4 classes x 3 contrasts.
+manifest <- primary_contrast_manifest()
+expect_identical(nrow(manifest), 12L, "The primary manifest must contain exactly 12 contrasts.")
 expect_identical(unique(manifest$sample_class), sample_classes, "Primary contrast sample-class order changed.")
-validated_manifest <- validate_neha_primary_comparison_contract(manifest$canonical_comparison)
-expect_identical(nrow(validated_manifest), 12L, "Exactly 12 primary Neha contrasts were not accepted.")
-expect_true(all(validated_manifest$accepted_primary), "A required Neha primary contrast was rejected.")
+validated_manifest <- validate_primary_comparison_contract(manifest$canonical_comparison)
+expect_identical(nrow(validated_manifest), 12L, "Exactly 12 primary contrasts were not accepted.")
+expect_true(all(validated_manifest$accepted_primary), "A required primary contrast was rejected.")
 
 expect_error(
-  validate_neha_protigy_comparisons("cfos_paired_cno_over_neuropil_paired_veh", strict_primary = TRUE),
+  validate_protigy_comparisons("cfos_paired_cno_over_neuropil_paired_veh", strict_primary = TRUE),
   "cross_sample_class",
   "Cross-sample-class comparisons must be rejected in strict animal-level mode."
 )
 expect_error(
-  validate_neha_protigy_comparisons("mcherry_paired_cno_over_mcherry_unpaired_cno", strict_primary = TRUE),
+  validate_protigy_comparisons("mcherry_paired_cno_over_mcherry_unpaired_cno", strict_primary = TRUE),
   "unsupported_condition_contrast",
   "Unsupported within-class condition comparisons must be rejected."
 )
@@ -172,7 +172,7 @@ historical_gct <- read_protigy_stat_gct(historical, strict_primary = FALSE)
 expect_identical(
   unique(historical_gct$parsed_fields$canonical_comparison),
   "mcherry_paired_cno_over_mcherry_paired_veh",
-  "Historical .over. fields did not canonicalize to the Neha comparison."
+  "Historical .over. fields did not canonicalize to the canonical comparison."
 )
 
 # Duplicate physical fields are detected after canonicalization and cannot be extracted.

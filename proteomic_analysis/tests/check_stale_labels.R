@@ -79,11 +79,108 @@ for (rule_name in names(output_label_rules)) {
   add_hits(paste0("stale output identifier (", rule_name, ")"), output_label_rules[[rule_name]])
 }
 
+# Collaborator-name branding policy (added 2026-08-28). The project is "Associative Memory
+# Proteomics"; the collaborator name must not return to active branding, identifiers, filenames
+# or prose. A small, closed set of occurrences is legitimate and is enumerated here:
+#
+#   * the physical shared-drive storage path (Collabs/Neha) -- a real legacy location
+#   * validated, SHA-locked artefact filenames, which cannot be renamed without invalidating
+#     the recorded hashes and manifests
+#   * dataset_project = "Neha", written verbatim into the validated aggregation audit as the
+#     "dataset/project" column and into every canonical_analysis_unit key
+#   * the frozen split contract_version token recorded in a validated manifest
+#   * the frozen dated audit dump retained as historical material
+#
+# Anything else is branding creep and fails this audit. R/neha_path_utils.R is exempt because it
+# IS the documented deprecated shim (see tests/test_deprecated_path_utils_shim.R), and
+# 06_manuscript_figure_revision/ is already excluded above as frozen provenance.
+legacy_collaborator_exceptions <- c(
+  "Collabs/Neha",
+  "Collabs\\Neha",
+  "neha_protigy_input_animal_level_strict_complete_bilateral",
+  "neha_protigy_input_animal_level_primary",
+  "stat_results_for_ssGSEA_neha_proteome",
+  "neha_animal_level_protigy_stat_split_v1",
+  'dataset_project = "Neha"',
+  "Neha__",
+  "<Neha>",
+  "neha_proteomics_audit_fast.txt",
+  # Deliberate stale-name guard: a test asserts the pre-rename override is NOT used.
+  "NEHA_RANK_ABUNDANCE_INPUT_DIR",
+  # The deprecated shim's own filename, which documentation legitimately refers to. Whether any
+  # active file actually SOURCES it is a separate contract, asserted by
+  # tests/test_deprecated_path_utils_shim.R.
+  "neha_path_utils.R"
+)
+
+strip_legacy_exceptions <- function(text) {
+  for (literal in legacy_collaborator_exceptions) text <- gsub(literal, "", text, fixed = TRUE)
+  text
+}
+
+# Committed controls, mirroring the output-label rules above, so changes to this policy are
+# observable rather than silent.
+branding_controls <- data.frame(
+  text = c(
+    "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler",
+    "neha_protigy_input_animal_level_primary.gct",
+    'dataset_project = "Neha"',
+    "# Neha proteomics workflow",
+    "NEHA_PCA_OUTPUT_ROOT",
+    "validate_neha_pca_animal_input",
+    "source(file.path(repo_root, 'R', 'project_path_utils.R'))"
+  ),
+  expected_rejected = c(FALSE, FALSE, FALSE, TRUE, TRUE, TRUE, FALSE),
+  stringsAsFactors = FALSE
+)
+branding_controls$observed_rejected <- vapply(
+  branding_controls$text,
+  function(x) grepl("neha", strip_legacy_exceptions(x), ignore.case = TRUE),
+  logical(1)
+)
+branding_misclassified <- branding_controls$observed_rejected != branding_controls$expected_rejected
+if (any(branding_misclassified)) {
+  failures <- c(
+    failures,
+    paste0("branding control misclassified: ",
+           paste(branding_controls$text[branding_misclassified], collapse = " | "))
+  )
+}
+
+branding_exempt <- "/R/neha_path_utils\\.R$|/tests/test_deprecated_path_utils_shim\\.R$"
+branding_hit <- vapply(names(contents), function(path) {
+  if (grepl(branding_exempt, path)) return(FALSE)
+  grepl("neha", strip_legacy_exceptions(contents[[path]]), ignore.case = TRUE)
+}, logical(1))
+if (any(branding_hit)) {
+  failures <- c(
+    failures,
+    paste0("collaborator-name branding in active code: ",
+           paste(names(contents)[branding_hit], collapse = ", "))
+  )
+}
+
+# Active filenames must not carry the collaborator name either (same exemption for the shim).
+branding_filenames <- active_files[
+  grepl("neha", basename(active_files), ignore.case = TRUE) &
+    !grepl("^neha_path_utils\\.R$", basename(active_files))
+]
+if (length(branding_filenames) > 0) {
+  failures <- c(
+    failures,
+    paste0("collaborator-name branding in active filenames: ",
+           paste(basename(branding_filenames), collapse = ", "))
+  )
+}
+
 if (length(failures) > 0) {
   stop(paste(c("Stale-label audit failed:", failures), collapse = "\n"), call. = FALSE)
 }
 
 message(
   "Stale-label controls passed: ", sum(control_cases$expected_rejected), " must-reject, ",
-  sum(!control_cases$expected_rejected), " must-allow; active-code audit passed."
+  sum(!control_cases$expected_rejected), " must-allow. ",
+  "Branding controls passed: ", sum(branding_controls$expected_rejected), " must-reject, ",
+  sum(!branding_controls$expected_rejected), " must-allow. ",
+  "Active-code audit passed over ", length(contents), " files."
 )

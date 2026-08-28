@@ -2,7 +2,7 @@ args <- commandArgs(trailingOnly = FALSE)
 file_arg <- grep("^--file=", args, value = TRUE)
 script_path <- if (length(file_arg) == 1L) sub("^--file=", "", file_arg) else file.path("tests", "test_pca_optional_visualizations.R")
 repo_root <- normalizePath(file.path(dirname(script_path), ".."), winslash = "/", mustWork = FALSE)
-source(file.path(repo_root, "R", "neha_path_utils.R"))
+source(file.path(repo_root, "R", "project_path_utils.R"))
 if (!file.exists(file.path(repo_root, "R", "pca_animal_level_utils.R"))) {
   repo_root <- normalizePath(getwd(), winslash = "/", mustWork = TRUE)
 }
@@ -12,10 +12,10 @@ expect_true <- function(value, message) {
   if (!isTRUE(value)) stop(message, call. = FALSE)
 }
 
-empty_data <- prepare_neha_pca_variance_treemap_data(c(NA_real_, Inf, 0, -1))
+empty_data <- prepare_pca_variance_treemap_data(c(NA_real_, Inf, 0, -1))
 empty_renderer_called <- FALSE
 primary_audit <- data.frame(execution_status = "success", stringsAsFactors = FALSE)
-empty_result <- run_neha_pca_optional_plot(
+empty_result <- run_pca_optional_plot(
   plot_name = "variance_treemap",
   usable_data = empty_data,
   output_path = tempfile(fileext = ".svg"),
@@ -33,9 +33,9 @@ expect_true(identical(empty_result$n_input_rows, 4L) && identical(empty_result$n
 expect_true(identical(primary_audit$execution_status, "success"),
             "An optional empty treemap changed primary PCA success.")
 
-nonempty_data <- prepare_neha_pca_variance_treemap_data(c(40, 30, 20, 10))
+nonempty_data <- prepare_pca_variance_treemap_data(c(40, 30, 20, 10))
 nonempty_renderer_called <- FALSE
-nonempty_result <- run_neha_pca_optional_plot(
+nonempty_result <- run_pca_optional_plot(
   plot_name = "variance_treemap",
   usable_data = nonempty_data,
   output_path = tempfile(fileext = ".svg"),
@@ -52,7 +52,7 @@ expect_true(identical(nonempty_result$execution_status, "success"),
 
 if (requireNamespace("ggplot2", quietly = TRUE) && requireNamespace("treemapify", quietly = TRUE)) {
   rendered_path <- tempfile(fileext = ".svg")
-  rendered_result <- run_neha_pca_optional_plot(
+  rendered_result <- run_pca_optional_plot(
     plot_name = "variance_treemap",
     usable_data = nonempty_data,
     output_path = rendered_path,
@@ -71,7 +71,7 @@ if (requireNamespace("ggplot2", quietly = TRUE) && requireNamespace("treemapify"
   unlink(rendered_path)
 }
 
-render_failure <- run_neha_pca_optional_plot(
+render_failure <- run_pca_optional_plot(
   plot_name = "variance_treemap",
   usable_data = nonempty_data,
   output_path = tempfile(fileext = ".svg"),
@@ -93,13 +93,13 @@ metadata <- data.frame(
   row.names = sample_ids,
   stringsAsFactors = FALSE
 )
-centroids <- prepare_neha_pca_group_centroids(pca_scores, metadata, "sample_class", n_pcs = 5L)
+centroids <- prepare_pca_group_centroids(pca_scores, metadata, "sample_class", n_pcs = 5L)
 expect_true(nrow(centroids) == 2L && setequal(centroids$group, c("mcherry", "neuropil")),
             "Keyed PCA group centroids did not retain the nonempty optional chord path.")
 
 missing_metadata <- metadata
 missing_metadata$sample_class <- NA_character_
-empty_centroids <- prepare_neha_pca_group_centroids(pca_scores, missing_metadata, "sample_class", n_pcs = 5L)
+empty_centroids <- prepare_pca_group_centroids(pca_scores, missing_metadata, "sample_class", n_pcs = 5L)
 expect_true(nrow(empty_centroids) == 0L,
             "An optional group plot with no usable metadata did not produce an empty guarded input.")
 

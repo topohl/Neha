@@ -1,5 +1,5 @@
 # ==========================================
-# EWCE: Neha proteomics workflow
+# EWCE: Associative Memory Proteomics workflow
 # ==========================================
 
 # This script keeps the original EWCE analysis intent, but uses:
@@ -20,7 +20,7 @@ if (!file.exists(file.path(repo_root, "R", "analysis_labels.R"))) {
 }
 source(file.path(repo_root, "R", "analysis_labels.R"))
 source(file.path(repo_root, "R", "protigy_input_utils.R"))
-source(file.path(repo_root, "R", "neha_path_utils.R"))
+source(file.path(repo_root, "R", "project_path_utils.R"))
 source(file.path(repo_root, "R", "ewce_animal_level_utils.R"))
 
 if (!require("BiocManager", quietly = TRUE)) install.packages("BiocManager")
@@ -63,18 +63,18 @@ option_or_env <- function(option_name, env_name, default) {
 }
 
 data_path <- option_or_env(
-  "neha.ewce_animal_level_input",
-  "NEHA_EWCE_ANIMAL_LEVEL_INPUT",
+  "proteomics.ewce_animal_level_input",
+  "PROTEOMICS_EWCE_ANIMAL_LEVEL_INPUT",
   "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/02_data/animal_level/input_gct/neha_protigy_input_animal_level_primary.gct"
 )
 # Legacy hemisphere-level EWCE results now live under 99_historical/ewce_legacy.
 # NOTE: the previous default here was Results/EWCE_Results, a path that never existed on
 # disk, so this guard silently protected nothing before the 2026-08-26 restructure.
 historical_results <- "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/99_historical/ewce_legacy"
-base_results <- validate_neha_ewce_output_root(
+base_results <- validate_ewce_output_root(
   option_or_env(
-    "neha.ewce_output_root",
-    "NEHA_EWCE_OUTPUT_ROOT",
+    "proteomics.ewce_output_root",
+    "PROTEOMICS_EWCE_OUTPUT_ROOT",
     "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/03_output/ewce"
   ),
   historical_results
@@ -117,7 +117,7 @@ ref_genes_by_level <- lapply(ctd, function(x) rownames(x$specificity))
 ref_genes <- unique(unlist(ref_genes_by_level, use.names = FALSE))
 
 animal_gct <- validate_protigy_gct_v13(data_path)
-animal_input <- validate_neha_ewce_animal_input(animal_gct, data_path, expected_n = 3L)
+animal_input <- validate_ewce_animal_input(animal_gct, data_path, expected_n = 3L)
 sample_cols <- colnames(animal_input$expression_matrix)
 raw_df <- data.frame(
   Gene_Group = rownames(animal_input$expression_matrix),
@@ -182,9 +182,9 @@ make_expr_mat <- function(df, sample_cols) {
 }
 
 run_limma_stratum <- function(expr_mat, sample_meta, stratum) {
-  failed_metadata <- neha_ewce_contrast_metadata(stratum)
+  failed_metadata <- ewce_contrast_metadata(stratum)
   tryCatch({
-    limma_input <- prepare_neha_ewce_limma_stratum(
+    limma_input <- prepare_ewce_limma_stratum(
       expr_mat,
       sample_meta,
       sample_class = stratum,
@@ -211,7 +211,7 @@ run_limma_stratum <- function(expr_mat, sample_meta, stratum) {
           RankingStat = t
         )
     }))
-    audit <- make_neha_ewce_differential_audit(
+    audit <- make_ewce_differential_audit(
       limma_input$contrast_metadata,
       source_path = data_path,
       output_path = differential_output_path,
@@ -221,7 +221,7 @@ run_limma_stratum <- function(expr_mat, sample_meta, stratum) {
     )
     list(results = results, audit = audit)
   }, error = function(e) {
-    audit <- make_neha_ewce_differential_audit(
+    audit <- make_ewce_differential_audit(
       failed_metadata,
       source_path = data_path,
       output_path = differential_output_path,
@@ -537,10 +537,10 @@ de_tbl <- dplyr::bind_rows(lapply(limma_runs, `[[`, "results"))
 if (nrow(de_tbl) == 0) {
   stop("No animal-level differential contrasts were created.")
 }
-expected_comparisons <- neha_primary_contrast_manifest()$canonical_comparison
+expected_comparisons <- primary_contrast_manifest()$canonical_comparison
 observed_comparisons <- unique(as.character(de_tbl$Contrast))
 if (length(observed_comparisons) != 12L || !setequal(observed_comparisons, expected_comparisons)) {
-  stop("EWCE differential output does not contain exactly the 12 shared Neha primary comparisons.", call. = FALSE)
+  stop("EWCE differential output does not contain exactly the 12 shared primary comparisons.", call. = FALSE)
 }
 
 target_gene_tbl <- dplyr::bind_rows(
@@ -699,7 +699,7 @@ cap_signed_value <- function(x, limit = 10) {
 metric_label_levels <- c(
   analysis_params$conditions,
   as.vector(t(outer(
-    format_contrast_label(neha_primary_contrast_manifest()$canonical_comparison),
+    format_contrast_label(primary_contrast_manifest()$canonical_comparison),
     c("Up", "Down"),
     paste
   )))

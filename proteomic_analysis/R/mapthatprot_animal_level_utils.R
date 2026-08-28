@@ -1,9 +1,9 @@
-# Input, output, identity, and provenance contracts for the canonical Neha
+# Input, output, identity, and provenance contracts for the canonical
 # animal-level MapThatProt branch. The protein-resolution cascade remains in
 # 02_id_mapping/01_MapThatProt_batch.r.
 
-if (!exists("neha_normalize_path", mode = "function")) {
-  stop("R/neha_path_utils.R must be sourced before R/mapthatprot_animal_level_utils.R", call. = FALSE)
+if (!exists("project_normalize_path", mode = "function")) {
+  stop("R/project_path_utils.R must be sourced before R/mapthatprot_animal_level_utils.R", call. = FALSE)
 }
 
 # Branch-specific: no shared counterpart, kept here.
@@ -11,17 +11,17 @@ mapthatprot_is_absolute_path <- function(path) {
   grepl("^([A-Za-z]:[\\\\/]|\\\\\\\\|/)", path)
 }
 
-# Retained names delegate to the shared primitives in R/neha_path_utils.R.
+# Retained names delegate to the shared primitives in R/project_path_utils.R.
 # Behaviour change on non-Windows only: comparison is now case-insensitive everywhere
-# (previously case-sensitive off Windows). See the note in R/neha_path_utils.R.
-normalize_mapthatprot_path <- function(path, must_work = FALSE) neha_normalize_path(path, must_work)
-mapthatprot_path_is_within <- function(path, parent) neha_path_is_within(path, parent)
+# (previously case-sensitive off Windows). See the note in R/project_path_utils.R.
+normalize_mapthatprot_path <- function(path, must_work = FALSE) project_normalize_path(path, must_work)
+mapthatprot_path_is_within <- function(path, parent) project_path_is_within(path, parent)
 
 mapthatprot_paths_equal <- function(left, right) {
-  identical(tolower(neha_normalize_path(left)), tolower(neha_normalize_path(right)))
+  identical(tolower(project_normalize_path(left)), tolower(project_normalize_path(right)))
 }
 
-neha_mapthatprot_default_paths <- function() {
+mapthatprot_default_paths <- function() {
   # Paths reflect the 2026-08-26 input/data/output restructure; see CANONICAL_OUTPUTS.md.
   project_root <- "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler"
   animal_root <- file.path(project_root, "02_data", "animal_level")
@@ -39,7 +39,7 @@ neha_mapthatprot_default_paths <- function() {
   )
 }
 
-validate_neha_mapthatprot_output_root <- function(output_root, split_root, historical_roots) {
+validate_mapthatprot_output_root <- function(output_root, split_root, historical_roots) {
   output_root <- normalize_mapthatprot_path(output_root)
   split_root <- normalize_mapthatprot_path(split_root)
   historical_roots <- vapply(historical_roots, normalize_mapthatprot_path, character(1))
@@ -56,20 +56,20 @@ validate_neha_mapthatprot_output_root <- function(output_root, split_root, histo
   output_root
 }
 
-resolve_neha_mapthatprot_config <- function(
-    split_root = Sys.getenv("NEHA_MAPTHATPROT_SPLIT_ROOT", unset = ""),
-    output_root = Sys.getenv("NEHA_MAPTHATPROT_OUTPUT_ROOT", unset = ""),
-    direction = Sys.getenv("NEHA_MAPTHATPROT_DIRECTION", unset = "forward"),
-    uniprot_mapping_file = Sys.getenv("NEHA_MAPTHATPROT_REFERENCE_FILE", unset = ""),
-    manual_mapping_file = Sys.getenv("NEHA_MAPTHATPROT_MANUAL_MAPPING_FILE", unset = "")) {
-  defaults <- neha_mapthatprot_default_paths()
+resolve_mapthatprot_config <- function(
+    split_root = Sys.getenv("PROTEOMICS_MAPTHATPROT_SPLIT_ROOT", unset = ""),
+    output_root = Sys.getenv("PROTEOMICS_MAPTHATPROT_OUTPUT_ROOT", unset = ""),
+    direction = Sys.getenv("PROTEOMICS_MAPTHATPROT_DIRECTION", unset = "forward"),
+    uniprot_mapping_file = Sys.getenv("PROTEOMICS_MAPTHATPROT_REFERENCE_FILE", unset = ""),
+    manual_mapping_file = Sys.getenv("PROTEOMICS_MAPTHATPROT_MANUAL_MAPPING_FILE", unset = "")) {
+  defaults <- mapthatprot_default_paths()
   choose <- function(value, default) if (nzchar(trimws(value))) value else default
   direction <- tolower(trimws(direction))
   if (!direction %in% c("forward", "reverse")) {
-    stop("NEHA_MAPTHATPROT_DIRECTION must be 'forward' or 'reverse'.", call. = FALSE)
+    stop("PROTEOMICS_MAPTHATPROT_DIRECTION must be 'forward' or 'reverse'.", call. = FALSE)
   }
   split_root <- normalize_mapthatprot_path(choose(split_root, defaults$split_root))
-  output_root <- validate_neha_mapthatprot_output_root(
+  output_root <- validate_mapthatprot_output_root(
     choose(output_root, defaults$output_root),
     split_root,
     defaults$historical_roots
@@ -85,7 +85,7 @@ resolve_neha_mapthatprot_config <- function(
   )
 }
 
-neha_mapthatprot_required_index_columns <- function() {
+mapthatprot_required_index_columns <- function() {
   c(
     "canonical_comparison", "canonical_contrast", "sample_class",
     "numerator_condition", "denominator_condition",
@@ -94,17 +94,17 @@ neha_mapthatprot_required_index_columns <- function() {
   )
 }
 
-read_neha_mapthatprot_input_index <- function(
+read_mapthatprot_input_index <- function(
     split_root,
     direction = "forward",
-    expected_manifest = neha_primary_contrast_manifest(),
+    expected_manifest = primary_contrast_manifest(),
     expected_n_proteins = 5349L) {
   direction <- match.arg(direction, c("forward", "reverse"))
   split_root <- normalize_mapthatprot_path(split_root, must_work = TRUE)
   index_path <- file.path(split_root, "indexComparisons.csv")
   if (!file.exists(index_path)) stop("Missing authoritative split index: ", index_path, call. = FALSE)
   index <- utils::read.csv(index_path, stringsAsFactors = FALSE, check.names = FALSE)
-  required <- neha_mapthatprot_required_index_columns()
+  required <- mapthatprot_required_index_columns()
   missing_columns <- setdiff(required, names(index))
   if (length(missing_columns)) {
     stop("Split index is missing required columns: ", paste(missing_columns, collapse = ", "), call. = FALSE)
@@ -119,12 +119,12 @@ read_neha_mapthatprot_input_index <- function(
   }
   expected_keys <- expected_manifest$canonical_comparison
   if (!setequal(index$canonical_comparison, expected_keys)) {
-    stop("Split index comparison coverage does not match the 12 primary Neha contrasts.", call. = FALSE)
+    stop("Split index comparison coverage does not match the 12 primary contrasts.", call. = FALSE)
   }
   index <- index[match(expected_keys, index$canonical_comparison), , drop = FALSE]
   expected_contrasts <- expected_manifest$canonical_contrast
   if (!identical(index$canonical_contrast, expected_contrasts)) {
-    stop("Split index canonical contrast names do not match the shared Neha manifest.", call. = FALSE)
+    stop("Split index canonical contrast names do not match the shared contrast manifest.", call. = FALSE)
   }
   expected_metadata <- data.frame(
     sample_class = expected_manifest$sample_class,
@@ -135,7 +135,7 @@ read_neha_mapthatprot_input_index <- function(
   )
   for (field in names(expected_metadata)) {
     if (!identical(as.character(index[[field]]), expected_metadata[[field]])) {
-      stop("Split index ", field, " does not match the shared Neha manifest.", call. = FALSE)
+      stop("Split index ", field, " does not match the shared contrast manifest.", call. = FALSE)
     }
   }
   protein_counts <- suppressWarnings(as.integer(index$n_proteins))
@@ -173,17 +173,17 @@ read_neha_mapthatprot_input_index <- function(
   index
 }
 
-neha_mapthatprot_required_input_columns <- function() {
+mapthatprot_required_input_columns <- function() {
   c(
     "gene_symbol", "Description", "log2fc", "aveExpr", "t", "pval",
     "padj", "B", "significant", "logpval"
   )
 }
 
-validate_neha_mapthatprot_input_file <- function(path, expected_n_proteins = 5349L) {
+validate_mapthatprot_input_file <- function(path, expected_n_proteins = 5349L) {
   path <- normalize_mapthatprot_path(path, must_work = TRUE)
   input <- utils::read.csv(path, stringsAsFactors = FALSE, check.names = FALSE)
-  missing_columns <- setdiff(neha_mapthatprot_required_input_columns(), names(input))
+  missing_columns <- setdiff(mapthatprot_required_input_columns(), names(input))
   if (length(missing_columns)) {
     stop("Indexed split input is missing required columns: ", paste(missing_columns, collapse = ", "), " [", path, "]", call. = FALSE)
   }
@@ -204,7 +204,7 @@ validate_neha_mapthatprot_input_file <- function(path, expected_n_proteins = 534
   input
 }
 
-build_neha_mapthatprot_output_tables <- function(input, mapping_audit) {
+build_mapthatprot_output_tables <- function(input, mapping_audit) {
   input <- as.data.frame(input, stringsAsFactors = FALSE, check.names = FALSE)
   mapping_audit <- as.data.frame(mapping_audit, stringsAsFactors = FALSE, check.names = FALSE)
   required_audit <- c(
@@ -262,7 +262,7 @@ build_neha_mapthatprot_output_tables <- function(input, mapping_audit) {
   list(mapped = mapped, unmapped = unmapped, audit = mapping_audit)
 }
 
-validate_neha_mapthatprot_partition <- function(input, mapped, unmapped) {
+validate_mapthatprot_partition <- function(input, mapped, unmapped) {
   source_rows <- c(mapped$source_row_id, unmapped$source_row_id)
   if (
     length(source_rows) != nrow(input) || anyDuplicated(source_rows) ||
@@ -287,7 +287,7 @@ mapthatprot_sha256 <- function(path) {
 mapthatprot_reference_provenance <- function(
     path,
     version = Sys.getenv(
-      "NEHA_MAPTHATPROT_REFERENCE_VERSION",
+      "PROTEOMICS_MAPTHATPROT_REFERENCE_VERSION",
       unset = "not_encoded_in_local_idmapping_file"
     )) {
   path <- normalize_mapthatprot_path(path, must_work = TRUE)

@@ -1,14 +1,14 @@
 # ====================================================================
 # Arc, radial, alluvial, ridgeline, hexbin, loading network, parallel coordinates, variance treemap, contour, chord, small multiples, UMAP hexbin marginals
 # Part of the PCA workflow split out of the former monolithic
-# 03_qc_exploration/06_pcaPlot_Neha.r (2026-08-26). Sourced in order by that
+# 03_qc_exploration/06_pcaPlot_animal_level.r (2026-08-26). Sourced in order by that
 # script, which remains the entry point. Runs at top level and shares the
 # globals created by 06a_pca_core.r (mat, meta, pca, output_dir, helpers).
 # Consumes um from 06b; treemap/chord use the optional-visualization audit trail.
 # ====================================================================
 
 if (!exists("mat") || !exists("meta") || !exists("pca") || !exists("output_dir")) {
-  stop("PCA core state missing. Run 03_qc_exploration/06_pcaPlot_Neha.r, or source pca/06a_pca_core.r first.", call. = FALSE)
+  stop("PCA core state missing. Run 03_qc_exploration/06_pcaPlot_animal_level.r, or source pca/06a_pca_core.r first.", call. = FALSE)
 }
 
 # AL) Arc diagram showing sample relationships based on PC distance
@@ -265,9 +265,9 @@ variance_sunburst <- function() {
     if (!requireNamespace("treemap", quietly = TRUE) || !requireNamespace("d3r", quietly = TRUE)) {
         message("treemap/d3r not available; trying basic treemap")
         var_exp <- (pca$sdev^2) / sum(pca$sdev^2) * 100
-        df <- prepare_neha_pca_variance_treemap_data(var_exp, max_pcs = 20L)
+        df <- prepare_pca_variance_treemap_data(var_exp, max_pcs = 20L)
         output_path <- file.path(output_dir, "plots", "innovative", "variance_treemap.svg")
-        result <- run_neha_pca_optional_plot(
+        result <- run_pca_optional_plot(
             plot_name = "variance_treemap",
             usable_data = df,
             output_path = output_path,
@@ -319,9 +319,9 @@ chord_diagram_groups <- function(group_key = "sample_class", pc_threshold = 2) {
     }
     
     # Calculate group centroids from sample IDs, not names(factor), which is NULL.
-    centroids <- prepare_neha_pca_group_centroids(pca$x, meta, group_key, n_pcs = 5L)
+    centroids <- prepare_pca_group_centroids(pca$x, meta, group_key, n_pcs = 5L)
     output_path <- file.path(output_dir, "plots", "innovative", "chord_diagram_groups.png")
-    result <- run_neha_pca_optional_plot(
+    result <- run_pca_optional_plot(
         plot_name = "chord_diagram_groups",
         usable_data = centroids,
         output_path = output_path,

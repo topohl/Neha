@@ -29,7 +29,7 @@ source_analysis_labels <- function() {
   )
 }
 
-neha_primary_contrast_manifest <- function() {
+primary_contrast_manifest <- function() {
   contrast_definitions <- data.frame(
     contrast_family = c(
       "paired_cno_vs_paired_veh",

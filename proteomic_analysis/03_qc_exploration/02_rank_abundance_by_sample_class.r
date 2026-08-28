@@ -65,7 +65,7 @@ project_root <- "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler"
 # Validated animal-level matrix: 5349 protein groups x 48 animal-level samples,
 # 4 sample classes x 4 conditions, n = 3 animals per cell.
 input_gct <- option_or_env(
-  "neha.rank_abundance_input_gct", "NEHA_RANK_ABUNDANCE_INPUT_GCT",
+  "proteomics.rank_abundance_input_gct", "PROTEOMICS_RANK_ABUNDANCE_INPUT_GCT",
   file.path(project_root, "02_data", "animal_level", "input_gct",
             "neha_protigy_input_animal_level_primary.gct")
 )
@@ -77,27 +77,27 @@ input_gct <- option_or_env(
 # mcherry learning contrast is named here for definiteness. No fuzzy matching and
 # no fallback: an unmapped protein group is dropped, exactly as in the reference.
 id_map_path <- option_or_env(
-  "neha.rank_abundance_id_map", "NEHA_RANK_ABUNDANCE_ID_MAP",
+  "proteomics.rank_abundance_id_map", "PROTEOMICS_RANK_ABUNDANCE_ID_MAP",
   file.path(project_root, "02_data", "animal_level", "mapped", "forward",
             "mcherry_paired_veh_vs_mcherry_unpaired_veh.csv")
 )
 
 saving_dir <- option_or_env(
-  "neha.rank_abundance_output_dir", "NEHA_RANK_ABUNDANCE_OUTPUT_DIR",
+  "proteomics.rank_abundance_output_dir", "PROTEOMICS_RANK_ABUNDANCE_OUTPUT_DIR",
   file.path(project_root, "03_output", "qc", "rank_abundance")
 )
 
 if (!file.exists(input_gct)) {
   stop(
     "Animal-level GCT not found: ", input_gct,
-    "\nSet NEHA_RANK_ABUNDANCE_INPUT_GCT / options(neha.rank_abundance_input_gct=) to its location.",
+    "\nSet PROTEOMICS_RANK_ABUNDANCE_INPUT_GCT / options(proteomics.rank_abundance_input_gct=) to its location.",
     call. = FALSE
   )
 }
 if (!file.exists(id_map_path)) {
   stop(
     "Protein-id to gene-symbol mapping not found: ", id_map_path,
-    "\nSet NEHA_RANK_ABUNDANCE_ID_MAP / options(neha.rank_abundance_id_map=) to a canonical",
+    "\nSet PROTEOMICS_RANK_ABUNDANCE_ID_MAP / options(proteomics.rank_abundance_id_map=) to a canonical",
     "\nMapThatProt output carrying original_protein_id and mapped_gene_symbol.",
     call. = FALSE
   )

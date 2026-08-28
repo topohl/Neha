@@ -1,14 +1,14 @@
 # Out of scope
 
-Code that lives in this repository for historical reasons but does **not** belong to the Neha
+Code that lives in this repository for historical reasons but does **not** belong to this
 proteomics analysis. Nothing here is part of the numbered pipeline, nothing here is invoked by
-`run_pipeline_check.ps1`, and nothing here reads or writes Neha data.
+`run_pipeline_check.ps1`, and nothing here reads or writes this project's data.
 
 Everything in this folder must refuse to run unless it is explicitly opted into.
 
 ## `05_metadata_create_EXP9.r`
 
-Belongs to **Exp9_Social-Stress**, not Neha. It reads `TPE9_*` workbooks from the Exp9 project
+Belongs to **Exp9_Social-Stress**, not this project. It reads `TPE9_*` workbooks from the Exp9 project
 folder and writes two files back into it:
 
 - `TPE9_samples_males_processed.tsv`
@@ -39,18 +39,18 @@ running a single stage — ran to completion with no warning.
 ### Running it deliberately
 
 ```bash
-NEHA_ALLOW_EXP9=true Rscript 99_out_of_scope/05_metadata_create_EXP9.r
+PROTEOMICS_ALLOW_EXP9=true Rscript 99_out_of_scope/05_metadata_create_EXP9.r
 ```
 
 The target directory can be redirected away from the live Exp9 folder, which is strongly
 recommended for any test run:
 
 ```bash
-NEHA_ALLOW_EXP9=true NEHA_EXP9_WORK_DIR=/some/scratch/dir \
+PROTEOMICS_ALLOW_EXP9=true PROTEOMICS_EXP9_WORK_DIR=/some/scratch/dir \
   Rscript 99_out_of_scope/05_metadata_create_EXP9.r
 ```
 
-Both settings are also available as R options: `neha.allow_exp9`, `neha.exp9_work_dir`.
+Both settings are also available as R options: `proteomics.allow_exp9`, `proteomics.exp9_work_dir`.
 
 The analysis body of the script is unchanged from the version that sat in `01_preprocessing/`;
 only the banner, the guard and the two path overrides were added.

@@ -1,11 +1,11 @@
 # ==============================================================================
-# OUT OF SCOPE FOR THIS PROJECT -- Exp9_Social-Stress, not Neha.
+# OUT OF SCOPE FOR THIS PROJECT -- Exp9_Social-Stress, not this project.
 #
 # This script reads TPE9_* workbooks from the Exp9_Social-Stress project and
 # WRITES two files back into that project's folder:
 #     TPE9_samples_males_processed.tsv
 #     TPE9_samples_males_long_with_metadata.xlsx
-# It reads no Neha input and produces no Neha output. It was inherited when this
+# It reads none of this project's input and produces none of its output. It was inherited when this
 # repository was seeded from Exp9 (the same origin as the quicksearch.stats
 # default described in CANONICAL_OUTPUTS.md).
 #
@@ -17,9 +17,9 @@
 # a real file belonging to another experiment.
 #
 # It is therefore quarantined here and refuses to run unless you opt in:
-#     NEHA_ALLOW_EXP9=true Rscript 99_out_of_scope/05_metadata_create_EXP9.r
+#     PROTEOMICS_ALLOW_EXP9=true Rscript 99_out_of_scope/05_metadata_create_EXP9.r
 # and the target directory can be redirected away from the live Exp9 folder:
-#     NEHA_EXP9_WORK_DIR=/some/scratch/dir
+#     PROTEOMICS_EXP9_WORK_DIR=/some/scratch/dir
 #
 # run_pipeline_check.ps1 already records this stage as SKIP with the reason
 # "belongs to a different project (Exp9_Social-Stress)"; the guard below makes
@@ -34,17 +34,17 @@ option_or_env <- function(option_name, env_name, default) {
     default
 }
 
-allow <- tolower(trimws(option_or_env("neha.allow_exp9", "NEHA_ALLOW_EXP9", "")))
+allow <- tolower(trimws(option_or_env("proteomics.allow_exp9", "PROTEOMICS_ALLOW_EXP9", "")))
 if (!allow %in% c("true", "1", "yes")) {
     stop(
-        "Refusing to run: this script belongs to Exp9_Social-Stress, not Neha.\n",
+        "Refusing to run: this script belongs to Exp9_Social-Stress, not this project.\n",
         "It writes TPE9_samples_males_processed.tsv and ",
         "TPE9_samples_males_long_with_metadata.xlsx into the Exp9 project folder,\n",
         "overwriting the former if it exists.\n\n",
         "If you really intend to run it, opt in explicitly:\n",
-        "  NEHA_ALLOW_EXP9=true Rscript 99_out_of_scope/05_metadata_create_EXP9.r\n",
+        "  PROTEOMICS_ALLOW_EXP9=true Rscript 99_out_of_scope/05_metadata_create_EXP9.r\n",
         "and consider redirecting the target away from the live Exp9 folder:\n",
-        "  NEHA_EXP9_WORK_DIR=/some/scratch/dir",
+        "  PROTEOMICS_EXP9_WORK_DIR=/some/scratch/dir",
         call. = FALSE
     )
 }
@@ -57,7 +57,7 @@ if (!requireNamespace("pacman", quietly = TRUE)) {
 pacman::p_load(readxl, dplyr, tidyr, stringr, purrr, tibble, writexl)
 
 work_direction <- option_or_env(
-    "neha.exp9_work_dir", "NEHA_EXP9_WORK_DIR",
+    "proteomics.exp9_work_dir", "PROTEOMICS_EXP9_WORK_DIR",
     "S:/Lab_Member/Tobi/Experiments/Exp9_Social-Stress/proteomics"
 )
 message("Exp9 working directory: ", work_direction)

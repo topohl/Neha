@@ -1,4 +1,4 @@
-# Canonical inputs & outputs (Neha proteomics)
+# Canonical inputs & outputs (Associative Memory Proteomics)
 
 Read-side companion to the write-side guards in `R/*_utils.R`. Those guards stop you
 *writing* into a historical root; this file tells you which existing folder to *read*.
@@ -92,33 +92,33 @@ metadata actually available and should not be used.
   so it appears to be boilerplate inherited when this repo was seeded from that project (the
   same reason the old `01_preprocessing/05_metadata_create.r` pointed at `Exp9_Social-Stress`;
   that script is now quarantined at `99_out_of_scope/05_metadata_create_EXP9.r` behind an
-  explicit `NEHA_ALLOW_EXP9` opt-in — see the caveat below).
-  The Exp9 file has the correct 33 columns but contains **0 of 326** Neha samples — different
+  explicit `PROTEOMICS_ALLOW_EXP9` opt-in — see the caveat below).
+  The Exp9 file has the correct 33 columns but contains **0 of 326** of this project's samples — different
   instrument (`Bluto` vs `Olive`) and acquisition date (2025-07-03 vs 2024-12-17) — so it is
   **not** a usable substitute. Consequence: acquisition-level technical QC (identification
   depth, MS1/MS2 signal, mass accuracy, normalisation instability) has never been evaluable
   for this dataset, which is why every audit reported it as unavailable. To enable it, re-export
-  the QC report for the Neha acquisition and point `NEHA_QC_QUICKSEARCH_STATS` at it.
+  the QC report for this acquisition and point `PROTEOMICS_QC_QUICKSEARCH_STATS` at it.
 - **`03_qc_exploration/01_qc_protein_peptide_plot.r` plots instrument QC metrics, not protein
   abundance.** Its PCA is a PCA *of acquisition QC metrics*. For protein-abundance PCA use
-  `03_qc_exploration/06_pcaPlot_Neha.r`.
+  `03_qc_exploration/06_pcaPlot_animal_level.r`.
 - `99_historical/datasets_unmapped/` holds header-only CSVs (`gene_symbol` + newline). These are
   legitimate "zero unmapped proteins for this comparison" records, not stray files.
 - **`99_out_of_scope/05_metadata_create_EXP9.r` writes into a different project.** It reads
   `TPE9_*` workbooks from `Exp9_Social-Stress` and writes `TPE9_samples_males_processed.tsv` and
-  `TPE9_samples_males_long_with_metadata.xlsx` back into that project's folder. It reads no Neha
-  input and produces no Neha output. Until 2026-08-27 it sat at
+  `TPE9_samples_males_long_with_metadata.xlsx` back into that project's folder. It reads none of
+  this project's input and produces none of its output. Until 2026-08-27 it sat at
   `01_preprocessing/05_metadata_create.r` inside the numbered active sequence with no guard and no
   path override, and on the shared drive every precondition for an accidental overwrite was
   satisfied (the Exp9 folder, both inputs, and the target `.tsv` all exist). It is now quarantined
-  and refuses to run unless `NEHA_ALLOW_EXP9=true`; `NEHA_EXP9_WORK_DIR` redirects the target.
+  and refuses to run unless `PROTEOMICS_ALLOW_EXP9=true`; `PROTEOMICS_EXP9_WORK_DIR` redirects the target.
   See `99_out_of_scope/README.md`.
 
 ## Overriding defaults
 
 Every stage resolves paths via `getOption()` then an env var then the default above, e.g.
-`NEHA_PCA_ANIMAL_LEVEL_INPUT`, `NEHA_PCA_OUTPUT_ROOT`, `NEHA_EWCE_ANIMAL_LEVEL_INPUT`,
-`NEHA_EWCE_OUTPUT_ROOT`, `NEHA_ENRICHMENT_MAPPED_ROOT`, `NEHA_ENRICHMENT_OUTPUT_ROOT`,
-`NEHA_MAPTHATPROT_SPLIT_ROOT`, `NEHA_MAPTHATPROT_OUTPUT_ROOT`, `NEHA_PROTIGY_STAT_GCT_INPUT`,
-`NEHA_ANIMAL_LEVEL_DATA_ROOT`. Before the restructure several defaults pointed at folders that
+`PROTEOMICS_PCA_ANIMAL_LEVEL_INPUT`, `PROTEOMICS_PCA_OUTPUT_ROOT`, `PROTEOMICS_EWCE_ANIMAL_LEVEL_INPUT`,
+`PROTEOMICS_EWCE_OUTPUT_ROOT`, `PROTEOMICS_ENRICHMENT_MAPPED_ROOT`, `PROTEOMICS_ENRICHMENT_OUTPUT_ROOT`,
+`PROTEOMICS_MAPTHATPROT_SPLIT_ROOT`, `PROTEOMICS_MAPTHATPROT_OUTPUT_ROOT`, `PROTEOMICS_PROTIGY_STAT_GCT_INPUT`,
+`PROTEOMICS_ANIMAL_LEVEL_DATA_ROOT`. Before the restructure several defaults pointed at folders that
 did not exist and every validated run relied on overrides; the defaults are now correct.

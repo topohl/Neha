@@ -1,5 +1,5 @@
 <#
-    Neha proteomics pipeline smoke test.
+    Associative Memory Proteomics pipeline smoke test.
 
     Verifies the pipeline still works after the 2026-08-26 folder restructure, WITHOUT
     touching any validated output: every producing stage is redirected to a scratch root
@@ -31,24 +31,24 @@ $ErrorActionPreference = "Continue"
 $repo    = $PSScriptRoot
 $rscript = "C:\Users\topohl\AppData\Local\Programs\R\R-4.5.1\bin\x64\Rscript.exe"
 $dataRoot = "S:\Lab_Member\Tobi\Experiments\Collabs\Neha\clusterProfiler"
-$scratch = Join-Path $env:TEMP ("neha_pipeline_check_" + (Get-Date -Format "yyyyMMdd_HHmmss"))
+$scratch = Join-Path $env:TEMP ("proteomics_pipeline_check_" + (Get-Date -Format "yyyyMMdd_HHmmss"))
 New-Item -ItemType Directory -Force -Path $scratch | Out-Null
 
 # --------------------------------------------------------------------------------
-# Neutralise inherited NEHA_* overrides.
-# Every stage resolves paths as option -> env var -> default. A stale NEHA_* variable in
+# Neutralise inherited PROTEOMICS_* overrides.
+# Every stage resolves paths as option -> env var -> default. A stale PROTEOMICS_* variable in
 # the calling shell is therefore silently honoured by the child Rscript processes, which
 # makes results depend on session history instead of the repo. Clear them all up front
 # (restoring on exit) so this check is reproducible, and report anything we found.
 # --------------------------------------------------------------------------------
-$inheritedNeha = @{}
-Get-ChildItem Env: | Where-Object { $_.Name -like "NEHA_*" } | ForEach-Object {
-    $inheritedNeha[$_.Name] = $_.Value
+$inheritedOverride = @{}
+Get-ChildItem Env: | Where-Object { $_.Name -like "PROTEOMICS_*" } | ForEach-Object {
+    $inheritedOverride[$_.Name] = $_.Value
 }
-if ($inheritedNeha.Count -gt 0) {
-    Write-Host "WARNING: cleared inherited NEHA_* override(s) from your shell for this run:" -ForegroundColor Yellow
-    foreach ($k in $inheritedNeha.Keys) {
-        Write-Host ("  {0} = {1}" -f $k, $inheritedNeha[$k]) -ForegroundColor Yellow
+if ($inheritedOverride.Count -gt 0) {
+    Write-Host "WARNING: cleared inherited PROTEOMICS_* override(s) from your shell for this run:" -ForegroundColor Yellow
+    foreach ($k in $inheritedOverride.Keys) {
+        Write-Host ("  {0} = {1}" -f $k, $inheritedOverride[$k]) -ForegroundColor Yellow
         Remove-Item -Path ("Env:" + $k) -ErrorAction SilentlyContinue
     }
     Write-Host "  (restored when this script exits; set them deliberately if you meant to override)" -ForegroundColor Yellow
@@ -90,7 +90,7 @@ function Invoke-Stage($name, $scriptRelPath, $envMap, $requiredInputs) {
 }
 
 Write-Host ""
-Write-Host "Neha pipeline smoke test  (tier: $Tier)" -ForegroundColor Cyan
+Write-Host "Proteomics pipeline smoke test  (tier: $Tier)" -ForegroundColor Cyan
 Write-Host "scratch output: $scratch"
 Write-Host ""
 
@@ -126,7 +126,7 @@ if ($Tier -ne "Fast") {
     # 3a. rebuild the animal-level GCT and check it reproduces the locked hash
     $gctOut = Join-Path $scratch "animal_level_gct"
     Invoke-Stage "02a_prepare_animal_level_gct" "01_preprocessing\02a_prepare_animal_level_protigy_input.r" `
-        @{ NEHA_ANIMAL_LEVEL_OUTPUT_DIR = $gctOut } `
+        @{ PROTEOMICS_ANIMAL_LEVEL_OUTPUT_DIR = $gctOut } `
         @( (Join-Path $dataRoot "02_data\gct\pg.matrix_filtered_pcaAdjusted_unnormalized.gct"),
            (Join-Path $dataRoot "02_data\gct\imputed_data.xlsx"),
            (Join-Path $dataRoot "01_input\metadata\sample_info.xlsx") )
@@ -147,17 +147,17 @@ if ($Tier -ne "Fast") {
     # 3c. split the committed ProTigy stat GCT
     $splitOut = Join-Path $scratch "split"
     Invoke-Stage "03_gct_extractR (split)" "01_preprocessing\03_gct_extractR.r" `
-        @{ NEHA_PROTIGY_STAT_GCT_OUTPUT_ROOT = $splitOut } `
+        @{ PROTEOMICS_PROTIGY_STAT_GCT_OUTPUT_ROOT = $splitOut } `
         @( (Join-Path $dataRoot "02_data\animal_level\stat_results_for_ssGSEA_neha_proteome.gct") )
 
     # 3d. animal-level PCA (independent branch off the validated GCT)
-    Invoke-Stage "06_pcaPlot_Neha (PCA workflow)" "03_qc_exploration\06_pcaPlot_Neha.r" `
-        @{ NEHA_PCA_OUTPUT_ROOT = (Join-Path $scratch "pca") } `
+    Invoke-Stage "06_pcaPlot_animal_level (PCA workflow)" "03_qc_exploration\06_pcaPlot_animal_level.r" `
+        @{ PROTEOMICS_PCA_OUTPUT_ROOT = (Join-Path $scratch "pca") } `
         @( (Join-Path $dataRoot "02_data\animal_level\input_gct\neha_protigy_input_animal_level_primary.gct") )
 
     # 3e. animal-level rank-abundance QC (regenerates the Fig 3E / Supp D panels)
     Invoke-Stage "02_rank_abundance (animal level)" "03_qc_exploration\02_rank_abundance_by_sample_class.r" `
-        @{ NEHA_RANK_ABUNDANCE_OUTPUT_DIR = (Join-Path $scratch "rank_abundance") } `
+        @{ PROTEOMICS_RANK_ABUNDANCE_OUTPUT_DIR = (Join-Path $scratch "rank_abundance") } `
         @( (Join-Path $dataRoot "02_data\animal_level\input_gct\neha_protigy_input_animal_level_primary.gct"),
            (Join-Path $dataRoot "02_data\animal_level\mapped\forward\mcherry_paired_veh_vs_mcherry_unpaired_veh.csv") )
 
@@ -165,7 +165,7 @@ if ($Tier -ne "Fast") {
     Record "01_impute"               "SKIP" "input pg.matrix_raw.tsv absent from project tree" 0
     Record "04_format_metadata"      "SKIP" "input sample_metadata.xlsx absent from project tree" 0
     Record "01_qc_protein_peptide"   "SKIP" "input quicksearch.stats.annotated.xlsx absent (known gap)" 0
-    Record "05_metadata_create_EXP9" "SKIP" "out of scope: Exp9_Social-Stress; quarantined in 99_out_of_scope/, guarded by NEHA_ALLOW_EXP9" 0
+    Record "05_metadata_create_EXP9" "SKIP" "out of scope: Exp9_Social-Stress; quarantined in 99_out_of_scope/, guarded by PROTEOMICS_ALLOW_EXP9" 0
 }
 
 # ------------------------------------------------------------ 4. slow stages
@@ -175,19 +175,19 @@ if ($Tier -eq "Full") {
 
     $mapOut = Join-Path $scratch "mapped"
     Invoke-Stage "01_MapThatProt_batch" "02_id_mapping\01_MapThatProt_batch.r" `
-        @{ NEHA_MAPTHATPROT_SPLIT_ROOT  = (Join-Path $dataRoot "02_data\animal_level\split");
-           NEHA_MAPTHATPROT_OUTPUT_ROOT = $mapOut } `
+        @{ PROTEOMICS_MAPTHATPROT_SPLIT_ROOT  = (Join-Path $dataRoot "02_data\animal_level\split");
+           PROTEOMICS_MAPTHATPROT_OUTPUT_ROOT = $mapOut } `
         @( (Join-Path $dataRoot "01_input\references\MOUSE_10090_idmapping.dat"),
            (Join-Path $dataRoot "02_data\animal_level\split\indexComparisons.csv") )
 
     Invoke-Stage "01_clusterProfiler (GSEA/ORA)" "04_differential_expression_enrichment\01_clusterProfiler.r" `
-        @{ NEHA_ENRICHMENT_MAPPED_ROOT  = (Join-Path $dataRoot "02_data\animal_level\mapped");
-           NEHA_ENRICHMENT_MAPPED_INDEX = (Join-Path $dataRoot "02_data\animal_level\mapped\indexMappedComparisons.csv");
-           NEHA_ENRICHMENT_OUTPUT_ROOT  = (Join-Path $scratch "enrichment") } `
+        @{ PROTEOMICS_ENRICHMENT_MAPPED_ROOT  = (Join-Path $dataRoot "02_data\animal_level\mapped");
+           PROTEOMICS_ENRICHMENT_MAPPED_INDEX = (Join-Path $dataRoot "02_data\animal_level\mapped\indexMappedComparisons.csv");
+           PROTEOMICS_ENRICHMENT_OUTPUT_ROOT  = (Join-Path $scratch "enrichment") } `
         @( (Join-Path $dataRoot "02_data\animal_level\mapped\indexMappedComparisons.csv") )
 
     Invoke-Stage "01_EWCE (10k bootstrap reps)" "05_celltype_enrichment_EWCE\01_EWCE.r" `
-        @{ NEHA_EWCE_OUTPUT_ROOT = (Join-Path $scratch "ewce") } `
+        @{ PROTEOMICS_EWCE_OUTPUT_ROOT = (Join-Path $scratch "ewce") } `
         @( (Join-Path $dataRoot "02_data\animal_level\input_gct\neha_protigy_input_animal_level_primary.gct") )
 } elseif ($Tier -eq "Normal") {
     Write-Host ""
@@ -207,10 +207,10 @@ Write-Host ("PASS {0}   FAIL {1}   SKIP {2}" -f $pass, $fail, $skip)
 $results | Export-Csv -LiteralPath (Join-Path $scratch "summary.csv") -NoTypeInformation
 Write-Host "logs + summary: $scratch"
 
-# restore any NEHA_* overrides we cleared at startup
-foreach ($k in $inheritedNeha.Keys) { Set-Item -Path ("Env:" + $k) -Value $inheritedNeha[$k] }
-if ($inheritedNeha.Count -gt 0) {
-    Write-Host ("Restored {0} inherited NEHA_* override(s) in your shell." -f $inheritedNeha.Count) -ForegroundColor Yellow
+# restore any PROTEOMICS_* overrides we cleared at startup
+foreach ($k in $inheritedOverride.Keys) { Set-Item -Path ("Env:" + $k) -Value $inheritedOverride[$k] }
+if ($inheritedOverride.Count -gt 0) {
+    Write-Host ("Restored {0} inherited PROTEOMICS_* override(s) in your shell." -f $inheritedOverride.Count) -ForegroundColor Yellow
 }
 
 if ($fail -gt 0) {

@@ -1,20 +1,20 @@
-# Focused input, preprocessing, and audit contracts for Neha animal-level PCA.
+# Focused input, preprocessing, and audit contracts for animal-level PCA.
 
-if (!exists("neha_normalize_path", mode = "function")) {
-  stop("R/neha_path_utils.R must be sourced before R/pca_animal_level_utils.R", call. = FALSE)
+if (!exists("project_normalize_path", mode = "function")) {
+  stop("R/project_path_utils.R must be sourced before R/pca_animal_level_utils.R", call. = FALSE)
 }
 
-# Retained names delegate to the shared primitives in R/neha_path_utils.R.
-neha_pca_normalize_path <- function(path, must_work = FALSE) neha_normalize_path(path, must_work)
-neha_pca_path_is_within <- function(path, root) neha_path_is_within(path, root)
+# Retained names delegate to the shared primitives in R/project_path_utils.R.
+pca_normalize_path <- function(path, must_work = FALSE) project_normalize_path(path, must_work)
+pca_path_is_within <- function(path, root) project_path_is_within(path, root)
 
-validate_neha_pca_output_root <- function(output_root, historical_root) {
+validate_pca_output_root <- function(output_root, historical_root) {
   # Message text is asserted by tests/test_pca_animal_level.R; keep it verbatim. Note the
   # historical root (not the output root) is named, which is why this does not use the
-  # shared neha_validate_output_root() helper.
-  output_root <- neha_pca_normalize_path(output_root)
-  historical_root <- neha_pca_normalize_path(historical_root)
-  if (neha_pca_path_is_within(output_root, historical_root)) {
+  # shared project_validate_output_root() helper.
+  output_root <- pca_normalize_path(output_root)
+  historical_root <- pca_normalize_path(historical_root)
+  if (pca_path_is_within(output_root, historical_root)) {
     stop(
       "Animal-level PCA output cannot overwrite the historical PCA root: ",
       historical_root,
@@ -24,7 +24,7 @@ validate_neha_pca_output_root <- function(output_root, historical_root) {
   output_root
 }
 
-validate_neha_pca_animal_input <- function(parsed_gct, expected_n = 3L) {
+validate_pca_animal_input <- function(parsed_gct, expected_n = 3L) {
   if (!is.list(parsed_gct) || is.null(parsed_gct$matrix) || is.null(parsed_gct$column_metadata)) {
     stop("Animal-level PCA input must be a parsed ProTigy GCT.", call. = FALSE)
   }
@@ -150,7 +150,7 @@ validate_neha_pca_animal_input <- function(parsed_gct, expected_n = 3L) {
   )
 }
 
-prepare_neha_animal_pca <- function(expression_matrix, center = TRUE, scale. = TRUE) {
+prepare_animal_pca <- function(expression_matrix, center = TRUE, scale. = TRUE) {
   expression_matrix <- as.matrix(expression_matrix)
   storage.mode(expression_matrix) <- "numeric"
   if (any(!is.finite(expression_matrix))) {
@@ -186,7 +186,7 @@ prepare_neha_animal_pca <- function(expression_matrix, center = TRUE, scale. = T
   )
 }
 
-make_neha_pca_audit <- function(
+make_pca_audit <- function(
     validated_input = NULL,
     prepared_pca = NULL,
     source_path,
@@ -213,7 +213,7 @@ make_neha_pca_audit <- function(
   }
   if (length(variance) < 2L) variance <- c(variance, rep(NA_real_, 2L - length(variance)))
 
-  counts$source_gct_path <- neha_pca_normalize_path(source_path, must_work = FALSE)
+  counts$source_gct_path <- pca_normalize_path(source_path, must_work = FALSE)
   counts$source_gct_sha256 <- source_sha256
   counts$n_protein_rows_loaded <- if (is.null(validated_input)) NA_integer_ else nrow(validated_input$expression_matrix)
   counts$n_samples_loaded <- if (is.null(validated_input)) NA_integer_ else ncol(validated_input$expression_matrix)
@@ -231,7 +231,7 @@ make_neha_pca_audit <- function(
   counts$pc1_variance_explained <- variance[[1]]
   counts$pc2_variance_explained <- variance[[2]]
   counts$output_paths <- paste(
-    paste(names(output_paths), neha_pca_normalize_path(output_paths, must_work = FALSE), sep = "="),
+    paste(names(output_paths), pca_normalize_path(output_paths, must_work = FALSE), sep = "="),
     collapse = ";"
   )
   counts$execution_status <- execution_status
@@ -239,7 +239,7 @@ make_neha_pca_audit <- function(
   counts
 }
 
-prepare_neha_pca_variance_treemap_data <- function(variance_explained, max_pcs = 20L) {
+prepare_pca_variance_treemap_data <- function(variance_explained, max_pcs = 20L) {
   variance_explained <- as.numeric(variance_explained)
   max_pcs <- as.integer(max_pcs)
   if (length(max_pcs) != 1L || is.na(max_pcs) || max_pcs < 1L) {
@@ -273,7 +273,7 @@ prepare_neha_pca_variance_treemap_data <- function(variance_explained, max_pcs =
   result
 }
 
-prepare_neha_pca_group_centroids <- function(pca_scores, metadata, group_key, n_pcs = 5L) {
+prepare_pca_group_centroids <- function(pca_scores, metadata, group_key, n_pcs = 5L) {
   pca_scores <- as.matrix(pca_scores)
   if (is.null(rownames(pca_scores)) || anyDuplicated(rownames(pca_scores))) {
     stop("PCA scores require unique sample row names for optional group plots.", call. = FALSE)
@@ -307,7 +307,7 @@ prepare_neha_pca_group_centroids <- function(pca_scores, metadata, group_key, n_
   centroids
 }
 
-run_neha_pca_optional_plot <- function(
+run_pca_optional_plot <- function(
     plot_name,
     usable_data,
     output_path,
@@ -327,7 +327,7 @@ run_neha_pca_optional_plot <- function(
       reason = reason,
       n_input_rows = as.integer(n_input_rows),
       n_usable_rows = nrow(usable_data),
-      output_path = neha_pca_normalize_path(output_path, must_work = FALSE),
+      output_path = pca_normalize_path(output_path, must_work = FALSE),
       stringsAsFactors = FALSE
     )
   }

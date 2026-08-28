@@ -38,6 +38,31 @@ documents, without changing the frozen source map, that the current active rank-
 successor now groups by `sample_class × condition`. Neither crosswalk makes this snapshot runnable
 or part of the active pipeline.
 
+## Name crosswalk after the 2026-08-28 de-branding
+
+On 2026-08-28 the collaborator name was removed from the active workflow's branding and
+identifiers. These snapshots were **not** edited — their SHA-256 values above still hold — so they
+still reference the pre-rename names. The mapping is:
+
+| name inside these snapshots | active name today |
+|---|---|
+| `R/neha_path_utils.R` | `R/project_path_utils.R` |
+| `validate_neha_pca_animal_input()` | `validate_pca_animal_input()` |
+| `prepare_neha_animal_pca()` | `prepare_animal_pca()` |
+| `03_qc_exploration/06_pcaPlot_Neha.r` | `03_qc_exploration/06_pcaPlot_animal_level.r` |
+| `NEHA_*` environment variables | `PROTEOMICS_*` |
+
+The first three are what `01_panelC_and_suppB_pca.R` actually resolves against this repository, so
+`R/neha_path_utils.R` was **kept as a deprecated shim** that delegates to the new implementation
+and emits a deprecation warning. Re-running the shared-drive twin of these scripts therefore still
+works. `tests/test_deprecated_path_utils_shim.R` pins that contract and also asserts that no
+active file depends on the shim. The shim can be deleted once this folder is made self-contained
+or formally retired; it holds no analysis logic, so removing it cannot change a result.
+
+Data filenames such as `neha_protigy_input_animal_level_primary.gct` were deliberately **not**
+renamed: they are SHA-locked validated artefacts, so the name is now treated as a legacy dataset
+identifier rather than branding.
+
 ## Generations
 
 The scripts were written in three passes. Later passes supersede earlier ones for the panels they

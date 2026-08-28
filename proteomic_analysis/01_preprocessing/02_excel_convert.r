@@ -32,27 +32,27 @@ read_table_auto <- function(path, sheet = NULL) {
 }
 
 # Set with R options or environment variables for the full analysis.
-mode <- option_or_env("neha.excel_convert_mode", "NEHA_EXCEL_CONVERT_MODE", "excel")
+mode <- option_or_env("proteomics.excel_convert_mode", "PROTEOMICS_EXCEL_CONVERT_MODE", "excel")
 file_path <- option_or_env(
-    "neha.excel_convert_file",
-    "NEHA_EXCEL_CONVERT_FILE",
+    "proteomics.excel_convert_file",
+    "PROTEOMICS_EXCEL_CONVERT_FILE",
     file.path("demo", "input", "demo_pg_matrix.csv")
 )
 folder_path <- option_or_env(
-    "neha.excel_convert_folder",
-    "NEHA_EXCEL_CONVERT_FOLDER",
+    "proteomics.excel_convert_folder",
+    "PROTEOMICS_EXCEL_CONVERT_FOLDER",
     # Default follows the 2026-08-26 restructure. The former imputed/grouped folder is not
     # present in the current tree; override this if you have those grouped workbooks.
     "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/02_data/gct/imputed/grouped"
 )
 metadata_path <- option_or_env(
-    "neha.metadata_path",
-    "NEHA_METADATA_PATH",
+    "proteomics.metadata_path",
+    "PROTEOMICS_METADATA_PATH",
     file.path("demo", "input", "demo_sample_metadata.csv")
 )
 output_dir <- option_or_env(
-    "neha.excel_convert_output",
-    "NEHA_EXCEL_CONVERT_OUTPUT",
+    "proteomics.excel_convert_output",
+    "PROTEOMICS_EXCEL_CONVERT_OUTPUT",
     file.path("demo", "output", "excel_convert")
 )
 dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
@@ -60,7 +60,7 @@ dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
 # Read metadata
 if (!nzchar(metadata_path) || !file.exists(metadata_path)) {
     stop(
-        "Metadata file is required. Set option 'neha.metadata_path' or env var NEHA_METADATA_PATH. ",
+        "Metadata file is required. Set option 'proteomics.metadata_path' or env var PROTEOMICS_METADATA_PATH. ",
         "Default checked: ", metadata_path,
         call. = FALSE
     )

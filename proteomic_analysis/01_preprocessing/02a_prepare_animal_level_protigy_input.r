@@ -25,39 +25,39 @@ option_or_env <- function(option_name, env_name, default) {
 }
 
 data_root <- option_or_env(
-  "neha.animal_level_data_root",
-  "NEHA_ANIMAL_LEVEL_DATA_ROOT",
+  "proteomics.animal_level_data_root",
+  "PROTEOMICS_ANIMAL_LEVEL_DATA_ROOT",
   "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/02_data/gct"
 )
 project_root <- option_or_env(
-  "neha.project_data_root",
-  "NEHA_PROJECT_DATA_ROOT",
+  "proteomics.project_data_root",
+  "PROTEOMICS_PROJECT_DATA_ROOT",
   "S:/Lab_Member/Tobi/Experiments/Collabs/Neha"
 )
 quantitative_gct <- option_or_env(
-  "neha.animal_level_quantitative_gct",
-  "NEHA_ANIMAL_LEVEL_QUANTITATIVE_GCT",
+  "proteomics.animal_level_quantitative_gct",
+  "PROTEOMICS_ANIMAL_LEVEL_QUANTITATIVE_GCT",
   file.path(data_root, "pg.matrix_filtered_pcaAdjusted_unnormalized.gct")
 )
 description_xlsx <- option_or_env(
-  "neha.animal_level_description_xlsx",
-  "NEHA_ANIMAL_LEVEL_DESCRIPTION_XLSX",
+  "proteomics.animal_level_description_xlsx",
+  "PROTEOMICS_ANIMAL_LEVEL_DESCRIPTION_XLSX",
   file.path(data_root, "imputed_data.xlsx")
 )
 sample_info_xlsx <- option_or_env(
-  "neha.animal_level_sample_info",
-  "NEHA_ANIMAL_LEVEL_SAMPLE_INFO",
+  "proteomics.animal_level_sample_info",
+  "PROTEOMICS_ANIMAL_LEVEL_SAMPLE_INFO",
   # hand-maintained metadata lives under 01_input/, not with derived data
   "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/01_input/metadata/sample_info.xlsx"
 )
 sample_annotation_xlsx <- option_or_env(
-  "neha.animal_level_sample_annotation",
-  "NEHA_ANIMAL_LEVEL_SAMPLE_ANNOTATION",
+  "proteomics.animal_level_sample_annotation",
+  "PROTEOMICS_ANIMAL_LEVEL_SAMPLE_ANNOTATION",
   file.path(project_root, "sample_annotation.xlsx")
 )
 output_dir <- option_or_env(
-  "neha.animal_level_output_dir",
-  "NEHA_ANIMAL_LEVEL_OUTPUT_DIR",
+  "proteomics.animal_level_output_dir",
+  "PROTEOMICS_ANIMAL_LEVEL_OUTPUT_DIR",
   "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/02_data/animal_level/input_gct"
 )
 
@@ -97,14 +97,14 @@ parse_legacy_label_hemisphere <- function(label) {
   ifelse(left, "Left", "Right")
 }
 
-adapt_verified_historical_neha_metadata <- function(sample_info, sample_annotation, gct_sample_ids) {
+adapt_verified_historical_metadata <- function(sample_info, sample_annotation, gct_sample_ids) {
   required_info <- c("id", "sampleNumber", "plate", "group2", "AnimalID", "ReplicateGroup", "celltype", "ExpGroup")
   required_annotation <- c("Name", "id", "label", "ReplicateGroup", "AnimalID", "ExpGroup")
   if (length(setdiff(required_info, names(sample_info))) > 0L) {
-    stop("sample_info.xlsx does not match the historical Neha schema.", call. = FALSE)
+    stop("sample_info.xlsx does not match the historical 2024 dataset schema.", call. = FALSE)
   }
   if (length(setdiff(required_annotation, names(sample_annotation))) > 0L) {
-    stop("sample_annotation.xlsx does not match the historical Neha schema.", call. = FALSE)
+    stop("sample_annotation.xlsx does not match the historical 2024 dataset schema.", call. = FALSE)
   }
   if (anyDuplicated(sample_info$sampleNumber) || anyDuplicated(sample_annotation$id)) {
     stop("Historical N-number sample identifiers must be unique.", call. = FALSE)
@@ -193,11 +193,15 @@ descriptions[description_fallback] <- historical$protein_ids[description_fallbac
 
 sample_info <- as.data.frame(readxl::read_excel(sample_info_xlsx), stringsAsFactors = FALSE, check.names = FALSE)
 sample_annotation <- as.data.frame(readxl::read_excel(sample_annotation_xlsx), stringsAsFactors = FALSE, check.names = FALSE)
-metadata <- adapt_verified_historical_neha_metadata(sample_info, sample_annotation, colnames(historical$matrix))
+metadata <- adapt_verified_historical_metadata(sample_info, sample_annotation, colnames(historical$matrix))
 
 expected_units <- make_expected_animal_units(metadata, sample_class_levels = sample_classes)
 aggregation_plan <- prepare_animal_level_aggregation(
   metadata = metadata,
+  # LEGACY DATASET IDENTIFIER -- do not rebrand. This value is written verbatim into the
+  # validated aggregation_audit.csv as the "dataset/project" column and is embedded in every
+  # canonical_analysis_unit key (e.g. "Neha__C11__mcherry"). Changing it would alter a
+  # validated output, so it is retained as a frozen dataset label rather than project branding.
   dataset_project = "Neha",
   expected_units = expected_units,
   sample_class_levels = sample_classes,
@@ -278,7 +282,7 @@ feature_audit <- data.frame(
 )
 utils::write.csv(feature_audit, feature_audit_path, row.names = FALSE, na = "")
 
-contrast_manifest <- neha_primary_contrast_manifest()
+contrast_manifest <- primary_contrast_manifest()
 # Historical hemisphere-level evidence: former Datasets/mapped/ is now
 # 99_historical/datasets_mapped/ after the 2026-08-26 restructure.
 evidence_subdir <- c(

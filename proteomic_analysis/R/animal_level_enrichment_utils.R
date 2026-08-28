@@ -1,26 +1,26 @@
-# Canonical software contracts for the Neha animal-level enrichment branch.
+# Canonical software contracts for the animal-level enrichment branch.
 # Biological comparison definitions remain owned by R/analysis_labels.R.
 
-if (!exists("neha_normalize_path", mode = "function")) {
-  stop("R/neha_path_utils.R must be sourced before R/animal_level_enrichment_utils.R", call. = FALSE)
+if (!exists("project_normalize_path", mode = "function")) {
+  stop("R/project_path_utils.R must be sourced before R/animal_level_enrichment_utils.R", call. = FALSE)
 }
 
-# Retained names delegate to the shared primitives in R/neha_path_utils.R.
+# Retained names delegate to the shared primitives in R/project_path_utils.R.
 # Behaviour change on non-Windows only: comparison is now case-insensitive everywhere
-# (previously case-sensitive off Windows). See the note in R/neha_path_utils.R.
-neha_enrichment_normalize_path <- function(path, must_work = FALSE) neha_normalize_path(path, must_work)
-neha_enrichment_path_is_within <- function(path, parent) neha_path_is_within(path, parent)
-neha_enrichment_paths_overlap <- function(left, right) neha_paths_overlap(left, right)
+# (previously case-sensitive off Windows). See the note in R/project_path_utils.R.
+enrichment_normalize_path <- function(path, must_work = FALSE) project_normalize_path(path, must_work)
+enrichment_path_is_within <- function(path, parent) project_path_is_within(path, parent)
+enrichment_paths_overlap <- function(left, right) project_paths_overlap(left, right)
 
-neha_enrichment_sha256 <- function(path) {
+enrichment_sha256 <- function(path) {
   if (!requireNamespace("digest", quietly = TRUE)) {
     stop("Package 'digest' is required for enrichment provenance.", call. = FALSE)
   }
-  path <- neha_enrichment_normalize_path(path, must_work = TRUE)
+  path <- enrichment_normalize_path(path, must_work = TRUE)
   tolower(digest::digest(path, algo = "sha256", file = TRUE, serialize = FALSE))
 }
 
-neha_enrichment_default_paths <- function() {
+enrichment_default_paths <- function() {
   # Paths reflect the 2026-08-26 input/data/output restructure; see CANONICAL_OUTPUTS.md.
   project_root <- "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler"
   animal_root <- file.path(project_root, "02_data", "animal_level")
@@ -41,10 +41,10 @@ neha_enrichment_default_paths <- function() {
   )
 }
 
-validate_neha_enrichment_mapped_root <- function(mapped_root, historical_input_roots) {
-  mapped_root <- neha_enrichment_normalize_path(mapped_root)
-  protected <- vapply(historical_input_roots, neha_enrichment_normalize_path, character(1))
-  hit <- vapply(protected, function(path) neha_enrichment_paths_overlap(mapped_root, path), logical(1))
+validate_enrichment_mapped_root <- function(mapped_root, historical_input_roots) {
+  mapped_root <- enrichment_normalize_path(mapped_root)
+  protected <- vapply(historical_input_roots, enrichment_normalize_path, character(1))
+  hit <- vapply(protected, function(path) enrichment_paths_overlap(mapped_root, path), logical(1))
   if (any(hit)) {
     stop(
       "Canonical animal-level enrichment cannot read a historical mapped root: ",
@@ -55,16 +55,16 @@ validate_neha_enrichment_mapped_root <- function(mapped_root, historical_input_r
   mapped_root
 }
 
-validate_neha_enrichment_output_root <- function(
+validate_enrichment_output_root <- function(
     output_root,
     mapped_root,
     split_root,
     historical_input_roots,
     historical_output_roots) {
-  output_root <- neha_enrichment_normalize_path(output_root)
+  output_root <- enrichment_normalize_path(output_root)
   protected <- c(mapped_root, split_root, historical_input_roots, historical_output_roots)
-  protected <- vapply(protected, neha_enrichment_normalize_path, character(1))
-  hit <- vapply(protected, function(path) neha_enrichment_paths_overlap(output_root, path), logical(1))
+  protected <- vapply(protected, enrichment_normalize_path, character(1))
+  hit <- vapply(protected, function(path) enrichment_paths_overlap(output_root, path), logical(1))
   if (any(hit)) {
     stop(
       "Canonical animal-level enrichment output root overlaps a protected input or historical root: ",
@@ -75,7 +75,7 @@ validate_neha_enrichment_output_root <- function(
   output_root
 }
 
-neha_enrichment_env_flag <- function(name, default = FALSE) {
+enrichment_env_flag <- function(name, default = FALSE) {
   value <- tolower(trimws(Sys.getenv(name, unset = if (default) "true" else "false")))
   if (!value %in% c("true", "false", "1", "0", "yes", "no")) {
     stop(name, " must be true or false.", call. = FALSE)
@@ -83,7 +83,7 @@ neha_enrichment_env_flag <- function(name, default = FALSE) {
   value %in% c("true", "1", "yes")
 }
 
-neha_enrichment_env_number <- function(name, default, lower = -Inf, upper = Inf, integer = FALSE) {
+enrichment_env_number <- function(name, default, lower = -Inf, upper = Inf, integer = FALSE) {
   raw <- Sys.getenv(name, unset = as.character(default))
   value <- suppressWarnings(as.numeric(raw))
   if (length(value) != 1L || is.na(value) || !is.finite(value) || value < lower || value > upper) {
@@ -93,14 +93,14 @@ neha_enrichment_env_number <- function(name, default, lower = -Inf, upper = Inf,
   if (isTRUE(integer)) as.integer(value) else value
 }
 
-neha_enrichment_env_vector <- function(name) {
+enrichment_env_vector <- function(name) {
   value <- trimws(Sys.getenv(name, unset = ""))
   if (!nzchar(value)) return(character(0))
   out <- trimws(strsplit(value, ",", fixed = TRUE)[[1]])
   unique(out[nzchar(out)])
 }
 
-neha_enrichment_env_choice <- function(name, choices, default) {
+enrichment_env_choice <- function(name, choices, default) {
   value <- tolower(trimws(Sys.getenv(name, unset = default)))
   if (length(value) != 1L || !value %in% choices) {
     stop(name, " must be one of: ", paste(choices, collapse = ", "), ".", call. = FALSE)
@@ -108,23 +108,23 @@ neha_enrichment_env_choice <- function(name, choices, default) {
   value
 }
 
-resolve_neha_enrichment_config <- function(
-    mapped_root = Sys.getenv("NEHA_ENRICHMENT_MAPPED_ROOT", unset = ""),
-    mapped_index = Sys.getenv("NEHA_ENRICHMENT_MAPPED_INDEX", unset = ""),
-    output_root = Sys.getenv("NEHA_ENRICHMENT_OUTPUT_ROOT", unset = "")) {
-  defaults <- neha_enrichment_default_paths()
+resolve_enrichment_config <- function(
+    mapped_root = Sys.getenv("PROTEOMICS_ENRICHMENT_MAPPED_ROOT", unset = ""),
+    mapped_index = Sys.getenv("PROTEOMICS_ENRICHMENT_MAPPED_INDEX", unset = ""),
+    output_root = Sys.getenv("PROTEOMICS_ENRICHMENT_OUTPUT_ROOT", unset = "")) {
+  defaults <- enrichment_default_paths()
   choose <- function(value, default) if (nzchar(trimws(value))) value else default
-  mapped_root <- validate_neha_enrichment_mapped_root(
+  mapped_root <- validate_enrichment_mapped_root(
     choose(mapped_root, defaults$mapped_root),
     defaults$historical_input_roots
   )
-  mapped_index <- neha_enrichment_normalize_path(
+  mapped_index <- enrichment_normalize_path(
     choose(mapped_index, file.path(mapped_root, "indexMappedComparisons.csv"))
   )
-  if (!neha_enrichment_path_is_within(mapped_index, mapped_root)) {
+  if (!enrichment_path_is_within(mapped_index, mapped_root)) {
     stop("Canonical mapped index must resolve inside the configured mapped root.", call. = FALSE)
   }
-  output_root <- validate_neha_enrichment_output_root(
+  output_root <- validate_enrichment_output_root(
     choose(output_root, defaults$output_root),
     mapped_root,
     defaults$split_root,
@@ -132,46 +132,46 @@ resolve_neha_enrichment_config <- function(
     defaults$historical_output_roots
   )
 
-  ontology <- toupper(trimws(Sys.getenv("NEHA_ENRICHMENT_ONTOLOGY", unset = "BP")))
+  ontology <- toupper(trimws(Sys.getenv("PROTEOMICS_ENRICHMENT_ONTOLOGY", unset = "BP")))
   if (!ontology %in% c("BP", "CC", "MF")) {
-    stop("NEHA_ENRICHMENT_ONTOLOGY must be BP, CC, or MF.", call. = FALSE)
+    stop("PROTEOMICS_ENRICHMENT_ONTOLOGY must be BP, CC, or MF.", call. = FALSE)
   }
-  min_gs_size <- neha_enrichment_env_number("NEHA_ENRICHMENT_MIN_GS_SIZE", 10, 1, Inf, integer = TRUE)
-  max_gs_size <- neha_enrichment_env_number("NEHA_ENRICHMENT_MAX_GS_SIZE", 800, 1, Inf, integer = TRUE)
+  min_gs_size <- enrichment_env_number("PROTEOMICS_ENRICHMENT_MIN_GS_SIZE", 10, 1, Inf, integer = TRUE)
+  max_gs_size <- enrichment_env_number("PROTEOMICS_ENRICHMENT_MAX_GS_SIZE", 800, 1, Inf, integer = TRUE)
   if (min_gs_size > max_gs_size) stop("Minimum gene-set size exceeds maximum gene-set size.", call. = FALSE)
-  gsea_rank <- neha_enrichment_env_choice("NEHA_ENRICHMENT_GSEA_RANK", c("t", "log2fc"), "t")
+  gsea_rank <- enrichment_env_choice("PROTEOMICS_ENRICHMENT_GSEA_RANK", c("t", "log2fc"), "t")
 
   list(
     mapped_root = mapped_root,
     mapped_index = mapped_index,
     output_root = output_root,
-    project_root = neha_enrichment_normalize_path(defaults$project_root),
-    dataset_root = neha_enrichment_normalize_path(defaults$dataset_root),
+    project_root = enrichment_normalize_path(defaults$project_root),
+    dataset_root = enrichment_normalize_path(defaults$dataset_root),
     ontology = ontology,
-    pvalue_cutoff = neha_enrichment_env_number("NEHA_ENRICHMENT_PVALUE_CUTOFF", 1, 0, 1),
-    qvalue_cutoff = neha_enrichment_env_number("NEHA_ENRICHMENT_QVALUE_CUTOFF", 1, 0, 1),
-    fdr_threshold = neha_enrichment_env_number("NEHA_ENRICHMENT_FDR_THRESHOLD", 0.05, 0, 1),
-    top_abs_log2fc = neha_enrichment_env_number("NEHA_ENRICHMENT_TOP_ABS_LOG2FC", 1, 0, Inf),
+    pvalue_cutoff = enrichment_env_number("PROTEOMICS_ENRICHMENT_PVALUE_CUTOFF", 1, 0, 1),
+    qvalue_cutoff = enrichment_env_number("PROTEOMICS_ENRICHMENT_QVALUE_CUTOFF", 1, 0, 1),
+    fdr_threshold = enrichment_env_number("PROTEOMICS_ENRICHMENT_FDR_THRESHOLD", 0.05, 0, 1),
+    top_abs_log2fc = enrichment_env_number("PROTEOMICS_ENRICHMENT_TOP_ABS_LOG2FC", 1, 0, Inf),
     p_adjust_method = "BH",
     min_gs_size = min_gs_size,
     max_gs_size = max_gs_size,
-    simplify = neha_enrichment_env_flag("NEHA_ENRICHMENT_SIMPLIFY", FALSE),
-    simplify_cutoff = neha_enrichment_env_number("NEHA_ENRICHMENT_SIMPLIFY_CUTOFF", 0.7, 0, 1),
+    simplify = enrichment_env_flag("PROTEOMICS_ENRICHMENT_SIMPLIFY", FALSE),
+    simplify_cutoff = enrichment_env_number("PROTEOMICS_ENRICHMENT_SIMPLIFY_CUTOFF", 0.7, 0, 1),
     gsea_rank = gsea_rank,
     gsea_sensitivity_rank = if (identical(gsea_rank, "t")) "log2fc" else NA_character_,
-    gsea_seed_base = neha_enrichment_env_number("NEHA_ENRICHMENT_GSEA_SEED_BASE", 20260824, 1, 2147483646, integer = TRUE),
-    kegg_enabled = neha_enrichment_env_flag("NEHA_ENRICHMENT_KEGG", TRUE),
-    plots_enabled = neha_enrichment_env_flag("NEHA_ENRICHMENT_PLOTS", TRUE),
-    force = neha_enrichment_env_flag("NEHA_ENRICHMENT_FORCE", FALSE),
-    nk3r_genes = neha_enrichment_env_vector("NEHA_ENRICHMENT_NK3R_GENES"),
-    selected_uniprot = neha_enrichment_env_vector("NEHA_ENRICHMENT_SELECTED_UNIPROT"),
-    path_ids = neha_enrichment_env_vector("NEHA_ENRICHMENT_PATH_IDS"),
-    historical_input_roots = vapply(defaults$historical_input_roots, neha_enrichment_normalize_path, character(1)),
-    historical_output_roots = vapply(defaults$historical_output_roots, neha_enrichment_normalize_path, character(1))
+    gsea_seed_base = enrichment_env_number("PROTEOMICS_ENRICHMENT_GSEA_SEED_BASE", 20260824, 1, 2147483646, integer = TRUE),
+    kegg_enabled = enrichment_env_flag("PROTEOMICS_ENRICHMENT_KEGG", TRUE),
+    plots_enabled = enrichment_env_flag("PROTEOMICS_ENRICHMENT_PLOTS", TRUE),
+    force = enrichment_env_flag("PROTEOMICS_ENRICHMENT_FORCE", FALSE),
+    nk3r_genes = enrichment_env_vector("PROTEOMICS_ENRICHMENT_NK3R_GENES"),
+    selected_uniprot = enrichment_env_vector("PROTEOMICS_ENRICHMENT_SELECTED_UNIPROT"),
+    path_ids = enrichment_env_vector("PROTEOMICS_ENRICHMENT_PATH_IDS"),
+    historical_input_roots = vapply(defaults$historical_input_roots, enrichment_normalize_path, character(1)),
+    historical_output_roots = vapply(defaults$historical_output_roots, enrichment_normalize_path, character(1))
   )
 }
 
-neha_enrichment_required_mapped_index_columns <- function() {
+enrichment_required_mapped_index_columns <- function() {
   c(
     "canonical_comparison", "canonical_contrast", "sample_class",
     "numerator_condition", "denominator_condition", "historical_comparison_alias",
@@ -183,21 +183,21 @@ neha_enrichment_required_mapped_index_columns <- function() {
   )
 }
 
-read_neha_enrichment_mapped_index <- function(
+read_enrichment_mapped_index <- function(
     mapped_index,
     mapped_root,
-    expected_manifest = neha_primary_contrast_manifest(),
+    expected_manifest = primary_contrast_manifest(),
     verify_hashes = TRUE) {
-  mapped_root <- validate_neha_enrichment_mapped_root(
+  mapped_root <- validate_enrichment_mapped_root(
     mapped_root,
-    neha_enrichment_default_paths()$historical_input_roots
+    enrichment_default_paths()$historical_input_roots
   )
-  mapped_index <- neha_enrichment_normalize_path(mapped_index, must_work = TRUE)
-  if (!neha_enrichment_path_is_within(mapped_index, mapped_root)) {
+  mapped_index <- enrichment_normalize_path(mapped_index, must_work = TRUE)
+  if (!enrichment_path_is_within(mapped_index, mapped_root)) {
     stop("Canonical mapped index resolves outside the configured mapped root.", call. = FALSE)
   }
   index <- utils::read.csv(mapped_index, stringsAsFactors = FALSE, check.names = FALSE)
-  missing <- setdiff(neha_enrichment_required_mapped_index_columns(), names(index))
+  missing <- setdiff(enrichment_required_mapped_index_columns(), names(index))
   if (length(missing)) stop("Mapped index is missing required columns: ", paste(missing, collapse = ", "), call. = FALSE)
   if (nrow(index) != 12L || nrow(index) != nrow(expected_manifest)) {
     stop("Canonical animal-level enrichment requires exactly 12 mapped comparisons; found ", nrow(index), ".", call. = FALSE)
@@ -211,7 +211,7 @@ read_neha_enrichment_mapped_index <- function(
 
   expected_keys <- expected_manifest$canonical_comparison
   if (!setequal(as.character(index$canonical_comparison), expected_keys)) {
-    stop("Mapped index comparison coverage does not match the shared Neha manifest.", call. = FALSE)
+    stop("Mapped index comparison coverage does not match the shared contrast manifest.", call. = FALSE)
   }
   index <- index[match(expected_keys, index$canonical_comparison), , drop = FALSE]
   expected <- data.frame(
@@ -224,32 +224,32 @@ read_neha_enrichment_mapped_index <- function(
   )
   for (field in names(expected)) {
     if (!identical(as.character(index[[field]]), expected[[field]])) {
-      stop("Mapped index ", field, " does not match the shared Neha manifest.", call. = FALSE)
+      stop("Mapped index ", field, " does not match the shared contrast manifest.", call. = FALSE)
     }
   }
   if (any(!as.logical(index$row_accounting_valid))) stop("Mapped index contains failed upstream row accounting.", call. = FALSE)
   paths <- as.character(index$output_mapped_path)
   if (any(!file.exists(paths))) stop("Mapped index references missing mapped files.", call. = FALSE)
-  paths <- vapply(paths, neha_enrichment_normalize_path, character(1), must_work = TRUE)
+  paths <- vapply(paths, enrichment_normalize_path, character(1), must_work = TRUE)
   forward_root <- file.path(mapped_root, "forward")
-  outside <- !vapply(paths, neha_enrichment_path_is_within, logical(1), parent = forward_root)
+  outside <- !vapply(paths, enrichment_path_is_within, logical(1), parent = forward_root)
   if (any(outside)) {
     stop("Indexed mapped path resolves outside canonical mapped/forward: ", paths[[which(outside)[[1]]]], call. = FALSE)
   }
   index$mapped_input_path <- paths
   if (isTRUE(verify_hashes)) {
-    observed <- vapply(paths, neha_enrichment_sha256, character(1))
+    observed <- vapply(paths, enrichment_sha256, character(1))
     if (!identical(unname(observed), unname(tolower(as.character(index$mapped_output_sha256))))) {
       stop("Mapped input SHA-256 does not match indexMappedComparisons.csv.", call. = FALSE)
     }
   }
   index$mapped_index_path <- mapped_index
-  index$mapped_index_sha256 <- neha_enrichment_sha256(mapped_index)
+  index$mapped_index_sha256 <- enrichment_sha256(mapped_index)
   rownames(index) <- NULL
   index
 }
 
-neha_enrichment_required_mapped_columns <- function() {
+enrichment_required_mapped_columns <- function() {
   c(
     "gene_symbol", "original_protein_id", "Description", "mapped_gene_symbol",
     "uniprot_accession", "mapping_status", "mapping_strategy", "source_row_id",
@@ -258,13 +258,13 @@ neha_enrichment_required_mapped_columns <- function() {
   )
 }
 
-read_neha_enrichment_mapped_file <- function(path, expected_rows = NULL, expected_sha256 = NULL) {
-  path <- neha_enrichment_normalize_path(path, must_work = TRUE)
-  if (!is.null(expected_sha256) && !identical(neha_enrichment_sha256(path), tolower(as.character(expected_sha256)))) {
+read_enrichment_mapped_file <- function(path, expected_rows = NULL, expected_sha256 = NULL) {
+  path <- enrichment_normalize_path(path, must_work = TRUE)
+  if (!is.null(expected_sha256) && !identical(enrichment_sha256(path), tolower(as.character(expected_sha256)))) {
     stop("Mapped file SHA-256 mismatch: ", path, call. = FALSE)
   }
   x <- utils::read.csv(path, stringsAsFactors = FALSE, check.names = FALSE)
-  missing <- setdiff(neha_enrichment_required_mapped_columns(), names(x))
+  missing <- setdiff(enrichment_required_mapped_columns(), names(x))
   if (length(missing)) stop("Mapped enrichment input is missing: ", paste(missing, collapse = ", "), call. = FALSE)
   if (!is.null(expected_rows) && nrow(x) != as.integer(expected_rows)) {
     stop("Mapped enrichment input row count mismatch: expected ", expected_rows, ", found ", nrow(x), ".", call. = FALSE)
@@ -284,7 +284,7 @@ read_neha_enrichment_mapped_file <- function(path, expected_rows = NULL, expecte
   x
 }
 
-collapse_neha_enrichment_accessions <- function(x, ranking_statistic = "log2fc") {
+collapse_enrichment_accessions <- function(x, ranking_statistic = "log2fc") {
   if (!ranking_statistic %in% names(x)) stop("Ranking statistic is missing: ", ranking_statistic, call. = FALSE)
   rank_value <- suppressWarnings(as.numeric(x[[ranking_statistic]]))
   accession <- trimws(as.character(x$uniprot_accession))
@@ -356,7 +356,7 @@ collapse_neha_enrichment_accessions <- function(x, ranking_statistic = "log2fc")
   )
 }
 
-neha_gsea_tie_diagnostics <- function(values) {
+gsea_tie_diagnostics <- function(values) {
   values <- suppressWarnings(as.numeric(values))
   finite <- values[is.finite(values)]
   n_finite <- length(finite)
@@ -375,7 +375,7 @@ neha_gsea_tie_diagnostics <- function(values) {
   )
 }
 
-build_neha_gsea_rank <- function(collapsed, ranking_statistic = "t", analysis_role = "canonical") {
+build_gsea_rank <- function(collapsed, ranking_statistic = "t", analysis_role = "canonical") {
   if (!ranking_statistic %in% c("t", "log2fc")) {
     stop("GSEA ranking statistic must be 't' or 'log2fc'.", call. = FALSE)
   }
@@ -388,7 +388,7 @@ build_neha_gsea_rank <- function(collapsed, ranking_statistic = "t", analysis_ro
   if (identical(ranking_statistic, "t") && any(!included)) {
     stop("Moderated t GSEA rank must contain one finite value for every selected UniProt row.", call. = FALSE)
   }
-  tie_diagnostics <- neha_gsea_tie_diagnostics(values[included])
+  tie_diagnostics <- gsea_tie_diagnostics(values[included])
   rank_audit <- data.frame(
     uniprot_accession = ids,
     original_protein_id = as.character(collapsed$original_protein_id),
@@ -422,7 +422,7 @@ build_neha_gsea_rank <- function(collapsed, ranking_statistic = "t", analysis_ro
   )
 }
 
-build_neha_ora_sets <- function(collapsed, fdr_threshold = 0.05, top_abs_log2fc = 1) {
+build_ora_sets <- function(collapsed, fdr_threshold = 0.05, top_abs_log2fc = 1) {
   ids <- as.character(collapsed$uniprot_accession)
   log2fc <- suppressWarnings(as.numeric(collapsed$log2fc))
   padj <- suppressWarnings(as.numeric(collapsed$padj))
@@ -443,7 +443,7 @@ build_neha_ora_sets <- function(collapsed, fdr_threshold = 0.05, top_abs_log2fc 
   sets
 }
 
-derive_neha_enrichment_seed <- function(base_seed, comparison, analysis_type) {
+derive_enrichment_seed <- function(base_seed, comparison, analysis_type) {
   modulus <- 2147483646
   key <- paste0(nchar(comparison, type = "bytes"), ":", comparison, "|", analysis_type)
   hash <- as.double(as.integer(base_seed)) %% modulus
@@ -453,7 +453,7 @@ derive_neha_enrichment_seed <- function(base_seed, comparison, analysis_type) {
   seed
 }
 
-with_neha_enrichment_seed <- function(seed, expression) {
+with_enrichment_seed <- function(seed, expression) {
   if (!requireNamespace("withr", quietly = TRUE)) stop("Package 'withr' is required for deterministic GSEA.", call. = FALSE)
   withr::with_preserve_seed({
     old_kind <- RNGkind()
@@ -467,7 +467,7 @@ with_neha_enrichment_seed <- function(seed, expression) {
   })
 }
 
-neha_enrichment_empty_result <- function() {
+enrichment_empty_result <- function() {
   data.frame(
     ID = character(), Description = character(), setSize = integer(),
     enrichmentScore = numeric(), NES = numeric(), pvalue = numeric(),
@@ -477,24 +477,24 @@ neha_enrichment_empty_result <- function() {
   )
 }
 
-neha_enrichment_result_table <- function(result) {
-  if (is.null(result)) return(neha_enrichment_empty_result())
+enrichment_result_table <- function(result) {
+  if (is.null(result)) return(enrichment_empty_result())
   out <- tryCatch(as.data.frame(result), error = function(e) NULL)
-  if (is.null(out)) return(neha_enrichment_empty_result())
-  if (!ncol(out) && !nrow(out)) return(neha_enrichment_empty_result())
+  if (is.null(out)) return(enrichment_empty_result())
+  if (!ncol(out) && !nrow(out)) return(enrichment_empty_result())
   out
 }
 
-write_neha_enrichment_csv <- function(x, path) {
+write_enrichment_csv <- function(x, path) {
   dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
   utils::write.csv(x, path, row.names = FALSE, na = "")
   if (!file.exists(path) || is.na(file.info(path)$size) || file.info(path)$size <= 0) {
     stop("Failed to verify enrichment CSV: ", path, call. = FALSE)
   }
-  neha_enrichment_normalize_path(path, must_work = TRUE)
+  enrichment_normalize_path(path, must_work = TRUE)
 }
 
-neha_enrichment_package_versions <- function() {
+enrichment_package_versions <- function() {
   packages <- c(
     "clusterProfiler", "org.Mm.eg.db", "AnnotationDbi", "DOSE", "enrichplot",
     "GOSemSim", "GO.db", "KEGGREST", "fgsea", "ggplot2", "digest", "withr"
@@ -512,7 +512,7 @@ neha_enrichment_package_versions <- function() {
   )
 }
 
-validate_neha_enrichment_index <- function(index, require_files = TRUE) {
+validate_enrichment_index <- function(index, require_files = TRUE) {
   required <- c(
     "canonical_comparison", "canonical_contrast", "sample_class",
     "numerator_condition", "denominator_condition", "historical_comparison_alias",
@@ -551,7 +551,7 @@ validate_neha_enrichment_index <- function(index, require_files = TRUE) {
       stop("t-primary enrichment index has an invalid log2fc sensitivity contract.", call. = FALSE)
     }
   }
-  expected <- neha_primary_contrast_manifest()
+  expected <- primary_contrast_manifest()
   index_ordered <- index[match(expected$canonical_comparison, index$canonical_comparison), , drop = FALSE]
   contract <- list(
     canonical_comparison = expected$canonical_comparison,
@@ -563,7 +563,7 @@ validate_neha_enrichment_index <- function(index, require_files = TRUE) {
   )
   for (field in names(contract)) {
     if (!identical(as.character(index_ordered[[field]]), as.character(contract[[field]]))) {
-      stop("Enrichment index ", field, " does not match the shared Neha contrast manifest.", call. = FALSE)
+      stop("Enrichment index ", field, " does not match the shared contrast manifest.", call. = FALSE)
     }
   }
   if (isTRUE(require_files)) {

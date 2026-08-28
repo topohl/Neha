@@ -1,6 +1,6 @@
 #!/usr/bin/env Rscript
 
-# Design-balance / identifiability checks for the animal-level Neha design.
+# Design-balance / identifiability checks for the animal-level design.
 #
 # Motivation: the collection-plate-vs-Pairing association in this cohort was only found by
 # manual provenance archaeology across two separate audits. These checks make the association
@@ -48,8 +48,8 @@ option_or_env <- function(option_name, env_name, default) {
 }
 
 assignment_path <- option_or_env(
-  "neha.source_sample_assignment",
-  "NEHA_SOURCE_SAMPLE_ASSIGNMENT",
+  "proteomics.source_sample_assignment",
+  "PROTEOMICS_SOURCE_SAMPLE_ASSIGNMENT",
   "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/02_data/animal_level/input_gct/source_sample_assignment.csv"
 )
 
@@ -119,7 +119,7 @@ expect(isFALSE(stratum_is_covariate_free(c("Plate1","Plate2","Plate1"))),
 if (!file.exists(assignment_path)) {
   cat("\n=== cohort checks SKIPPED: assignment metadata not reachable ===\n")
   cat("    expected at:", assignment_path, "\n")
-  cat("    set NEHA_SOURCE_SAMPLE_ASSIGNMENT to run the cohort-level contracts.\n")
+  cat("    set PROTEOMICS_SOURCE_SAMPLE_ASSIGNMENT to run the cohort-level contracts.\n")
 } else {
   src <- utils::read.csv(assignment_path, stringsAsFactors = FALSE)
   # The Plate token is embedded in the sample identifier and records COLLECTION PLATE, i.e.

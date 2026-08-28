@@ -17,7 +17,7 @@ if (!file.exists(file.path(repo_root, "R", "analysis_labels.R"))) {
   repo_root <- normalizePath(getwd(), winslash = "/", mustWork = TRUE)
 }
 source(file.path(repo_root, "R", "analysis_labels.R"))
-source(file.path(repo_root, "R", "neha_path_utils.R"))
+source(file.path(repo_root, "R", "project_path_utils.R"))
 source(file.path(repo_root, "R", "animal_level_enrichment_utils.R"))
 
 if (!requireNamespace("digest", quietly = TRUE)) {
@@ -44,7 +44,7 @@ option_or_env <- function(option_name, env_name, default) {
 }
 
 data_root <- option_or_env(
-  "neha.project_data_root", "NEHA_PROJECT_DATA_ROOT",
+  "proteomics.project_data_root", "PROTEOMICS_PROJECT_DATA_ROOT",
   "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler"
 )
 
@@ -57,7 +57,7 @@ mapped_index <- file.path(mapped_root, "indexMappedComparisons.csv")
 if (!file.exists(gct_path)) {
   cat("Shared data root not reachable; skipping data-integrity contracts.\n")
   cat("  expected:", gct_path, "\n")
-  cat("  set NEHA_PROJECT_DATA_ROOT to run them.\n")
+  cat("  set PROTEOMICS_PROJECT_DATA_ROOT to run them.\n")
   quit(save = "no", status = 0L)
 }
 
@@ -71,7 +71,7 @@ if (!file.exists(mapped_index)) {
   expect(FALSE, paste("mapped index is missing:", mapped_index))
 } else {
   ix <- tryCatch(
-    read_neha_enrichment_mapped_index(mapped_index, mapped_root, verify_hashes = TRUE),
+    read_enrichment_mapped_index(mapped_index, mapped_root, verify_hashes = TRUE),
     error = function(e) e
   )
   if (inherits(ix, "error")) {

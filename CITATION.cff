@@ -1,11 +1,10 @@
 cff-version: 1.2.0
 message: "If you use this workflow, please cite it using the metadata in this file."
-title: "Neha proteomics analysis workflow"
+title: "Associative Memory Proteomics"
 type: software
 authors:
   - family-names: Pohl
     given-names: Tobias
-repository-code: "https://github.com/topohl/Neha"
-doi: "10.0000/placeholder-doi"
+repository-code: "https://github.com/topohl/AssociativeMemoryProteomics"
 date-released: "2026-07-02"
 license: MIT

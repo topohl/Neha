@@ -1,13 +1,13 @@
 # ====================================================================
 # PC contributions, pairwise PC matrix, variance barplot, distance heatmap, loading magnitude, trajectory, normalization comparison, metadata-PC correlation, 3D, densities
 # Part of the PCA workflow split out of the former monolithic
-# 03_qc_exploration/06_pcaPlot_Neha.r (2026-08-26). Sourced in order by that
+# 03_qc_exploration/06_pcaPlot_animal_level.r (2026-08-26). Sourced in order by that
 # script, which remains the entry point. Runs at top level and shares the
 # globals created by 06a_pca_core.r (mat, meta, pca, output_dir, helpers).
 # ====================================================================
 
 if (!exists("mat") || !exists("meta") || !exists("pca") || !exists("output_dir")) {
-  stop("PCA core state missing. Run 03_qc_exploration/06_pcaPlot_Neha.r, or source pca/06a_pca_core.r first.", call. = FALSE)
+  stop("PCA core state missing. Run 03_qc_exploration/06_pcaPlot_animal_level.r, or source pca/06a_pca_core.r first.", call. = FALSE)
 }
 
 # ================== Additional Supplementary Figure Plots ==================

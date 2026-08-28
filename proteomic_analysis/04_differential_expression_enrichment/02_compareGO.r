@@ -7,33 +7,33 @@ script_file <- if (length(script_file)) sub("^--file=", "", script_file[[1]]) el
 script_dir <- dirname(normalizePath(script_file, winslash = "/", mustWork = FALSE))
 project_root <- normalizePath(file.path(script_dir, ".."), winslash = "/", mustWork = TRUE)
 source(file.path(project_root, "R", "analysis_labels.R"))
-source(file.path(project_root, "R", "neha_path_utils.R"))
+source(file.path(project_root, "R", "project_path_utils.R"))
 source(file.path(project_root, "R", "animal_level_enrichment_utils.R"))
 
-config <- resolve_neha_enrichment_config()
+config <- resolve_enrichment_config()
 index_path <- Sys.getenv(
-  "NEHA_ENRICHMENT_INDEX",
+  "PROTEOMICS_ENRICHMENT_INDEX",
   unset = file.path(config$output_root, "indexEnrichmentComparisons.csv")
 )
-index_path <- neha_enrichment_normalize_path(index_path, must_work = TRUE)
-if (!neha_enrichment_path_is_within(index_path, config$output_root)) {
-  stop("Canonical enrichment index must resolve inside NEHA_ENRICHMENT_OUTPUT_ROOT.", call. = FALSE)
+index_path <- enrichment_normalize_path(index_path, must_work = TRUE)
+if (!enrichment_path_is_within(index_path, config$output_root)) {
+  stop("Canonical enrichment index must resolve inside PROTEOMICS_ENRICHMENT_OUTPUT_ROOT.", call. = FALSE)
 }
 index <- utils::read.csv(index_path, stringsAsFactors = FALSE, check.names = FALSE)
-validate_neha_enrichment_index(index, require_files = TRUE)
+validate_enrichment_index(index, require_files = TRUE)
 if (any(index$execution_status != "success")) stop("compareGO requires 12 successful enrichment comparisons.", call. = FALSE)
 
 output_root <- file.path(config$output_root, "compareGO")
 dir.create(output_root, recursive = TRUE, showWarnings = FALSE)
 output_index_path <- file.path(output_root, "indexCompareGO.csv")
 if (file.exists(output_index_path) && !isTRUE(config$force)) {
-  stop("compareGO output already exists; set NEHA_ENRICHMENT_FORCE=true to replace isolated canonical outputs.", call. = FALSE)
+  stop("compareGO output already exists; set PROTEOMICS_ENRICHMENT_FORCE=true to replace isolated canonical outputs.", call. = FALSE)
 }
 
 required_go_columns <- c("ID", "Description", "NES", "pvalue", "p.adjust", "qvalue", "core_enrichment")
 tables <- lapply(seq_len(nrow(index)), function(i) {
-  source_path <- neha_enrichment_normalize_path(index$go_gsea_output[[i]], must_work = TRUE)
-  if (!neha_enrichment_path_is_within(source_path, file.path(config$output_root, "per_comparison"))) {
+  source_path <- enrichment_normalize_path(index$go_gsea_output[[i]], must_work = TRUE)
+  if (!enrichment_path_is_within(source_path, file.path(config$output_root, "per_comparison"))) {
     stop("GO input resolves outside canonical per_comparison outputs: ", source_path, call. = FALSE)
   }
   x <- utils::read.csv(source_path, stringsAsFactors = FALSE, check.names = FALSE)
@@ -67,8 +67,8 @@ combined <- combined[order(combined$canonical_comparison, combined$p.adjust, -ab
 fdr_threshold <- config$fdr_threshold
 significant <- combined[is.finite(combined$p.adjust) & combined$p.adjust < fdr_threshold, , drop = FALSE]
 
-combined_path <- write_neha_enrichment_csv(combined, file.path(output_root, "GO_GSEA_all_comparisons.csv"))
-significant_path <- write_neha_enrichment_csv(significant, file.path(output_root, "GO_GSEA_FDR_significant.csv"))
+combined_path <- write_enrichment_csv(combined, file.path(output_root, "GO_GSEA_all_comparisons.csv"))
+significant_path <- write_enrichment_csv(significant, file.path(output_root, "GO_GSEA_FDR_significant.csv"))
 
 summary_rows <- lapply(seq_len(nrow(index)), function(i) {
   comparison <- index$canonical_comparison[[i]]
@@ -89,7 +89,7 @@ summary_rows <- lapply(seq_len(nrow(index)), function(i) {
   )
 })
 summary <- do.call(rbind, summary_rows)
-summary_path <- write_neha_enrichment_csv(summary, file.path(output_root, "GO_GSEA_comparison_summary.csv"))
+summary_path <- write_enrichment_csv(summary, file.path(output_root, "GO_GSEA_comparison_summary.csv"))
 
 selected_ids <- unique(significant$ID)
 if (!length(selected_ids) && nrow(combined)) {
@@ -107,7 +107,7 @@ if (length(selected_ids)) {
   }
   matrix_table <- data.frame(ID = rownames(matrix), Description = unname(description[rownames(matrix)]), matrix,
                              check.names = FALSE, stringsAsFactors = FALSE)
-  matrix_path <- write_neha_enrichment_csv(matrix_table, matrix_path)
+  matrix_path <- write_enrichment_csv(matrix_table, matrix_path)
   if (isTRUE(config$plots_enabled) && requireNamespace("ggplot2", quietly = TRUE)) {
     long <- combined[combined$ID %in% selected_ids, c("ID", "canonical_comparison", "NES"), drop = FALSE]
     long$canonical_comparison <- factor(long$canonical_comparison, levels = index$canonical_comparison)
@@ -120,10 +120,10 @@ if (length(selected_ids)) {
       ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 45, hjust = 1))
     plot_path <- file.path(output_root, "GO_GSEA_NES_heatmap.png")
     ggplot2::ggsave(plot_path, plot = plot, width = 13, height = max(7, min(20, length(selected_ids) * 0.22)), dpi = 300)
-    plot_path <- neha_enrichment_normalize_path(plot_path, must_work = TRUE)
+    plot_path <- enrichment_normalize_path(plot_path, must_work = TRUE)
   }
 } else {
-  matrix_path <- write_neha_enrichment_csv(
+  matrix_path <- write_enrichment_csv(
     data.frame(ID = character(), Description = character(), stringsAsFactors = FALSE), matrix_path
   )
 }
@@ -136,7 +136,7 @@ compare_index <- data.frame(
   ), drop = FALSE],
   enrichment_index_path = index_path,
   source_go_gsea_path = index$go_gsea_output,
-  source_go_gsea_sha256 = vapply(index$go_gsea_output, neha_enrichment_sha256, character(1)),
+  source_go_gsea_sha256 = vapply(index$go_gsea_output, enrichment_sha256, character(1)),
   go_term_count = summary$go_term_count,
   fdr_significant_term_count = summary$fdr_significant_term_count,
   combined_output_path = combined_path,
@@ -148,5 +148,5 @@ compare_index <- data.frame(
   stringsAsFactors = FALSE,
   check.names = FALSE
 )
-write_neha_enrichment_csv(compare_index, output_index_path)
+write_enrichment_csv(compare_index, output_index_path)
 message("Canonical compareGO completed: ", output_index_path)

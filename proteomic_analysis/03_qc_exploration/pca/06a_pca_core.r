@@ -1,7 +1,7 @@
 # ====================================================================
 # PCA core: config, helpers, validated input, base plots, audit
 # Part of the PCA workflow split out of the former monolithic
-# 03_qc_exploration/06_pcaPlot_Neha.r (2026-08-26). Sourced in order by that
+# 03_qc_exploration/06_pcaPlot_animal_level.r (2026-08-26). Sourced in order by that
 # script, which remains the entry point. Runs at top level and shares the
 # globals created by 06a_pca_core.r (mat, meta, pca, output_dir, helpers).
 # Defines mat/meta/pca and the shared helpers every other part uses.
@@ -32,14 +32,14 @@ if (!requireNamespace("aricode", quietly = TRUE)) {
 set.seed(42)
 
 script_arg <- grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE)
-script_path <- if (length(script_arg)) sub("^--file=", "", script_arg[[1]]) else file.path("03_qc_exploration", "06_pcaPlot_Neha.r")
+script_path <- if (length(script_arg)) sub("^--file=", "", script_arg[[1]]) else file.path("03_qc_exploration", "06_pcaPlot_animal_level.r")
 repo_root <- normalizePath(file.path(dirname(script_path), ".."), winslash = "/", mustWork = FALSE)
 if (!file.exists(file.path(repo_root, "R", "protigy_input_utils.R"))) {
     repo_root <- normalizePath(getwd(), winslash = "/", mustWork = TRUE)
 }
 source(file.path(repo_root, "R", "analysis_labels.R"))
 source(file.path(repo_root, "R", "protigy_input_utils.R"))
-source(file.path(repo_root, "R", "neha_path_utils.R"))
+source(file.path(repo_root, "R", "project_path_utils.R"))
 source(file.path(repo_root, "R", "pca_animal_level_utils.R"))
 
 # =============== Config =================
@@ -52,16 +52,16 @@ option_or_env <- function(option_name, env_name, default) {
 }
 
 gct_file <- option_or_env(
-    "neha.pca_animal_level_input",
-    "NEHA_PCA_ANIMAL_LEVEL_INPUT",
+    "proteomics.pca_animal_level_input",
+    "PROTEOMICS_PCA_ANIMAL_LEVEL_INPUT",
     "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/02_data/animal_level/input_gct/neha_protigy_input_animal_level_primary.gct"
 )
 # Legacy hemisphere-level PCA outputs now live under 99_historical/pca_plots_legacy.
 historical_output_dir <- "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/99_historical/pca_plots_legacy"
-output_dir <- validate_neha_pca_output_root(
+output_dir <- validate_pca_output_root(
     option_or_env(
-        "neha.pca_output_root",
-        "NEHA_PCA_OUTPUT_ROOT",
+        "proteomics.pca_output_root",
+        "PROTEOMICS_PCA_OUTPUT_ROOT",
         "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/03_output/pca"
     ),
     historical_output_dir
@@ -142,15 +142,15 @@ cat("Reading validated animal-level GCT:", gct_file, "\n")
 source_sha256 <- if (file.exists(gct_file)) digest::digest(file = gct_file, algo = "sha256") else NA_character_
 core_input <- tryCatch({
     parsed_gct <- validate_protigy_gct_v13(gct_file)
-    validated_input <- validate_neha_pca_animal_input(parsed_gct, expected_n = 3L)
-    prepared_pca <- prepare_neha_animal_pca(
+    validated_input <- validate_pca_animal_input(parsed_gct, expected_n = 3L)
+    prepared_pca <- prepare_animal_pca(
         validated_input$expression_matrix,
         center = TRUE,
         scale. = TRUE
     )
     list(validated = validated_input, prepared = prepared_pca)
 }, error = function(e) {
-    failure_audit <- make_neha_pca_audit(
+    failure_audit <- make_pca_audit(
         source_path = gct_file,
         source_sha256 = source_sha256,
         output_paths = c(pca_audit = pca_audit_path),
@@ -313,7 +313,7 @@ tryCatch({
     theme_pca_min() + labs(title="Cumulative Variance", x="Principal Component", y="Cumulative Fraction")
   save_plot("plots/variance", "pca_cumulative_variance.svg", p_cum)
 }, error = function(e) {
-  failure_audit <- make_neha_pca_audit(
+  failure_audit <- make_pca_audit(
     validated_input = core_input$validated,
     prepared_pca = core_input$prepared,
     source_path = gct_file,
@@ -325,7 +325,7 @@ tryCatch({
   write_dt(failure_audit, pca_audit_path)
   stop(e)
 })
-pca_audit <- make_neha_pca_audit(
+pca_audit <- make_pca_audit(
   validated_input = core_input$validated,
   prepared_pca = core_input$prepared,
   source_path = gct_file,

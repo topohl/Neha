@@ -17,14 +17,14 @@ option_or_env <- function(option_name, env_name, default) {
 }
 project_root <- "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler"
 file_path <- option_or_env(
-    "neha.format_metadata_input", "NEHA_FORMAT_METADATA_INPUT",
+    "proteomics.format_metadata_input", "PROTEOMICS_FORMAT_METADATA_INPUT",
     file.path(project_root, "01_input", "metadata", "sample_metadata.xlsx")
 )
 if (!file.exists(file_path)) {
     stop(
         "Sample metadata workbook not found: ", file_path,
         "\nThe former Datasets/sample_metadata/ folder is not present in the current tree.",
-        "\nSet NEHA_FORMAT_METADATA_INPUT / options(neha.format_metadata_input=) to its location.",
+        "\nSet PROTEOMICS_FORMAT_METADATA_INPUT / options(proteomics.format_metadata_input=) to its location.",
         call. = FALSE
     )
 }
@@ -62,7 +62,7 @@ df <- df %>%
 
 # save as excel file using writexl package
 output_path <- option_or_env(
-    "neha.format_metadata_output", "NEHA_FORMAT_METADATA_OUTPUT",
+    "proteomics.format_metadata_output", "PROTEOMICS_FORMAT_METADATA_OUTPUT",
     file.path(project_root, "01_input", "metadata", "sample_metadata_processed.xlsx")
 )
 dir.create(dirname(output_path), recursive = TRUE, showWarnings = FALSE)

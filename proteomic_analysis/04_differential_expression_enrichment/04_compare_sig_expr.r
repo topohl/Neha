@@ -10,27 +10,27 @@ script_file <- if (length(script_file)) sub("^--file=", "", script_file[[1]]) el
 script_dir <- dirname(normalizePath(script_file, winslash = "/", mustWork = FALSE))
 project_root <- normalizePath(file.path(script_dir, ".."), winslash = "/", mustWork = TRUE)
 source(file.path(project_root, "R", "analysis_labels.R"))
-source(file.path(project_root, "R", "neha_path_utils.R"))
+source(file.path(project_root, "R", "project_path_utils.R"))
 source(file.path(project_root, "R", "animal_level_enrichment_utils.R"))
 
-config <- resolve_neha_enrichment_config()
+config <- resolve_enrichment_config()
 enrichment_index_path <- Sys.getenv(
-  "NEHA_ENRICHMENT_INDEX",
+  "PROTEOMICS_ENRICHMENT_INDEX",
   unset = file.path(config$output_root, "indexEnrichmentComparisons.csv")
 )
-enrichment_index_path <- neha_enrichment_normalize_path(enrichment_index_path, must_work = TRUE)
-if (!neha_enrichment_path_is_within(enrichment_index_path, config$output_root)) {
+enrichment_index_path <- enrichment_normalize_path(enrichment_index_path, must_work = TRUE)
+if (!enrichment_path_is_within(enrichment_index_path, config$output_root)) {
   stop("compare_sig_expr requires the canonical animal-level enrichment index.", call. = FALSE)
 }
 index <- utils::read.csv(enrichment_index_path, stringsAsFactors = FALSE, check.names = FALSE)
-validate_neha_enrichment_index(index, require_files = TRUE)
+validate_enrichment_index(index, require_files = TRUE)
 if (any(index$execution_status != "success")) stop("compare_sig_expr requires 12 successful enrichment comparisons.", call. = FALSE)
 
 output_root <- file.path(config$output_root, "compare_sig_expr")
 dir.create(output_root, recursive = TRUE, showWarnings = FALSE)
 output_index_path <- file.path(output_root, "indexCompareSigExpr.csv")
 if (file.exists(output_index_path) && !isTRUE(config$force)) {
-  stop("compare_sig_expr output already exists; set NEHA_ENRICHMENT_FORCE=true to replace isolated canonical outputs.", call. = FALSE)
+  stop("compare_sig_expr output already exists; set PROTEOMICS_ENRICHMENT_FORCE=true to replace isolated canonical outputs.", call. = FALSE)
 }
 
 find_contrast <- function(sample_class, numerator, denominator) {
@@ -44,12 +44,12 @@ find_contrast <- function(sample_class, numerator, denominator) {
 }
 
 read_collapsed <- function(row) {
-  mapped <- read_neha_enrichment_mapped_file(
+  mapped <- read_enrichment_mapped_file(
     row$mapped_input_path,
     expected_rows = row$n_source_protein_rows,
     expected_sha256 = row$mapped_input_sha256
   )
-  collapse_neha_enrichment_accessions(mapped, "log2fc")$collapsed
+  collapse_enrichment_accessions(mapped, "log2fc")$collapsed
 }
 
 safe_z <- function(x) {
@@ -60,7 +60,7 @@ safe_z <- function(x) {
   out
 }
 
-expected <- neha_primary_contrast_manifest()
+expected <- primary_contrast_manifest()
 records <- lapply(unique(expected$sample_class), function(sample_class) {
   learning_meta <- find_contrast(sample_class, "paired_veh", "unpaired_veh")
   cno_meta <- find_contrast(sample_class, "paired_cno", "paired_veh")
@@ -100,10 +100,10 @@ records <- lapply(unique(expected$sample_class), function(sample_class) {
     "learning_canonical_comparison", "cno_canonical_comparison",
     "learning_historical_alias", "cno_historical_alias"
   ), drop = FALSE]
-  all_path <- write_neha_enrichment_csv(joined, file.path(output_root, paste0(sample_class, "_learning_vs_paired_cno_protein_statistics.csv")))
+  all_path <- write_enrichment_csv(joined, file.path(output_root, paste0(sample_class, "_learning_vs_paired_cno_protein_statistics.csv")))
   signature <- joined[joined$fdr_significant_learning, , drop = FALSE]
   signature <- signature[order(signature$padj_learning, -abs(signature$log2fc_learning), signature$uniprot_accession, method = "radix"), , drop = FALSE]
-  signature_path <- write_neha_enrichment_csv(signature, file.path(output_root, paste0(sample_class, "_FDR_learning_signature.csv")))
+  signature_path <- write_enrichment_csv(signature, file.path(output_root, paste0(sample_class, "_FDR_learning_signature.csv")))
 
   shared <- is.finite(joined$log2fc_learning) & is.finite(joined$log2fc_cno)
   pearson <- if (sum(shared) >= 3L) stats::cor(joined$log2fc_learning[shared], joined$log2fc_cno[shared], method = "pearson") else NA_real_
@@ -130,7 +130,7 @@ records <- lapply(unique(expected$sample_class), function(sample_class) {
       ) + ggplot2::theme_minimal(base_size = 10)
     plot_path <- file.path(output_root, paste0(sample_class, "_learning_vs_paired_cno_log2fc_scatter.png"))
     ggplot2::ggsave(plot_path, plot = plot, width = 8, height = 7, dpi = 300)
-    plot_path <- neha_enrichment_normalize_path(plot_path, must_work = TRUE)
+    plot_path <- enrichment_normalize_path(plot_path, must_work = TRUE)
   }
 
   data.frame(
@@ -162,5 +162,5 @@ records <- lapply(unique(expected$sample_class), function(sample_class) {
 })
 
 comparison_index <- do.call(rbind, records)
-write_neha_enrichment_csv(comparison_index, output_index_path)
+write_enrichment_csv(comparison_index, output_index_path)
 message("Canonical compare_sig_expr completed: ", output_index_path)

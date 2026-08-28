@@ -15,15 +15,15 @@ option_or_env <- function(option_name, env_name, default) {
 
 project_root <- "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler"
 metadata_path <- option_or_env(
-    "neha.impute_metadata", "NEHA_IMPUTE_METADATA",
+    "proteomics.impute_metadata", "PROTEOMICS_IMPUTE_METADATA",
     file.path(project_root, "01_input", "metadata", "sample_info.xlsx")
 )
 input_path <- option_or_env(
-    "neha.impute_input", "NEHA_IMPUTE_INPUT",
+    "proteomics.impute_input", "PROTEOMICS_IMPUTE_INPUT",
     file.path(project_root, "01_input", "raw_proteomics", "pg.matrix_raw.tsv")
 )
 output_dir <- option_or_env(
-    "neha.impute_output_dir", "NEHA_IMPUTE_OUTPUT_DIR",
+    "proteomics.impute_output_dir", "PROTEOMICS_IMPUTE_OUTPUT_DIR",
     file.path(project_root, "02_data", "gct")
 )
 
@@ -34,14 +34,14 @@ if (!file.exists(input_path)) {
     stop(
         "Raw input matrix not found: ", input_path,
         "\nThis stage needs a raw pg.matrix .tsv that is not part of the current validated tree.",
-        "\nPlace it there, or set NEHA_IMPUTE_INPUT / options(neha.impute_input=) to its location.",
+        "\nPlace it there, or set PROTEOMICS_IMPUTE_INPUT / options(proteomics.impute_input=) to its location.",
         call. = FALSE
     )
 }
 if (!file.exists(metadata_path)) {
     stop(
         "Sample metadata not found: ", metadata_path,
-        "\nSet NEHA_IMPUTE_METADATA / options(neha.impute_metadata=) to its location.",
+        "\nSet PROTEOMICS_IMPUTE_METADATA / options(proteomics.impute_metadata=) to its location.",
         call. = FALSE
     )
 }

@@ -1,6 +1,6 @@
 #' Batch UniProt ID Mapping Script for Proteomics Data
 #'
-#' This script processes the indexed Neha animal-level ProTigy comparison files
+#' This script processes the indexed animal-level ProTigy comparison files
 #' in parallel to map protein identifiers, UniProtKB entry names, and aliases to
 #' canonical UniProt accessions. It supports
 #' multiple mapping strategies including local mapping files, OrgDb annotations,
@@ -37,7 +37,7 @@ script_path <- if (length(file_arg) == 1L) {
     file.path("02_id_mapping", "01_MapThatProt_batch.r")
 }
 repo_root <- normalizePath(file.path(dirname(script_path), ".."), winslash = "/", mustWork = FALSE)
-source(file.path(repo_root, "R", "neha_path_utils.R"))
+source(file.path(repo_root, "R", "project_path_utils.R"))
 if (!file.exists(file.path(repo_root, "R", "mapthatprot_animal_level_utils.R"))) {
     repo_root <- normalizePath(getwd(), winslash = "/", mustWork = TRUE)
 }
@@ -51,10 +51,10 @@ if (!requireNamespace("pacman", quietly = TRUE)) install.packages("pacman")
 pacman::p_load(dplyr, stringr, tidyr, purrr, readr, R.utils, foreach, doParallel, readxl, AnnotationDbi, org.Mm.eg.db, UniProt.ws)
 
 # --- Configuration & Experimental Settings ---
-mapping_config <- resolve_neha_mapthatprot_config()
+mapping_config <- resolve_mapthatprot_config()
 map_direction <- mapping_config$direction
 map_reverse <- identical(map_direction, "reverse")
-input_manifest <- read_neha_mapthatprot_input_index(
+input_manifest <- read_mapthatprot_input_index(
     mapping_config$split_root,
     direction = map_direction
 )
@@ -68,10 +68,10 @@ input_manifest$source_split_sha256 <- vapply(csv_files, mapthatprot_sha256, char
 input_manifest$validated_input_rows <- vapply(seq_along(csv_files), function(i) {
     expected_rows <- suppressWarnings(as.integer(input_manifest$n_proteins[[i]]))
     if (is.na(expected_rows)) expected_rows <- 5349L
-    nrow(validate_neha_mapthatprot_input_file(csv_files[[i]], expected_n_proteins = expected_rows))
+    nrow(validate_mapthatprot_input_file(csv_files[[i]], expected_n_proteins = expected_rows))
 }, integer(1))
 
-cat("Mapping branch: canonical Neha animal-level ProTigy split\n")
+cat("Mapping branch: canonical animal-level ProTigy split\n")
 cat("Mapping direction:", map_direction, "\n")
 cat("Authoritative split index:", input_manifest$split_index_path[[1]], "\n")
 cat("Indexed comparison files:", length(csv_files), "\n")
@@ -194,7 +194,7 @@ process_file <- function(data_path) {
         }
     )
 
-    required_input <- neha_mapthatprot_required_input_columns()
+    required_input <- mapthatprot_required_input_columns()
     missing_input <- setdiff(required_input, names(df_raw))
     if (length(missing_input)) {
         stop("Canonical split input is missing required columns: ", paste(missing_input, collapse = ", "), call. = FALSE)
@@ -729,7 +729,7 @@ process_file <- function(data_path) {
             mapped_status = mapping_status
         )
 
-    output_tables <- build_neha_mapthatprot_output_tables(
+    output_tables <- build_mapthatprot_output_tables(
         source_input,
         mapping_info %>% dplyr::select(
             source_row_id, original_protein_id, uniprot_accession,
@@ -738,7 +738,7 @@ process_file <- function(data_path) {
     )
     df_mapped <- output_tables$mapped
     unmapped_proteins <- output_tables$unmapped
-    validate_neha_mapthatprot_partition(source_input, df_mapped, unmapped_proteins)
+    validate_mapthatprot_partition(source_input, df_mapped, unmapped_proteins)
 
     # Log biological multiplicity events (e.g. protein grouping)
     multi_protein_log <- df_raw %>%

@@ -2,7 +2,7 @@
 
 repo_root <- normalizePath(file.path(dirname(sub("^--file=", "", grep("^--file=", commandArgs(FALSE), value = TRUE)[1])), ".."), winslash = "/", mustWork = TRUE)
 source(file.path(repo_root, "R", "analysis_labels.R"))
-source(file.path(repo_root, "R", "neha_path_utils.R"))
+source(file.path(repo_root, "R", "project_path_utils.R"))
 source(file.path(repo_root, "R", "animal_level_enrichment_utils.R"))
 
 assert_true <- function(value, message) if (!isTRUE(value)) stop(message, call. = FALSE)
@@ -14,12 +14,12 @@ assert_error <- function(expression, pattern, message) {
   }
 }
 
-manifest <- neha_primary_contrast_manifest()
-assert_equal(nrow(manifest), 12L, "Shared Neha manifest must contain exactly 12 comparisons.")
-assert_equal(length(unique(manifest$sample_class)), 4L, "Shared Neha manifest must contain four sample classes.")
-assert_true(all(table(manifest$sample_class) == 3L), "Each Neha sample class must contain exactly three contrasts.")
+manifest <- primary_contrast_manifest()
+assert_equal(nrow(manifest), 12L, "Shared contrast manifest must contain exactly 12 comparisons.")
+assert_equal(length(unique(manifest$sample_class)), 4L, "Shared contrast manifest must contain four sample classes.")
+assert_true(all(table(manifest$sample_class) == 3L), "Each sample class must contain exactly three contrasts.")
 
-fixture_root <- tempfile("neha_enrichment_fixture_")
+fixture_root <- tempfile("enrichment_fixture_")
 dir.create(fixture_root, recursive = TRUE)
 on.exit(unlink(fixture_root, recursive = TRUE, force = TRUE), add = TRUE)
 mapped_root <- file.path(fixture_root, "canonical_mapped")
@@ -51,7 +51,7 @@ make_mapped <- function(multiplier = 1) data.frame(
 
 paths <- file.path(forward_root, paste0(manifest$canonical_contrast, ".csv"))
 for (i in seq_along(paths)) utils::write.csv(make_mapped(i), paths[[i]], row.names = FALSE)
-hashes <- vapply(paths, neha_enrichment_sha256, character(1))
+hashes <- vapply(paths, enrichment_sha256, character(1))
 index <- data.frame(
   canonical_comparison = manifest$canonical_comparison,
   canonical_contrast = manifest$canonical_contrast,
@@ -81,46 +81,46 @@ index <- data.frame(
 index_path <- file.path(mapped_root, "indexMappedComparisons.csv")
 utils::write.csv(index, index_path, row.names = FALSE)
 
-read_index <- read_neha_enrichment_mapped_index(index_path, mapped_root, verify_hashes = TRUE)
+read_index <- read_enrichment_mapped_index(index_path, mapped_root, verify_hashes = TRUE)
 assert_equal(nrow(read_index), 12L, "Canonical indexed mapped-path reader lost comparisons.")
-assert_equal(read_index$mapped_input_path, unname(vapply(paths, neha_enrichment_normalize_path, character(1), must_work = TRUE)), "Reader did not preserve exact indexed mapped paths.")
+assert_equal(read_index$mapped_input_path, unname(vapply(paths, enrichment_normalize_path, character(1), must_work = TRUE)), "Reader did not preserve exact indexed mapped paths.")
 assert_equal(read_index$source_gct_sha256, rep("gct-hash", 12L), "Mapped provenance was not propagated.")
 assert_equal(read_index$historical_comparison_alias, manifest$historical_comparison_name, "Aliases must be retained as metadata.")
 
-old_rank_env <- Sys.getenv("NEHA_ENRICHMENT_GSEA_RANK", unset = NA_character_)
+old_rank_env <- Sys.getenv("PROTEOMICS_ENRICHMENT_GSEA_RANK", unset = NA_character_)
 on.exit({
-  if (is.na(old_rank_env)) Sys.unsetenv("NEHA_ENRICHMENT_GSEA_RANK") else Sys.setenv(NEHA_ENRICHMENT_GSEA_RANK = old_rank_env)
+  if (is.na(old_rank_env)) Sys.unsetenv("PROTEOMICS_ENRICHMENT_GSEA_RANK") else Sys.setenv(PROTEOMICS_ENRICHMENT_GSEA_RANK = old_rank_env)
 }, add = TRUE)
-Sys.unsetenv("NEHA_ENRICHMENT_GSEA_RANK")
-default_config <- resolve_neha_enrichment_config(
+Sys.unsetenv("PROTEOMICS_ENRICHMENT_GSEA_RANK")
+default_config <- resolve_enrichment_config(
   mapped_root = mapped_root,
   mapped_index = index_path,
   output_root = file.path(fixture_root, "enrichment_default_t")
 )
 assert_equal(default_config$gsea_rank, "t", "Default canonical GSEA rank must be moderated t.")
 assert_equal(default_config$gsea_sensitivity_rank, "log2fc", "Default t run must retain log2fc sensitivity GSEA.")
-Sys.setenv(NEHA_ENRICHMENT_GSEA_RANK = "log2fc")
-legacy_config <- resolve_neha_enrichment_config(
+Sys.setenv(PROTEOMICS_ENRICHMENT_GSEA_RANK = "log2fc")
+legacy_config <- resolve_enrichment_config(
   mapped_root = mapped_root,
   mapped_index = index_path,
   output_root = file.path(fixture_root, "enrichment_legacy_log2fc")
 )
 assert_equal(legacy_config$gsea_rank, "log2fc", "Explicit log2fc GSEA rank option was ignored.")
 assert_true(is.na(legacy_config$gsea_sensitivity_rank), "A log2fc-primary run must not duplicate itself as sensitivity output.")
-Sys.setenv(NEHA_ENRICHMENT_GSEA_RANK = "unsupported")
+Sys.setenv(PROTEOMICS_ENRICHMENT_GSEA_RANK = "unsupported")
 assert_error(
-  resolve_neha_enrichment_config(
+  resolve_enrichment_config(
     mapped_root = mapped_root,
     mapped_index = index_path,
     output_root = file.path(fixture_root, "enrichment_bad_rank")
   ),
   "must be one of", "Unsupported GSEA ranking statistics must fail closed."
 )
-Sys.unsetenv("NEHA_ENRICHMENT_GSEA_RANK")
+Sys.unsetenv("PROTEOMICS_ENRICHMENT_GSEA_RANK")
 
-mapped <- read_neha_enrichment_mapped_file(read_index$mapped_input_path[[1]], expected_rows = 4L, expected_sha256 = hashes[[1]])
+mapped <- read_enrichment_mapped_file(read_index$mapped_input_path[[1]], expected_rows = 4L, expected_sha256 = hashes[[1]])
 assert_true(is.logical(mapped$significant), "Mapped significant flags must remain logical.")
-collapsed <- collapse_neha_enrichment_accessions(mapped, "log2fc")
+collapsed <- collapse_enrichment_accessions(mapped, "log2fc")
 assert_equal(collapsed$n_duplicate_rows_collapsed, 1L, "Exactly one duplicate UniProt row should be collapsed.")
 assert_equal(collapsed$n_duplicated_accessions, 1L, "Exactly one duplicated UniProt accession should be audited.")
 selected <- collapsed$collapsed[collapsed$collapsed$uniprot_accession == "O54931", , drop = FALSE]
@@ -130,14 +130,14 @@ assert_equal(selected$t, 1, "The t rank did not retain the log2FC-selected dupli
 assert_true(all(c("AKAP2_MOUSE", "PALM2_MOUSE") %in% collapsed$duplicate_audit$original_protein_id), "Duplicate audit omitted contributing protein IDs.")
 assert_equal(sum(collapsed$duplicate_audit$selected_representative), 1L, "Duplicate audit must mark one representative.")
 
-t_rank_info <- build_neha_gsea_rank(collapsed$collapsed, "t", "canonical")
-log2fc_rank_info <- build_neha_gsea_rank(collapsed$collapsed, "log2fc", "sensitivity")
+t_rank_info <- build_gsea_rank(collapsed$collapsed, "t", "canonical")
+log2fc_rank_info <- build_gsea_rank(collapsed$collapsed, "log2fc", "sensitivity")
 t_rank_one <- t_rank_info$rank
 rank_one <- log2fc_rank_info$rank
 reordered <- mapped[c(4, 2, 1, 3), , drop = FALSE]
-reordered_collapsed <- collapse_neha_enrichment_accessions(reordered, "log2fc")$collapsed
-t_rank_two <- build_neha_gsea_rank(reordered_collapsed, "t", "canonical")$rank
-rank_two <- build_neha_gsea_rank(reordered_collapsed, "log2fc", "sensitivity")$rank
+reordered_collapsed <- collapse_enrichment_accessions(reordered, "log2fc")$collapsed
+t_rank_two <- build_gsea_rank(reordered_collapsed, "t", "canonical")$rank
+rank_two <- build_gsea_rank(reordered_collapsed, "log2fc", "sensitivity")$rank
 assert_equal(t_rank_one, t_rank_two, "Moderated t GSEA rank must be deterministic under source-row reordering.")
 assert_equal(rank_one, rank_two, "GSEA rank construction must be deterministic under source-row reordering.")
 assert_equal(t_rank_info$audit$ranking_statistic, rep("t", nrow(t_rank_info$audit)), "Canonical rank audit does not label moderated t.")
@@ -159,11 +159,11 @@ assert_equal(unname(rank_one[[length(rank_one)]]), -2, "Negative numerator-direc
 bad_t <- collapsed$collapsed
 bad_t$t[[1]] <- NA_real_
 assert_error(
-  build_neha_gsea_rank(bad_t, "t", "canonical"),
+  build_gsea_rank(bad_t, "t", "canonical"),
   "finite value for every selected", "Non-finite moderated t must fail closed."
 )
 
-tie_test <- neha_gsea_tie_diagnostics(c(3, 3, 1, 0, 0, 0, -1, NA))
+tie_test <- gsea_tie_diagnostics(c(3, 3, 1, 0, 0, 0, -1, NA))
 assert_equal(tie_test$n_finite, 7L, "Tie diagnostics finite count is incorrect.")
 assert_equal(tie_test$n_unique, 4L, "Tie diagnostics unique count is incorrect.")
 assert_equal(tie_test$redundancy_fraction, 3 / 7, "Tie redundancy fraction is incorrect.")
@@ -172,9 +172,9 @@ assert_equal(tie_test$tied_row_fraction, 5 / 7, "Formal tied-row fraction is inc
 assert_equal(tie_test$largest_tie, 3L, "Largest tie size is incorrect.")
 assert_true(tie_test$redundancy_fraction != tie_test$tied_row_fraction, "Redundancy and tied-row fractions were conflated.")
 
-ora <- build_neha_ora_sets(collapsed$collapsed, fdr_threshold = 0.05, top_abs_log2fc = 1)
-ora_after_t_rank <- build_neha_ora_sets(collapsed$collapsed, fdr_threshold = 0.05, top_abs_log2fc = 1)
-ora_after_log2fc_rank <- build_neha_ora_sets(collapsed$collapsed, fdr_threshold = 0.05, top_abs_log2fc = 1)
+ora <- build_ora_sets(collapsed$collapsed, fdr_threshold = 0.05, top_abs_log2fc = 1)
+ora_after_t_rank <- build_ora_sets(collapsed$collapsed, fdr_threshold = 0.05, top_abs_log2fc = 1)
+ora_after_log2fc_rank <- build_ora_sets(collapsed$collapsed, fdr_threshold = 0.05, top_abs_log2fc = 1)
 assert_equal(ora_after_t_rank, ora_after_log2fc_rank, "ORA changed with GSEA rank selection.")
 assert_equal(ora$universe, sort(unique(mapped$uniprot_accession)), "ORA universe must be the measured successfully mapped proteome.")
 assert_equal(length(ora$universe), 3L, "Duplicate UniProt accessions inflated the ORA universe.")
@@ -185,28 +185,28 @@ bad_index <- index
 bad_index$output_mapped_path[[2]] <- bad_index$output_mapped_path[[1]]
 utils::write.csv(bad_index, file.path(mapped_root, "duplicateIndex.csv"), row.names = FALSE)
 assert_error(
-  read_neha_enrichment_mapped_index(file.path(mapped_root, "duplicateIndex.csv"), mapped_root, verify_hashes = FALSE),
+  read_enrichment_mapped_index(file.path(mapped_root, "duplicateIndex.csv"), mapped_root, verify_hashes = FALSE),
   "duplicates", "Duplicate indexed mapped paths must be rejected."
 )
 
-defaults <- neha_enrichment_default_paths()
+defaults <- enrichment_default_paths()
 assert_error(
-  validate_neha_enrichment_mapped_root(defaults$historical_input_roots[[2]], defaults$historical_input_roots),
+  validate_enrichment_mapped_root(defaults$historical_input_roots[[2]], defaults$historical_input_roots),
   "historical", "Canonical mode must reject the historical mapped root."
 )
 assert_error(
-  validate_neha_enrichment_mapped_root(dirname(defaults$historical_input_roots[[2]]), defaults$historical_input_roots),
+  validate_enrichment_mapped_root(dirname(defaults$historical_input_roots[[2]]), defaults$historical_input_roots),
   "historical", "Canonical mode must reject a mapped root that contains a historical mapped root."
 )
 assert_error(
-  validate_neha_enrichment_output_root(
+  validate_enrichment_output_root(
     defaults$historical_output_roots[[2]], mapped_root, defaults$split_root,
     defaults$historical_input_roots, defaults$historical_output_roots
   ),
   "historical|overlap", "Canonical mode must protect historical output roots."
 )
 assert_error(
-  validate_neha_enrichment_output_root(
+  validate_enrichment_output_root(
     file.path(mapped_root, "enrichment"), mapped_root, defaults$split_root,
     defaults$historical_input_roots, defaults$historical_output_roots
   ),
@@ -215,17 +215,17 @@ assert_error(
 
 set.seed(91)
 rng_before <- .Random.seed
-seeded_one <- with_neha_enrichment_seed(1234L, stats::runif(5))
+seeded_one <- with_enrichment_seed(1234L, stats::runif(5))
 assert_equal(.Random.seed, rng_before, "Deterministic enrichment seed helper changed caller RNG state.")
-seeded_two <- with_neha_enrichment_seed(1234L, stats::runif(5))
+seeded_two <- with_enrichment_seed(1234L, stats::runif(5))
 assert_equal(seeded_one, seeded_two, "Deterministic enrichment seed helper is not reproducible.")
 assert_equal(
-  derive_neha_enrichment_seed(20260824L, manifest$canonical_comparison[[1]], "GO_BP_GSEA"),
+  derive_enrichment_seed(20260824L, manifest$canonical_comparison[[1]], "GO_BP_GSEA"),
   1044498339L,
   "The established GO GSEA seed changed for the first canonical comparison."
 )
 assert_equal(
-  derive_neha_enrichment_seed(20260824L, manifest$canonical_comparison[[1]], "KEGG_GSEA"),
+  derive_enrichment_seed(20260824L, manifest$canonical_comparison[[1]], "KEGG_GSEA"),
   1792436004L,
   "The established KEGG GSEA seed changed for the first canonical comparison."
 )

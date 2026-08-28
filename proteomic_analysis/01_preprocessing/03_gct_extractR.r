@@ -1,5 +1,5 @@
 # ================================================================
-# Neha animal-level ProTigy statistical-result GCT extraction
+# animal-level ProTigy statistical-result GCT extraction
 #
 # Statistical fields can occur anywhere among the physical GCT fields,
 # including the row-descriptor area. This stage extracts existing ProTigy
@@ -30,13 +30,13 @@ option_or_env <- function(option_name, env_name, default) {
 }
 
 input_gct <- option_or_env(
-  "neha.protigy_stat_gct_input",
-  "NEHA_PROTIGY_STAT_GCT_INPUT",
+  "proteomics.protigy_stat_gct_input",
+  "PROTEOMICS_PROTIGY_STAT_GCT_INPUT",
   "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/02_data/animal_level/stat_results_for_ssGSEA_neha_proteome.gct"
 )
 output_root <- option_or_env(
-  "neha.protigy_stat_gct_output_root",
-  "NEHA_PROTIGY_STAT_GCT_OUTPUT_ROOT",
+  "proteomics.protigy_stat_gct_output_root",
+  "PROTEOMICS_PROTIGY_STAT_GCT_OUTPUT_ROOT",
   "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/02_data/animal_level/split"
 )
 input_gct <- normalizePath(input_gct, winslash = "/", mustWork = TRUE)
@@ -62,8 +62,8 @@ if (any(vapply(protected_roots, function(path) path_is_within(output_root, path)
 }
 
 gct <- read_protigy_stat_gct(input_gct, strict_primary = TRUE)
-contract <- validate_neha_stat_gct_contract(gct, expected_n_proteins = 5349L)
-expected <- neha_primary_contrast_manifest()
+contract <- validate_stat_gct_contract(gct, expected_n_proteins = 5349L)
+expected <- primary_contrast_manifest()
 
 forward_dir <- file.path(output_root, "forward")
 reverse_dir <- file.path(output_root, "reverse")
@@ -192,7 +192,7 @@ contract_manifest <- data.frame(
 contract_path <- file.path(output_root, "run_contract_manifest.csv")
 utils::write.csv(contract_manifest, contract_path, row.names = FALSE, quote = TRUE, na = "")
 
-message("Neha animal-level ProTigy statistical-result extraction completed successfully.")
+message("animal-level ProTigy statistical-result extraction completed successfully.")
 message("Source GCT SHA-256: ", gct$sha256)
 message("Forward files: ", length(forward_files), " (", gct$n_protein_rows_read, " proteins each)")
 message("Reverse files: ", length(reverse_files), " (", gct$n_protein_rows_read, " proteins each)")

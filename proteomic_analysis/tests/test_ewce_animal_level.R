@@ -2,7 +2,7 @@ args <- commandArgs(trailingOnly = FALSE)
 file_arg <- grep("^--file=", args, value = TRUE)
 script_path <- if (length(file_arg) == 1L) sub("^--file=", "", file_arg) else file.path("tests", "test_ewce_animal_level.R")
 repo_root <- normalizePath(file.path(dirname(script_path), ".."), winslash = "/", mustWork = FALSE)
-source(file.path(repo_root, "R", "neha_path_utils.R"))
+source(file.path(repo_root, "R", "project_path_utils.R"))
 if (!file.exists(file.path(repo_root, "R", "ewce_animal_level_utils.R"))) {
   repo_root <- normalizePath(getwd(), winslash = "/", mustWork = TRUE)
 }
@@ -69,7 +69,7 @@ fixture_column_metadata <- rbind(
 colnames(fixture_column_metadata) <- fixture_metadata$Sample
 fixture_gct <- list(matrix = fixture_matrix, column_metadata = fixture_column_metadata)
 
-validated <- validate_neha_ewce_animal_input(fixture_gct, "fixture_animal_level.gct", expected_n = 3L)
+validated <- validate_ewce_animal_input(fixture_gct, "fixture_animal_level.gct", expected_n = 3L)
 expect_identical(ncol(validated$expression_matrix), 48L, "Validated animal-level EWCE input must have 48 animal x sample-class observations.")
 expect_identical(nrow(validated$sample_metadata), 48L, "Animal-level metadata row count is incorrect.")
 expect_true(!anyDuplicated(paste(validated$sample_metadata$AnimalID, validated$sample_metadata$Stratum, sep = "\r")),
@@ -77,8 +77,8 @@ expect_true(!anyDuplicated(paste(validated$sample_metadata$AnimalID, validated$s
 expect_true(all(validated$count_audit$n_animals == 3L), "Every sample_class x condition must contain exactly three animals.")
 expect_identical(validated$transformations_after_aggregation, "none", "Animal-level input contract introduced a transformation.")
 
-manifest <- neha_primary_contrast_manifest()
-expect_identical(nrow(manifest), 12L, "EWCE must use exactly the 12 shared Neha primary contrasts.")
+manifest <- primary_contrast_manifest()
+expect_identical(nrow(manifest), 12L, "EWCE must use exactly the 12 shared primary contrasts.")
 expect_identical(
   as.integer(table(factor(manifest$sample_class, levels = sample_classes))),
   rep(3L, 4L),
@@ -86,7 +86,7 @@ expect_identical(
 )
 
 specs <- lapply(sample_classes, function(sample_class) {
-  prepare_neha_ewce_limma_stratum(
+  prepare_ewce_limma_stratum(
     validated$expression_matrix,
     validated$sample_metadata,
     sample_class,
@@ -140,7 +140,7 @@ expect_identical(all_contrasts, manifest$canonical_comparison,
 duplicate_fixture <- fixture_gct
 duplicate_fixture$column_metadata["AnimalID", 2] <- duplicate_fixture$column_metadata["AnimalID", 1]
 expect_error(
-  validate_neha_ewce_animal_input(duplicate_fixture, "duplicate.gct"),
+  validate_ewce_animal_input(duplicate_fixture, "duplicate.gct"),
   "duplicated within sample_class/condition",
   "Duplicate AnimalID within a sample-class condition must fail closed."
 )
@@ -154,7 +154,7 @@ hemisphere_fixture$column_metadata <- cbind(
 )
 colnames(hemisphere_fixture$column_metadata)[ncol(hemisphere_fixture$column_metadata)] <- colnames(hemisphere_fixture$matrix)[ncol(hemisphere_fixture$matrix)]
 expect_error(
-  validate_neha_ewce_animal_input(hemisphere_fixture, "hemisphere_rows.gct"),
+  validate_ewce_animal_input(hemisphere_fixture, "hemisphere_rows.gct"),
   "duplicated within sample_class/condition",
   "Hemisphere rows must not enter limma as independent animal observations."
 )
@@ -167,7 +167,7 @@ inconsistent_col <- which(
 )
 inconsistent_fixture$column_metadata["AnimalID", inconsistent_col] <- "AX"
 expect_error(
-  validate_neha_ewce_animal_input(inconsistent_fixture, "inconsistent.gct"),
+  validate_ewce_animal_input(inconsistent_fixture, "inconsistent.gct"),
   "inconsistent AnimalID membership",
   "Inconsistent animal membership across sample classes must fail closed."
 )
@@ -175,7 +175,7 @@ expect_error(
 missing_animal_fixture <- fixture_gct
 missing_animal_fixture$column_metadata["AnimalID", 1] <- ""
 expect_error(
-  validate_neha_ewce_animal_input(missing_animal_fixture, "missing_animal.gct"),
+  validate_ewce_animal_input(missing_animal_fixture, "missing_animal.gct"),
   "AnimalID is missing",
   "Missing AnimalID must fail closed."
 )
@@ -184,7 +184,7 @@ underfilled_fixture <- fixture_gct
 underfilled_fixture$matrix <- underfilled_fixture$matrix[, -1, drop = FALSE]
 underfilled_fixture$column_metadata <- underfilled_fixture$column_metadata[, -1, drop = FALSE]
 expect_error(
-  validate_neha_ewce_animal_input(underfilled_fixture, "underfilled.gct"),
+  validate_ewce_animal_input(underfilled_fixture, "underfilled.gct"),
   "exactly 3 animals per sample_class/condition",
   "An animal-level group with fewer than three animals must fail closed."
 )
@@ -192,7 +192,7 @@ expect_error(
 nonfinite_fixture <- fixture_gct
 nonfinite_fixture$matrix[1, 1] <- NA_real_
 expect_error(
-  validate_neha_ewce_animal_input(nonfinite_fixture, "nonfinite.gct"),
+  validate_ewce_animal_input(nonfinite_fixture, "nonfinite.gct"),
   "nonfinite values",
   "Nonfinite animal-level abundance must fail rather than be filtered or imputed."
 )
@@ -210,7 +210,7 @@ params <- list(
   reference_condition = reference_condition
 )
 audits <- do.call(rbind, lapply(specs, function(spec) {
-  make_neha_ewce_differential_audit(
+  make_ewce_differential_audit(
     spec$contrast_metadata,
     source_path = "fixture_animal_level.gct",
     output_path = "fixture_output.xlsx",
@@ -238,7 +238,7 @@ expect_true(all(required_audit_columns %in% names(audits)),
             "Differential audit is missing one or more required validation fields.")
 
 expect_error(
-  validate_neha_ewce_output_root(
+  validate_ewce_output_root(
     file.path(tempdir(), "historical", "child"),
     file.path(tempdir(), "historical")
   ),
@@ -248,17 +248,17 @@ expect_error(
 
 # Accept path: an isolated root outside the historical tree must be returned unchanged.
 # (Previously only the reject path was covered here, unlike tests/test_pca_animal_level.R.)
-ewce_isolated_root <- validate_neha_ewce_output_root(
+ewce_isolated_root <- validate_ewce_output_root(
   file.path(tempdir(), "animal_ewce"),
   file.path(tempdir(), "historical")
 )
 expect_true(grepl("animal_ewce$", ewce_isolated_root),
             "Animal-level EWCE output must accept and return an isolated output root.")
-expect_true(!neha_ewce_path_is_within(ewce_isolated_root, file.path(tempdir(), "historical")),
+expect_true(!ewce_path_is_within(ewce_isolated_root, file.path(tempdir(), "historical")),
             "Isolated EWCE output root must not be reported as inside the historical root.")
 
 ewce_script <- paste(readLines(file.path(repo_root, "05_celltype_enrichment_EWCE", "01_EWCE.r"), warn = FALSE), collapse = "\n")
-expect_true(grepl("validate_neha_ewce_animal_input\\(animal_gct", ewce_script),
+expect_true(grepl("validate_ewce_animal_input\\(animal_gct", ewce_script),
             "EWCE does not consume the validated animal-level input contract.")
 expect_true(grepl("limma::lmFit\\(limma_input\\$expression_matrix, limma_input\\$design\\)", ewce_script),
             "Limma is not fitted to the validated animal-level matrix and design.")

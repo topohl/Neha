@@ -1,60 +1,71 @@
-# Shared path primitives for the Neha pipeline.
+# DEPRECATED COMPATIBILITY SHIM -- do not use in new code.
 #
-# Before 2026-08-26 each of R/pca_animal_level_utils.R, R/animal_level_enrichment_utils.R,
-# R/mapthatprot_animal_level_utils.R and R/ewce_animal_level_utils.R defined its own
-# near-identical normalize / is-within / overlap helpers. They had genuinely divergent
-# behaviour, which is a latent bug source rather than harmless duplication:
+# The active implementation moved to R/project_path_utils.R on 2026-08-28, when the collaborator
+# name was removed from this project's active branding and identifiers.
 #
-#   * normalisation : PCA/EWCE used bare normalizePath(); enrichment/mapthatprot additionally
-#                     applied trimws() + as.character() + path.expand().
-#   * case handling : PCA/EWCE always lower-cased both sides (case-insensitive on every OS);
-#                     enrichment/mapthatprot only lower-cased on Windows (so they were
-#                     case-SENSITIVE on Linux/macOS).
-#   * direction     : only enrichment checked containment bidirectionally.
+# This shim exists for exactly one reason. The manuscript figure-revision snapshots in
+# 06_manuscript_figure_revision/ are byte-identical, hash-locked provenance (see that folder's
+# SCRIPT_PROVENANCE.csv), so they cannot be edited. 01_panelC_and_suppB_pca.R does
 #
-# This file resolves those three differences deliberately, in the safer direction each time:
-# the fuller normalisation, always-case-insensitive comparison, and bidirectional overlap.
-# Comparison is intentionally case-insensitive on all platforms because these paths are
-# Windows/SMB paths where casing is not meaningful, and because a missed match here means
-# failing to protect a historical data root.
+#     source(file.path(REPO_ROOT, "R", "analysis_labels.R"))
+#     source(file.path(REPO_ROOT, "R", "protigy_input_utils.R"))
+#     source(file.path(REPO_ROOT, "R", "neha_path_utils.R"))        # <- this file
+#     source(file.path(REPO_ROOT, "R", "pca_animal_level_utils.R"))
+#     ...
+#     validated <- validate_neha_pca_animal_input(parsed, expected_n = 3L)
+#     prepared  <- prepare_neha_animal_pca(validated$expression_matrix, ...)
 #
-# The per-branch validate_neha_*_output_root() functions keep their own names, signatures
-# and error messages -- only their internals delegate here.
+# and its runnable twin under 03_output/reviewer_revision_animal_level_20260827/scripts/ reaches
+# into this repository for those three names. Removing them outright would silently break a re-run
+# of that snapshot. Note the ordering above: this file is sourced BEFORE pca_animal_level_utils.R,
+# so it must supply the path primitives that file's guard requires, while the two function
+# aliases resolve lazily at call time (by then the real definitions are loaded).
 #
-# Sourcing: callers must source this file BEFORE the *_utils.R file that uses it. Every
-# entry-point script and test already sources R/analysis_labels.R first, so this line goes
-# immediately alongside it.
+# Nothing in the ACTIVE pipeline sources this file. Every active caller, test and workflow uses
+# R/project_path_utils.R and the un-prefixed names directly.
+#
+# REMOVAL CRITERION: delete this file once 06_manuscript_figure_revision/ is either made
+# self-contained (the deferred follow-up noted in its README) or formally retired. It carries no
+# analysis logic, so deleting it can never change a numerical result.
 
-NEHA_PROJECT_ROOT <- "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler"
-
-neha_normalize_path <- function(path, must_work = FALSE) {
-  normalizePath(path.expand(trimws(as.character(path))), winslash = "/", mustWork = must_work)
-}
-
-neha_path_is_within <- function(path, parent) {
-  path <- tolower(neha_normalize_path(path))
-  parent <- sub("/+$", "", tolower(neha_normalize_path(parent)))
-  identical(path, parent) || startsWith(path, paste0(parent, "/"))
-}
-
-neha_paths_overlap <- function(left, right) {
-  neha_path_is_within(left, right) || neha_path_is_within(right, left)
-}
-
-#' Fail if `output_root` collides with any protected root.
-#'
-#' Shared engine for the branch-specific validators. `message_prefix` and `name_hit` let each
-#' branch keep its established error wording (several tests match on that text).
-neha_validate_output_root <- function(output_root, protected_roots, message_prefix,
-                                      name_hit = FALSE, hit_label = "protected") {
-  output_root <- neha_normalize_path(output_root)
-  protected <- vapply(protected_roots, neha_normalize_path, character(1), USE.NAMES = FALSE)
-  hit <- vapply(protected, function(p) neha_paths_overlap(output_root, p), logical(1))
-  if (any(hit)) {
-    if (isTRUE(name_hit)) {
-      stop(message_prefix, output_root, " (", hit_label, ": ", protected[[which(hit)[[1]]]], ")", call. = FALSE)
+# Locate the sibling implementation. When a file is sourced, the calling frame holds `ofile`.
+local({
+  dir <- NULL
+  for (i in rev(seq_len(sys.nframe()))) {
+    of <- get0("ofile", envir = sys.frame(i), inherits = FALSE)
+    if (!is.null(of) && is.character(of) && length(of) == 1L && nzchar(of)) {
+      dir <- dirname(normalizePath(of, winslash = "/", mustWork = FALSE))
+      break
     }
-    stop(message_prefix, output_root, call. = FALSE)
   }
-  output_root
+  if (is.null(dir)) dir <- file.path(normalizePath(getwd(), winslash = "/", mustWork = FALSE), "R")
+  target <- file.path(dir, "project_path_utils.R")
+  if (!file.exists(target)) {
+    stop("Deprecated shim R/neha_path_utils.R cannot locate its replacement R/project_path_utils.R at: ",
+         target, call. = FALSE)
+  }
+  sys.source(target, envir = globalenv())
+})
+
+.neha_deprecated <- function(old, new) {
+  warning(sprintf(
+    "%s() is deprecated and kept only for the frozen 06_manuscript_figure_revision snapshots; use %s().",
+    old, new
+  ), call. = FALSE)
+}
+
+validate_neha_pca_animal_input <- function(...) {
+  .neha_deprecated("validate_neha_pca_animal_input", "validate_pca_animal_input")
+  if (!exists("validate_pca_animal_input", mode = "function")) {
+    stop("R/pca_animal_level_utils.R must be sourced before calling this deprecated alias.", call. = FALSE)
+  }
+  validate_pca_animal_input(...)
+}
+
+prepare_neha_animal_pca <- function(...) {
+  .neha_deprecated("prepare_neha_animal_pca", "prepare_animal_pca")
+  if (!exists("prepare_animal_pca", mode = "function")) {
+    stop("R/pca_animal_level_utils.R must be sourced before calling this deprecated alias.", call. = FALSE)
+  }
+  prepare_animal_pca(...)
 }

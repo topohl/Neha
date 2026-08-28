@@ -1,6 +1,6 @@
 #!/usr/bin/env Rscript
 
-# Canonical animal-level enrichment for the Neha proteomics study.
+# Canonical animal-level enrichment for the Associative Memory Proteomics study.
 #
 # This stage consumes only the validated, forward MapThatProt manifest.  It does
 # not discover files by name and it cannot fall back to the historical mapped
@@ -13,7 +13,7 @@ script_dir <- dirname(normalizePath(script_file, winslash = "/", mustWork = FALS
 project_root <- normalizePath(file.path(script_dir, ".."), winslash = "/", mustWork = TRUE)
 
 source(file.path(project_root, "R", "analysis_labels.R"))
-source(file.path(project_root, "R", "neha_path_utils.R"))
+source(file.path(project_root, "R", "project_path_utils.R"))
 source(file.path(project_root, "R", "animal_level_enrichment_utils.R"))
 
 required_packages <- c(
@@ -25,8 +25,8 @@ if (length(missing_packages)) {
   stop("Canonical enrichment requires installed packages: ", paste(missing_packages, collapse = ", "), call. = FALSE)
 }
 
-config <- resolve_neha_enrichment_config()
-mapped_index <- read_neha_enrichment_mapped_index(config$mapped_index, config$mapped_root)
+config <- resolve_enrichment_config()
+mapped_index <- read_enrichment_mapped_index(config$mapped_index, config$mapped_root)
 
 dir.create(config$output_root, recursive = TRUE, showWarnings = FALSE)
 per_comparison_root <- file.path(config$output_root, "per_comparison")
@@ -38,14 +38,14 @@ index_path <- file.path(config$output_root, "indexEnrichmentComparisons.csv")
 if (file.exists(index_path) && !isTRUE(config$force)) {
   stop(
     "Canonical enrichment index already exists. Refusing to overwrite it. ",
-    "Set NEHA_ENRICHMENT_FORCE=true only after reviewing the existing isolated output root.",
+    "Set PROTEOMICS_ENRICHMENT_FORCE=true only after reviewing the existing isolated output root.",
     call. = FALSE
   )
 }
 
 timestamp_utc <- format(Sys.time(), tz = "UTC", usetz = TRUE)
-package_versions_path <- write_neha_enrichment_csv(
-  neha_enrichment_package_versions(),
+package_versions_path <- write_enrichment_csv(
+  enrichment_package_versions(),
   file.path(audit_root, "package_database_versions.csv")
 )
 
@@ -72,7 +72,7 @@ parameters <- data.frame(
   ),
   stringsAsFactors = FALSE
 )
-parameters_path <- write_neha_enrichment_csv(parameters, file.path(audit_root, "run_parameters.csv"))
+parameters_path <- write_enrichment_csv(parameters, file.path(audit_root, "run_parameters.csv"))
 
 capture_warnings <- function(expression) {
   warnings <- character()
@@ -87,17 +87,17 @@ capture_warnings <- function(expression) {
 }
 
 run_seeded <- function(expression, comparison, analysis) {
-  seed <- derive_neha_enrichment_seed(config$gsea_seed_base, comparison, analysis)
-  captured <- capture_warnings(with_neha_enrichment_seed(seed, expression))
+  seed <- derive_enrichment_seed(config$gsea_seed_base, comparison, analysis)
+  captured <- capture_warnings(with_enrichment_seed(seed, expression))
   captured$seed <- seed
   captured
 }
 
-result_count <- function(result) nrow(neha_enrichment_result_table(result))
+result_count <- function(result) nrow(enrichment_result_table(result))
 
 write_result <- function(result, path) {
-  table <- neha_enrichment_result_table(result)
-  write_neha_enrichment_csv(table, path)
+  table <- enrichment_result_table(result)
+  write_enrichment_csv(table, path)
 }
 
 save_dotplot <- function(result, path, title) {
@@ -106,7 +106,7 @@ save_dotplot <- function(result, path, title) {
     ggplot2::ggtitle(title)
   dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
   ggplot2::ggsave(path, plot = plot, width = 10, height = 7, dpi = 300)
-  neha_enrichment_normalize_path(path, must_work = TRUE)
+  enrichment_normalize_path(path, must_work = TRUE)
 }
 
 run_go_gsea <- function(rank, comparison) {
@@ -206,7 +206,7 @@ build_kegg_rank <- function(collapsed, ranking_statistic = "t", analysis_role = 
     statistic = ranking_statistic,
     rank_source_column = ranking_statistic,
     analysis_role = analysis_role,
-    tie_diagnostics = neha_gsea_tie_diagnostics(rank)
+    tie_diagnostics = gsea_tie_diagnostics(rank)
   )
 }
 
@@ -273,7 +273,7 @@ write_comparison_manifest <- function(record, path) {
   values <- vapply(record, function(value) {
     if (!length(value) || all(is.na(value))) "" else paste(as.character(value), collapse = ";")
   }, character(1))
-  write_neha_enrichment_csv(
+  write_enrichment_csv(
     data.frame(field = names(values), value = unname(values), stringsAsFactors = FALSE),
     path
   )
@@ -343,20 +343,20 @@ process_comparison <- function(index_row) {
   )
 
   tryCatch({
-    mapped <- read_neha_enrichment_mapped_file(
+    mapped <- read_enrichment_mapped_file(
       record$mapped_input_path,
       expected_rows = index_row$n_output_mapped_rows,
       expected_sha256 = record$mapped_input_sha256
     )
-    collapsed_info <- collapse_neha_enrichment_accessions(mapped, "log2fc")
+    collapsed_info <- collapse_enrichment_accessions(mapped, "log2fc")
     collapsed <- collapsed_info$collapsed
-    rank_info <- build_neha_gsea_rank(collapsed, config$gsea_rank, "canonical")
+    rank_info <- build_gsea_rank(collapsed, config$gsea_rank, "canonical")
     sensitivity_rank_info <- if (!is.na(config$gsea_sensitivity_rank)) {
-      build_neha_gsea_rank(collapsed, config$gsea_sensitivity_rank, "sensitivity")
+      build_gsea_rank(collapsed, config$gsea_sensitivity_rank, "sensitivity")
     } else {
       NULL
     }
-    ora_sets <- build_neha_ora_sets(collapsed, config$fdr_threshold, config$top_abs_log2fc)
+    ora_sets <- build_ora_sets(collapsed, config$fdr_threshold, config$top_abs_log2fc)
 
     record$n_source_protein_rows <- nrow(mapped)
     record$n_mapped_protein_rows <- nrow(mapped)
@@ -381,24 +381,24 @@ process_comparison <- function(index_row) {
     record$fdr_significant_down_count <- length(ora_sets$down_significant)
     record$top_abs_log2fc_count <- length(ora_sets$top_abs_log2fc)
 
-    record$duplicate_uniprot_audit <- write_neha_enrichment_csv(
+    record$duplicate_uniprot_audit <- write_enrichment_csv(
       collapsed_info$duplicate_audit, file.path(audit_dir, "duplicate_uniprot_audit.csv")
     )
-    record$collapsed_mapped_audit <- write_neha_enrichment_csv(
+    record$collapsed_mapped_audit <- write_enrichment_csv(
       collapsed, file.path(audit_dir, "mapped_uniprot_collapsed.csv")
     )
-    record$gsea_rank_audit <- write_neha_enrichment_csv(
+    record$gsea_rank_audit <- write_enrichment_csv(
       rank_info$audit, file.path(audit_dir, "gsea_rank_audit.csv")
     )
     if (!is.null(sensitivity_rank_info)) {
-      record$sensitivity_gsea_rank_audit <- write_neha_enrichment_csv(
+      record$sensitivity_gsea_rank_audit <- write_enrichment_csv(
         sensitivity_rank_info$audit,
         file.path(audit_dir, paste0("gsea_rank_audit_", config$gsea_sensitivity_rank, "_sensitivity.csv"))
       )
     } else {
       record$sensitivity_gsea_rank_audit <- NA_character_
     }
-    record$ora_membership_audit <- write_neha_enrichment_csv(
+    record$ora_membership_audit <- write_enrichment_csv(
       data.frame(
         uniprot_accession = ora_sets$universe,
         fdr_significant = ora_sets$universe %in% ora_sets$all_significant,
@@ -412,7 +412,7 @@ process_comparison <- function(index_row) {
 
     go_gsea <- run_go_gsea(rank_info$rank, comparison)
     warning_rows <- append_warnings(warning_rows, comparison, paste0("GO_", config$ontology, "_GSEA"), go_gsea$warnings)
-    go_gsea_table <- neha_enrichment_result_table(go_gsea$value)
+    go_gsea_table <- enrichment_result_table(go_gsea$value)
     record$go_gsea_seed <- go_gsea$seed
     record$go_gsea_term_count <- nrow(go_gsea_table)
     record$go_gsea_fdr_term_count <- sum(is.finite(go_gsea_table$p.adjust) & go_gsea_table$p.adjust < config$fdr_threshold)
@@ -430,7 +430,7 @@ process_comparison <- function(index_row) {
         paste0("GO_", config$ontology, "_GSEA_", config$gsea_sensitivity_rank, "_sensitivity"),
         sensitivity_go_gsea$warnings
       )
-      sensitivity_go_table <- neha_enrichment_result_table(sensitivity_go_gsea$value)
+      sensitivity_go_table <- enrichment_result_table(sensitivity_go_gsea$value)
       record$sensitivity_go_gsea_seed <- sensitivity_go_gsea$seed
       record$sensitivity_go_gsea_term_count <- nrow(sensitivity_go_table)
       record$sensitivity_go_gsea_fdr_term_count <- sum(
@@ -502,7 +502,7 @@ process_comparison <- function(index_row) {
       record$kegg_rank_source_column <- kegg$rank_source_column
       record$kegg_gsea_analysis_role <- kegg$analysis_role
       record <- add_rank_diagnostics(record, kegg, "kegg_rank")
-      record$kegg_mapping_audit <- write_neha_enrichment_csv(
+      record$kegg_mapping_audit <- write_enrichment_csv(
         kegg$audit, file.path(audit_dir, "kegg_entrez_collapse_audit.csv")
       )
       kegg_gsea <- run_kegg_gsea(kegg$rank, comparison)
@@ -539,7 +539,7 @@ process_comparison <- function(index_row) {
         record$sensitivity_kegg_rank_source_column <- sensitivity_kegg$rank_source_column
         record$sensitivity_kegg_gsea_analysis_role <- sensitivity_kegg$analysis_role
         record <- add_rank_diagnostics(record, sensitivity_kegg, "sensitivity_kegg_rank")
-        record$sensitivity_kegg_mapping_audit <- write_neha_enrichment_csv(
+        record$sensitivity_kegg_mapping_audit <- write_enrichment_csv(
           sensitivity_kegg$audit,
           file.path(
             audit_dir,
@@ -592,7 +592,7 @@ process_comparison <- function(index_row) {
 
       if (length(config$path_ids)) {
         if (!requireNamespace("pathview", quietly = TRUE)) {
-          stop("NEHA_ENRICHMENT_PATH_IDS was configured but package 'pathview' is unavailable.", call. = FALSE)
+          stop("PROTEOMICS_ENRICHMENT_PATH_IDS was configured but package 'pathview' is unavailable.", call. = FALSE)
         }
         pathview_dir <- file.path(comparison_dir, "pathview")
         dir.create(pathview_dir, recursive = TRUE, showWarnings = FALSE)
@@ -614,7 +614,7 @@ process_comparison <- function(index_row) {
             )
           }
         })
-        record$custom_pathview_output_directory <- neha_enrichment_normalize_path(pathview_dir, must_work = TRUE)
+        record$custom_pathview_output_directory <- enrichment_normalize_path(pathview_dir, must_work = TRUE)
         record$custom_pathview_value_statistic <- "log2fc"
       } else {
         record$custom_pathview_output_directory <- NA_character_
@@ -671,12 +671,12 @@ process_comparison <- function(index_row) {
     }
 
     record$warning_count <- nrow(warning_rows)
-    record$warnings_path <- write_neha_enrichment_csv(warning_rows, file.path(audit_dir, "warnings.csv"))
+    record$warnings_path <- write_enrichment_csv(warning_rows, file.path(audit_dir, "warnings.csv"))
     record$execution_status <- "success"
   }, error = function(e) {
     record$error_message <<- conditionMessage(e)
     record$warning_count <<- nrow(warning_rows)
-    record$warnings_path <<- write_neha_enrichment_csv(warning_rows, file.path(audit_dir, "warnings.csv"))
+    record$warnings_path <<- write_enrichment_csv(warning_rows, file.path(audit_dir, "warnings.csv"))
   })
 
   record$runtime_seconds <- as.numeric(difftime(Sys.time(), started, units = "secs"))
@@ -684,9 +684,9 @@ process_comparison <- function(index_row) {
   record$package_versions_path <- package_versions_path
   record$run_parameters_path <- parameters_path
   manifest_path <- file.path(audit_dir, "comparison_manifest.csv")
-  record$comparison_manifest_path <- neha_enrichment_normalize_path(manifest_path)
+  record$comparison_manifest_path <- enrichment_normalize_path(manifest_path)
   write_comparison_manifest(record, manifest_path)
-  record$comparison_manifest_path <- neha_enrichment_normalize_path(manifest_path, must_work = TRUE)
+  record$comparison_manifest_path <- enrichment_normalize_path(manifest_path, must_work = TRUE)
   as.data.frame(record, stringsAsFactors = FALSE, check.names = FALSE)
 }
 
@@ -707,7 +707,7 @@ records <- lapply(records, function(record) {
 })
 enrichment_index <- do.call(rbind, records)
 rownames(enrichment_index) <- NULL
-write_neha_enrichment_csv(enrichment_index, index_path)
+write_enrichment_csv(enrichment_index, index_path)
 
 run_contract <- data.frame(
   field = c(
@@ -719,7 +719,7 @@ run_contract <- data.frame(
     "package_versions_path", "run_parameters_path"
   ),
   value = c(
-    timestamp_utc, config$mapped_index, neha_enrichment_sha256(config$mapped_index), config$output_root,
+    timestamp_utc, config$mapped_index, enrichment_sha256(config$mapped_index), config$output_root,
     12L, nrow(enrichment_index), sum(enrichment_index$execution_status == "success"),
     "forward", config$gsea_rank, config$gsea_rank, "canonical",
     config$gsea_sensitivity_rank,
@@ -730,7 +730,7 @@ run_contract <- data.frame(
   ),
   stringsAsFactors = FALSE
 )
-write_neha_enrichment_csv(run_contract, file.path(audit_root, "run_contract_manifest.csv"))
+write_enrichment_csv(run_contract, file.path(audit_root, "run_contract_manifest.csv"))
 
 failed <- enrichment_index$execution_status != "success"
 if (any(failed)) {
@@ -741,5 +741,5 @@ if (any(failed)) {
     call. = FALSE
   )
 }
-validate_neha_enrichment_index(enrichment_index, require_files = TRUE)
+validate_enrichment_index(enrichment_index, require_files = TRUE)
 message("Canonical animal-level enrichment completed: ", index_path)

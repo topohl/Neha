@@ -91,9 +91,9 @@ restore_environment <- function(previous) {
 
 run_stage <- function(input_gct, id_map, output_dir, log_name, scratch_root) {
   env_names <- c(
-    "NEHA_RANK_ABUNDANCE_INPUT_GCT",
-    "NEHA_RANK_ABUNDANCE_ID_MAP",
-    "NEHA_RANK_ABUNDANCE_OUTPUT_DIR"
+    "PROTEOMICS_RANK_ABUNDANCE_INPUT_GCT",
+    "PROTEOMICS_RANK_ABUNDANCE_ID_MAP",
+    "PROTEOMICS_RANK_ABUNDANCE_OUTPUT_DIR"
   )
   previous <- stats::setNames(
     vapply(env_names, function(name) Sys.getenv(name, unset = NA_character_), character(1)),
@@ -105,9 +105,9 @@ run_stage <- function(input_gct, id_map, output_dir, log_name, scratch_root) {
     restore_environment(previous)
   }, add = TRUE)
   Sys.setenv(
-    NEHA_RANK_ABUNDANCE_INPUT_GCT = input_gct,
-    NEHA_RANK_ABUNDANCE_ID_MAP = id_map,
-    NEHA_RANK_ABUNDANCE_OUTPUT_DIR = output_dir
+    PROTEOMICS_RANK_ABUNDANCE_INPUT_GCT = input_gct,
+    PROTEOMICS_RANK_ABUNDANCE_ID_MAP = id_map,
+    PROTEOMICS_RANK_ABUNDANCE_OUTPUT_DIR = output_dir
   )
   setwd(scratch_root)
   log_path <- file.path(scratch_root, log_name)
@@ -157,14 +157,15 @@ code <- strip_r_comments(stage)
 ok("animal-level GCT default appears in executable code",
    grepl("neha_protigy_input_animal_level_primary\\.gct", code))
 ok("input override appears in executable code",
-   grepl("NEHA_RANK_ABUNDANCE_INPUT_GCT", code, fixed = TRUE))
+   grepl("PROTEOMICS_RANK_ABUNDANCE_INPUT_GCT", code, fixed = TRUE))
 ok("shared ProTigy GCT validator is called in executable code",
    grepl("validate_protigy_gct_v13", code, fixed = TRUE) && grepl("protigy_input_utils\\.R", code))
 ok("does NOT read per-class imputed workbooks", !grepl("pgmatrix_imputed", code, fixed = TRUE))
 ok("does NOT point at the historical imputed-workbook directory",
    !grepl('"gct"\\s*,\\s*"imputed"', code) && !grepl("gct/imputed", code, fixed = TRUE))
-ok("does NOT use the old directory override",
-   !grepl("NEHA_RANK_ABUNDANCE_INPUT_DIR", code, fixed = TRUE))
+ok("does NOT use the old directory override (either naming generation)",
+   !grepl("PROTEOMICS_RANK_ABUNDANCE_INPUT_DIR", code, fixed = TRUE) &&
+     !grepl("NEHA_RANK_ABUNDANCE_INPUT_DIR", code, fixed = TRUE))
 ok("does NOT reference the historical hemisphere-level GCT",
    !grepl("pg.matrix_filtered_pcaAdjusted_unnormalized.gct", code, fixed = TRUE))
 ok("groups using normalized sample_class and condition metadata",

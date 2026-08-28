@@ -8,16 +8,16 @@ script_file <- if (length(script_file)) sub("^--file=", "", script_file[[1]]) el
 script_dir <- dirname(normalizePath(script_file, winslash = "/", mustWork = FALSE))
 project_root <- normalizePath(file.path(script_dir, ".."), winslash = "/", mustWork = TRUE)
 source(file.path(project_root, "R", "analysis_labels.R"))
-source(file.path(project_root, "R", "neha_path_utils.R"))
+source(file.path(project_root, "R", "project_path_utils.R"))
 source(file.path(project_root, "R", "animal_level_enrichment_utils.R"))
 
-config <- resolve_neha_enrichment_config()
+config <- resolve_enrichment_config()
 compare_go_index_path <- Sys.getenv(
-  "NEHA_COMPARE_GO_INDEX",
+  "PROTEOMICS_COMPARE_GO_INDEX",
   unset = file.path(config$output_root, "compareGO", "indexCompareGO.csv")
 )
-compare_go_index_path <- neha_enrichment_normalize_path(compare_go_index_path, must_work = TRUE)
-if (!neha_enrichment_path_is_within(compare_go_index_path, file.path(config$output_root, "compareGO"))) {
+compare_go_index_path <- enrichment_normalize_path(compare_go_index_path, must_work = TRUE)
+if (!enrichment_path_is_within(compare_go_index_path, file.path(config$output_root, "compareGO"))) {
   stop("compare_pathways requires the canonical compareGO index.", call. = FALSE)
 }
 compare_index <- utils::read.csv(compare_go_index_path, stringsAsFactors = FALSE, check.names = FALSE)
@@ -29,14 +29,14 @@ missing <- setdiff(required, names(compare_index))
 if (length(missing) || nrow(compare_index) != 12L || anyDuplicated(compare_index$canonical_comparison)) {
   stop("compareGO index does not contain the 12 unique canonical comparisons.", call. = FALSE)
 }
-expected <- neha_primary_contrast_manifest()
+expected <- primary_contrast_manifest()
 if (!setequal(compare_index$canonical_comparison, expected$canonical_comparison)) {
-  stop("compareGO index coverage does not match the shared Neha manifest.", call. = FALSE)
+  stop("compareGO index coverage does not match the shared contrast manifest.", call. = FALSE)
 }
 combined_paths <- unique(compare_index$combined_output_path)
 if (length(combined_paths) != 1L) stop("compareGO index must identify one combined canonical GO table.", call. = FALSE)
-combined_path <- neha_enrichment_normalize_path(combined_paths[[1]], must_work = TRUE)
-if (!neha_enrichment_path_is_within(combined_path, file.path(config$output_root, "compareGO"))) {
+combined_path <- enrichment_normalize_path(combined_paths[[1]], must_work = TRUE)
+if (!enrichment_path_is_within(combined_path, file.path(config$output_root, "compareGO"))) {
   stop("Combined GO table resolves outside the canonical compareGO output.", call. = FALSE)
 }
 go <- utils::read.csv(combined_path, stringsAsFactors = FALSE, check.names = FALSE)
@@ -45,7 +45,7 @@ output_root <- file.path(config$output_root, "compare_pathways")
 dir.create(output_root, recursive = TRUE, showWarnings = FALSE)
 output_index_path <- file.path(output_root, "indexComparePathways.csv")
 if (file.exists(output_index_path) && !isTRUE(config$force)) {
-  stop("compare_pathways output already exists; set NEHA_ENRICHMENT_FORCE=true to replace isolated canonical outputs.", call. = FALSE)
+  stop("compare_pathways output already exists; set PROTEOMICS_ENRICHMENT_FORCE=true to replace isolated canonical outputs.", call. = FALSE)
 }
 
 find_contrast <- function(sample_class, numerator, denominator) {
@@ -84,9 +84,9 @@ pair_records <- lapply(unique(expected$sample_class), function(sample_class) {
     "learning_canonical_comparison", "cno_canonical_comparison",
     "learning_historical_alias", "cno_historical_alias"
   ), drop = FALSE]
-  profile_path <- write_neha_enrichment_csv(joined, file.path(output_root, paste0(sample_class, "_learning_vs_paired_cno_GO_profiles.csv")))
+  profile_path <- write_enrichment_csv(joined, file.path(output_root, paste0(sample_class, "_learning_vs_paired_cno_GO_profiles.csv")))
   overlap <- joined[joined$fdr_significant_learning | joined$fdr_significant_cno, , drop = FALSE]
-  overlap_path <- write_neha_enrichment_csv(overlap, file.path(output_root, paste0(sample_class, "_FDR_pathway_overlap.csv")))
+  overlap_path <- write_enrichment_csv(overlap, file.path(output_root, paste0(sample_class, "_FDR_pathway_overlap.csv")))
 
   shared <- is.finite(joined$NES_learning) & is.finite(joined$NES_cno)
   correlation <- if (sum(shared) >= 3L) stats::cor(joined$NES_learning[shared], joined$NES_cno[shared], method = "spearman") else NA_real_
@@ -105,7 +105,7 @@ pair_records <- lapply(unique(expected$sample_class), function(sample_class) {
       ) + ggplot2::theme_minimal(base_size = 10)
     plot_path <- file.path(output_root, paste0(sample_class, "_learning_vs_paired_cno_GO_scatter.png"))
     ggplot2::ggsave(plot_path, plot = plot, width = 8, height = 7, dpi = 300)
-    plot_path <- neha_enrichment_normalize_path(plot_path, must_work = TRUE)
+    plot_path <- enrichment_normalize_path(plot_path, must_work = TRUE)
   }
   data.frame(
     sample_class = sample_class,
@@ -127,5 +127,5 @@ pair_records <- lapply(unique(expected$sample_class), function(sample_class) {
 })
 
 pair_index <- do.call(rbind, pair_records)
-write_neha_enrichment_csv(pair_index, output_index_path)
+write_enrichment_csv(pair_index, output_index_path)
 message("Canonical compare_pathways completed: ", output_index_path)

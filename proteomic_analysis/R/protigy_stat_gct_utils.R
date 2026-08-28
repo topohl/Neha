@@ -1,4 +1,4 @@
-# Generic parsing and validation helpers for Neha ProTigy statistical-result GCTs.
+# Generic parsing and validation helpers for ProTigy statistical-result GCTs.
 # Dataset-specific class and condition semantics come from R/analysis_labels.R.
 
 protigy_supported_metrics <- function() {
@@ -70,7 +70,7 @@ parse_protigy_stat_field <- function(field, metrics = protigy_supported_metrics(
   )
 }
 
-parse_neha_protigy_side <- function(side) {
+parse_protigy_side <- function(side) {
   side <- trimws(as.character(side))
   if (length(side) != 1L || is.na(side) || !nzchar(side)) return(NULL)
 
@@ -107,7 +107,7 @@ parse_neha_protigy_side <- function(side) {
   )
 }
 
-parse_neha_protigy_comparison_one <- function(comparison) {
+parse_protigy_comparison_one <- function(comparison) {
   input <- canonicalize_protigy_comparison_separator(comparison)
   empty <- data.frame(
     input_comparison = input,
@@ -129,13 +129,13 @@ parse_neha_protigy_comparison_one <- function(comparison) {
 
   sides <- strsplit(input, "_over_", fixed = TRUE)[[1]]
   if (length(sides) != 2L || any(!nzchar(sides))) return(empty)
-  numerator <- parse_neha_protigy_side(sides[[1]])
-  denominator <- parse_neha_protigy_side(sides[[2]])
+  numerator <- parse_protigy_side(sides[[1]])
+  denominator <- parse_protigy_side(sides[[2]])
   if (is.null(numerator) || is.null(denominator)) return(empty)
 
   same_class <- identical(numerator$sample_class, denominator$sample_class)
   canonical <- paste(numerator$phenotype, denominator$phenotype, sep = "_over_")
-  expected <- neha_primary_contrast_manifest()
+  expected <- primary_contrast_manifest()
   expected_index <- match(canonical, expected$canonical_comparison)
   accepted <- same_class && !is.na(expected_index)
   reason <- if (!same_class) {
@@ -143,7 +143,7 @@ parse_neha_protigy_comparison_one <- function(comparison) {
   } else if (!accepted) {
     "unsupported_condition_contrast"
   } else {
-    "accepted_primary_neha_contrast"
+    "accepted_primary_contrast"
   }
 
   data.frame(
@@ -164,13 +164,13 @@ parse_neha_protigy_comparison_one <- function(comparison) {
   )
 }
 
-parse_neha_protigy_comparison <- function(comparison) {
-  rows <- lapply(as.character(comparison), parse_neha_protigy_comparison_one)
+parse_protigy_comparison <- function(comparison) {
+  rows <- lapply(as.character(comparison), parse_protigy_comparison_one)
   if (length(rows)) do.call(rbind, rows) else data.frame()
 }
 
-validate_neha_protigy_comparisons <- function(comparisons, strict_primary = FALSE) {
-  out <- parse_neha_protigy_comparison(comparisons)
+validate_protigy_comparisons <- function(comparisons, strict_primary = FALSE) {
+  out <- parse_protigy_comparison(comparisons)
   if (nrow(out)) {
     out$duplicate_canonical_comparison <- duplicated(out$canonical_comparison) |
       duplicated(out$canonical_comparison, fromLast = TRUE)
@@ -190,9 +190,9 @@ validate_neha_protigy_comparisons <- function(comparisons, strict_primary = FALS
   out
 }
 
-validate_neha_primary_comparison_contract <- function(comparisons) {
-  expected <- neha_primary_contrast_manifest()
-  observed <- validate_neha_protigy_comparisons(comparisons, strict_primary = TRUE)
+validate_primary_comparison_contract <- function(comparisons) {
+  expected <- primary_contrast_manifest()
+  observed <- validate_protigy_comparisons(comparisons, strict_primary = TRUE)
   observed_keys <- observed$canonical_comparison
   failures <- character()
   if (length(observed_keys) != nrow(expected)) failures <- c(failures, "expected exactly 12 comparisons")
@@ -202,7 +202,7 @@ validate_neha_primary_comparison_contract <- function(comparisons) {
   if (length(missing)) failures <- c(failures, paste0("missing: ", paste(missing, collapse = ", ")))
   if (length(unexpected)) failures <- c(failures, paste0("unexpected: ", paste(unexpected, collapse = ", ")))
   if (length(failures)) {
-    stop("Neha primary comparison contract failed: ", paste(failures, collapse = "; "), call. = FALSE)
+    stop("primary comparison contract failed: ", paste(failures, collapse = "; "), call. = FALSE)
   }
   observed[match(expected$canonical_comparison, observed$canonical_comparison), , drop = FALSE]
 }
@@ -290,7 +290,7 @@ read_protigy_stat_gct <- function(path, strict_primary = FALSE) {
   )
   parsed_fields <- fields[!is.na(fields$comparison), , drop = FALSE]
   comparisons <- unique(parsed_fields$comparison)
-  comparison_validation <- validate_neha_protigy_comparisons(comparisons, strict_primary = strict_primary)
+  comparison_validation <- validate_protigy_comparisons(comparisons, strict_primary = strict_primary)
   canonical_match <- match(parsed_fields$comparison, comparison_validation$input_comparison)
   parsed_fields$canonical_comparison <- comparison_validation$canonical_comparison[canonical_match]
   parsed_fields$metric_comparison_key <- paste(
@@ -367,7 +367,7 @@ reverse_protigy_metric_frame <- function(df, metric_by_column) {
 }
 
 extract_protigy_comparison_table <- function(gct, comparison) {
-  comparison <- parse_neha_protigy_comparison_one(comparison)$canonical_comparison[[1]]
+  comparison <- parse_protigy_comparison_one(comparison)$canonical_comparison[[1]]
   if (is.na(comparison)) stop("Cannot extract an unparseable comparison.", call. = FALSE)
   selected <- gct$parsed_fields[
     gct$parsed_fields$canonical_comparison == comparison,
@@ -406,7 +406,7 @@ extract_protigy_comparison_table <- function(gct, comparison) {
   out
 }
 
-validate_neha_stat_gct_contract <- function(gct, expected_n_proteins = 5349L) {
+validate_stat_gct_contract <- function(gct, expected_n_proteins = 5349L) {
   failures <- character()
   if (!gct$physical_dimension_match) failures <- c(failures, "physical GCT dimensions do not match")
   if (gct$n_protein_rows_read != unname(gct$dimensions[["nrmat"]])) failures <- c(failures, "declared protein rows were not all read")
@@ -418,13 +418,13 @@ validate_neha_stat_gct_contract <- function(gct, expected_n_proteins = 5349L) {
   if (gct$duplicate_metric_comparison_fields > 0L) failures <- c(failures, "metric/comparison fields are duplicated")
 
   comparison_contract <- tryCatch(
-    validate_neha_primary_comparison_contract(gct$comparison_validation$input_comparison),
+    validate_primary_comparison_contract(gct$comparison_validation$input_comparison),
     error = function(error) {
       failures <<- c(failures, conditionMessage(error))
       NULL
     }
   )
-  expected <- neha_primary_contrast_manifest()
+  expected <- primary_contrast_manifest()
   required <- protigy_required_da_metrics()
   required_grid <- expand.grid(
     metric = required,
@@ -464,7 +464,7 @@ validate_neha_stat_gct_contract <- function(gct, expected_n_proteins = 5349L) {
     failures <- c(failures, "required DA fields contain missing values")
   }
   if (length(failures)) {
-    stop("Neha ProTigy statistical-GCT contract failed: ", paste(unique(failures), collapse = "; "), call. = FALSE)
+    stop("ProTigy statistical-GCT contract failed: ", paste(unique(failures), collapse = "; "), call. = FALSE)
   }
 
   list(

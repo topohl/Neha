@@ -1,5 +1,5 @@
 # ================================================================
-# QC figures for Neha proteomics
+# QC figures for the proteomics acquisition
 # Clean QC plotting workflow
 # ================================================================
 
@@ -33,18 +33,18 @@ project_root <- "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler"
 # NOTE: this script plots ACQUISITION-LEVEL TECHNICAL QC METRICS (identification depth,
 # MS1/MS2 signal, peak width, mass accuracy, normalisation instability, RT prediction
 # accuracy) per acquisition sample. Its PCA is a PCA *of those instrument QC metrics* --
-# it is NOT a protein-abundance PCA. For protein-abundance PCA see 06_pcaPlot_Neha.r.
+# it is NOT a protein-abundance PCA. For protein-abundance PCA see 06_pcaPlot_animal_level.r.
 #
 # Its input, quicksearch.stats.annotated.xlsx, is a DIA-NN/instrument QC export that is not
 # present anywhere in the current project tree (its former Datasets/pg_matrix/ parent did
 # not exist either). Repeated audits could therefore not evaluate acquisition-level QC.
 input_file <- option_or_env(
-  "neha.qc_quicksearch_stats", "NEHA_QC_QUICKSEARCH_STATS",
+  "proteomics.qc_quicksearch_stats", "PROTEOMICS_QC_QUICKSEARCH_STATS",
   file.path(project_root, "01_input", "qc", "quicksearch.stats.annotated.xlsx")
 )
 
 out_dir <- option_or_env(
-  "neha.qc_output_dir", "NEHA_QC_OUTPUT_DIR",
+  "proteomics.qc_output_dir", "PROTEOMICS_QC_OUTPUT_DIR",
   file.path(project_root, "03_output", "qc")
 )
 
@@ -52,7 +52,7 @@ if (!file.exists(input_file)) {
   stop(
     "Acquisition QC export not found: ", input_file,
     "\nThis file (quicksearch.stats.annotated.xlsx) is a DIA-NN/instrument QC report and has",
-    "\nnever been present in the Neha project tree.",
+    "\nnever been present in this project tree.",
     "\n",
     "\nProvenance note (resolved 2026-08-27): a filesystem-wide search found this filename only",
     "\nunder Exp9_Social-Stress, never under Collabs/Neha. The former hardcoded default here was",
@@ -60,11 +60,11 @@ if (!file.exists(input_file)) {
     "\nwhose tail is byte-identical to the real Exp9 path",
     "\n  <Exp9_Social-Stress>/proteomics/Datasets/pg_matrix/raw/quicksearch.stats.annotated.xlsx",
     "\nso this default appears to be boilerplate inherited from that project rather than a path",
-    "\nthat ever held Neha data. The Exp9 file has the right 33 columns but contains 0 Neha",
-    "\nsamples (different instrument and acquisition date), so it is NOT a substitute.",
+    "\nthat ever held this project's data. The Exp9 file has the right 33 columns but contains 0",
+    "\nof this project's samples (different instrument and acquisition date), so it is NOT a substitute.",
     "\n",
-    "\nTo run this script you must re-export the QC report for the Neha acquisition, then set",
-    "\nNEHA_QC_QUICKSEARCH_STATS / options(neha.qc_quicksearch_stats=) to point at it.",
+    "\nTo run this script you must re-export the QC report for this acquisition, then set",
+    "\nPROTEOMICS_QC_QUICKSEARCH_STATS / options(proteomics.qc_quicksearch_stats=) to point at it.",
     "\nUntil then no acquisition-level technical QC (protein/precursor counts, MS1/MS2 signal,",
     "\nmass accuracy, normalisation instability) can be evaluated for this dataset.",
     call. = FALSE

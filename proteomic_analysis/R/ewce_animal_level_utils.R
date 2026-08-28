@@ -1,18 +1,18 @@
-# Focused sampling-unit contracts for the Neha animal-level EWCE branch.
+# Focused sampling-unit contracts for the animal-level EWCE branch.
 
-if (!exists("neha_normalize_path", mode = "function")) {
-  stop("R/neha_path_utils.R must be sourced before R/ewce_animal_level_utils.R", call. = FALSE)
+if (!exists("project_normalize_path", mode = "function")) {
+  stop("R/project_path_utils.R must be sourced before R/ewce_animal_level_utils.R", call. = FALSE)
 }
 
-# Retained names delegate to the shared primitives in R/neha_path_utils.R.
-neha_ewce_normalize_path <- function(path, must_work = FALSE) neha_normalize_path(path, must_work)
-neha_ewce_path_is_within <- function(path, root) neha_path_is_within(path, root)
+# Retained names delegate to the shared primitives in R/project_path_utils.R.
+ewce_normalize_path <- function(path, must_work = FALSE) project_normalize_path(path, must_work)
+ewce_path_is_within <- function(path, root) project_path_is_within(path, root)
 
-validate_neha_ewce_output_root <- function(output_root, historical_root) {
+validate_ewce_output_root <- function(output_root, historical_root) {
   # Message text is asserted by tests/test_ewce_animal_level.R; keep it verbatim.
-  output_root <- neha_ewce_normalize_path(output_root)
-  historical_root <- neha_ewce_normalize_path(historical_root)
-  if (neha_ewce_path_is_within(output_root, historical_root)) {
+  output_root <- ewce_normalize_path(output_root)
+  historical_root <- ewce_normalize_path(historical_root)
+  if (ewce_path_is_within(output_root, historical_root)) {
     stop(
       "Animal-level EWCE output cannot overwrite the historical EWCE root: ",
       historical_root,
@@ -22,7 +22,7 @@ validate_neha_ewce_output_root <- function(output_root, historical_root) {
   output_root
 }
 
-validate_neha_ewce_animal_input <- function(
+validate_ewce_animal_input <- function(
     parsed_gct,
     source_path,
     expected_n = 3L,
@@ -153,18 +153,18 @@ validate_neha_ewce_animal_input <- function(
     expression_matrix = expression_matrix,
     sample_metadata = sample_metadata,
     count_audit = count_audit,
-    source_path = neha_ewce_normalize_path(source_path, must_work = FALSE),
+    source_path = ewce_normalize_path(source_path, must_work = FALSE),
     sampling_unit = "AnimalID_x_sample_class",
     aggregation_policy = "equal_weight_mean_LR_on_existing_imputed_log2_values",
     transformations_after_aggregation = "none"
   )
 }
 
-neha_ewce_contrast_metadata <- function(sample_class, sample_metadata = NULL) {
-  manifest <- neha_primary_contrast_manifest()
+ewce_contrast_metadata <- function(sample_class, sample_metadata = NULL) {
+  manifest <- primary_contrast_manifest()
   manifest <- manifest[manifest$sample_class == sample_class, , drop = FALSE]
   if (nrow(manifest) != 3L) {
-    stop("EWCE requires exactly three shared Neha contrasts per sample class.", call. = FALSE)
+    stop("EWCE requires exactly three shared primary contrasts per sample class.", call. = FALSE)
   }
   out <- data.frame(
     canonical_comparison = manifest$canonical_comparison,
@@ -197,7 +197,7 @@ neha_ewce_contrast_metadata <- function(sample_class, sample_metadata = NULL) {
   out
 }
 
-prepare_neha_ewce_limma_stratum <- function(
+prepare_ewce_limma_stratum <- function(
     expression_matrix,
     sample_metadata,
     sample_class,
@@ -239,7 +239,7 @@ prepare_neha_ewce_limma_stratum <- function(
   if (!identical(colnames(design), condition_levels)) {
     stop("Animal-level limma design does not contain the four canonical conditions in order.", call. = FALSE)
   }
-  contrast_metadata <- neha_ewce_contrast_metadata(sample_class, meta)
+  contrast_metadata <- ewce_contrast_metadata(sample_class, meta)
   contrast_matrix <- matrix(
     0,
     nrow = ncol(design),
@@ -267,7 +267,7 @@ prepare_neha_ewce_limma_stratum <- function(
   )
 }
 
-make_neha_ewce_differential_audit <- function(
+make_ewce_differential_audit <- function(
     contrast_metadata,
     source_path,
     output_path,
@@ -276,9 +276,9 @@ make_neha_ewce_differential_audit <- function(
     execution_status,
     error_message = NA_character_) {
   out <- as.data.frame(contrast_metadata, stringsAsFactors = FALSE, check.names = FALSE)
-  out$source_animal_level_input <- neha_ewce_normalize_path(source_path, must_work = FALSE)
+  out$source_animal_level_input <- ewce_normalize_path(source_path, must_work = FALSE)
   out$n_proteins_entering_differential_analysis <- as.integer(n_proteins)
-  out$differential_output_path <- neha_ewce_normalize_path(output_path, must_work = FALSE)
+  out$differential_output_path <- ewce_normalize_path(output_path, must_work = FALSE)
   out$execution_status <- execution_status
   out$error_message <- error_message
   out$sampling_unit <- "animal"

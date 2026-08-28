@@ -5,7 +5,7 @@
 # 03_qc_exploration/pca/. This file is a thin orchestrator, so the documented
 # invocation is unchanged:
 #
-#     Rscript 03_qc_exploration/06_pcaPlot_Neha.r
+#     Rscript 03_qc_exploration/06_pcaPlot_animal_level.r
 #
 # The parts run at top level and share globals (mat, meta, pca, output_dir and the
 # plotting/saving helpers) created by 06a_pca_core.r, exactly as when they were one file.
@@ -18,21 +18,21 @@
 # script still exits non-zero, but only after attempting every part.
 # ====================================================================
 
-.neha_script_arg <- grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE)
-.neha_script_path <- if (length(.neha_script_arg)) {
-  sub("^--file=", "", .neha_script_arg[[1]])
+.pca_script_arg <- grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE)
+.pca_script_path <- if (length(.pca_script_arg)) {
+  sub("^--file=", "", .pca_script_arg[[1]])
 } else {
-  file.path("03_qc_exploration", "06_pcaPlot_Neha.r")
+  file.path("03_qc_exploration", "06_pcaPlot_animal_level.r")
 }
-.neha_pca_dir <- normalizePath(file.path(dirname(.neha_script_path), "pca"), winslash = "/", mustWork = FALSE)
-if (!dir.exists(.neha_pca_dir)) {
-  .neha_pca_dir <- normalizePath(file.path(getwd(), "03_qc_exploration", "pca"), winslash = "/", mustWork = TRUE)
+.pca_dir <- normalizePath(file.path(dirname(.pca_script_path), "pca"), winslash = "/", mustWork = FALSE)
+if (!dir.exists(.pca_dir)) {
+  .pca_dir <- normalizePath(file.path(getwd(), "03_qc_exploration", "pca"), winslash = "/", mustWork = TRUE)
 }
 
 # Core must succeed: it validates the input contract and writes its own audit on failure.
-source(file.path(.neha_pca_dir, "06a_pca_core.r"))
+source(file.path(.pca_dir, "06a_pca_core.r"))
 
-.neha_extension_parts <- c(
+.pca_extension_parts <- c(
   "06b_pca_loadings_umap_clustering.r",
   "06c_pca_variants_and_sensitivity.r",
   "06d_pca_supplementary_heatmaps_and_norm.r",
@@ -42,36 +42,36 @@ source(file.path(.neha_pca_dir, "06a_pca_core.r"))
   "06h_pca_innovative_visualizations.r"
 )
 
-.neha_failed <- character()
-for (.neha_part in .neha_extension_parts) {
-  .neha_err <- tryCatch({
-    source(file.path(.neha_pca_dir, .neha_part))
+.pca_failed <- character()
+for (.pca_part in .pca_extension_parts) {
+  .pca_err <- tryCatch({
+    source(file.path(.pca_dir, .pca_part))
     NULL
   }, error = identity)
-  if (!is.null(.neha_err)) {
-    .neha_failed <- c(.neha_failed, sprintf("%s: %s", .neha_part, conditionMessage(.neha_err)))
-    message("PCA extension part failed, continuing with the rest: ", .neha_part)
-    message("  ", conditionMessage(.neha_err))
+  if (!is.null(.pca_err)) {
+    .pca_failed <- c(.pca_failed, sprintf("%s: %s", .pca_part, conditionMessage(.pca_err)))
+    message("PCA extension part failed, continuing with the rest: ", .pca_part)
+    message("  ", conditionMessage(.pca_err))
     write_dt(
-      make_neha_pca_audit(
+      make_pca_audit(
         validated_input = core_input$validated,
         prepared_pca = core_input$prepared,
         source_path = gct_file,
         source_sha256 = source_sha256,
         output_paths = primary_output_paths,
         execution_status = "failed",
-        error_message = paste(.neha_failed, collapse = " | ")
+        error_message = paste(.pca_failed, collapse = " | ")
       ),
       pca_audit_path
     )
   }
 }
 
-if (length(.neha_failed)) {
+if (length(.pca_failed)) {
   stop(
     "One or more PCA extension parts failed:\n  ",
-    paste(.neha_failed, collapse = "\n  "),
+    paste(.pca_failed, collapse = "\n  "),
     call. = FALSE
   )
 }
-message("PCA workflow completed: core + ", length(.neha_extension_parts), " extension parts.")
+message("PCA workflow completed: core + ", length(.pca_extension_parts), " extension parts.")
