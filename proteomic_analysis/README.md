@@ -215,11 +215,13 @@ It regenerates the rank-abundance panels used in the corrected proteomics figure
 | Figure 3E | `mcherry_paired-veh`, `mcherry_unpaired-veh` |
 | Supplementary proteomics D | `neuron_unpaired-veh`, `neuropil_unpaired-veh` |
 
-plus one panel per group, the full `processed_protein_ranks_animal_level.csv`, and the marker
-validation workbook. Outputs go to `03_output/qc/rank_abundance/`; redirect with
+plus one panel per group, the full `processed_protein_ranks_animal_level.csv`, the compact
+`rank_abundance_run_provenance.csv` input/design/mapping manifest, and the marker validation
+workbook. Outputs go to `03_output/qc/rank_abundance/`; redirect with
 `NEHA_RANK_ABUNDANCE_OUTPUT_DIR`. Contracts live in
 [`tests/test_rank_abundance_animal_level.R`](tests/test_rank_abundance_animal_level.R), which also
-fails if the stage is ever pointed back at the absent per-class imputed workbooks.
+always executes valid 48-observation and invalid 96-observation GCT fixtures and, when the shared
+reference is available, requires full keyed equality to the finalized animal-level source data.
 
 ### Known unrunnable stages
 

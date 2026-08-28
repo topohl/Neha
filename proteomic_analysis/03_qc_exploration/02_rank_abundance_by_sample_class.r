@@ -38,6 +38,10 @@ suppressPackageStartupMessages({
   library(svglite)
 })
 
+if (!requireNamespace("digest", quietly = TRUE)) {
+  stop("Package 'digest' is required for rank-abundance input provenance.", call. = FALSE)
+}
+
 option_or_env <- function(option_name, env_name, default) {
   value <- getOption(option_name)
   if (!is.null(value) && nzchar(trimws(as.character(value)))) return(as.character(value))
@@ -98,7 +102,6 @@ if (!file.exists(id_map_path)) {
     call. = FALSE
   )
 }
-dir.create(saving_dir, recursive = TRUE, showWarnings = FALSE)
 
 sample_classes <- c("mcherry", "neuropil", "cfos", "neuron")
 conditions <- c("paired_cno", "paired_veh", "unpaired_cno", "unpaired_veh")
@@ -156,21 +159,134 @@ sample_class_colors <- c(
 
 read_animal_level_matrix <- function(gct_path) {
   parsed <- validate_protigy_gct_v13(gct_path)
+  expression_matrix <- as.matrix(parsed$matrix)
+  if (ncol(expression_matrix) != 48L) {
+    stop(
+      "Rank-abundance input must contain exactly 48 unique animal-level sample columns; got ",
+      ncol(expression_matrix), ". Hemisphere-level technical observations are not permitted.",
+      call. = FALSE
+    )
+  }
+  sample_ids <- colnames(expression_matrix)
+  if (is.null(sample_ids) || anyNA(sample_ids) || any(!nzchar(trimws(sample_ids))) || anyDuplicated(sample_ids)) {
+    stop("Rank-abundance input sample columns must be complete and unique.", call. = FALSE)
+  }
+
   cm <- parsed$column_metadata
-  required <- c("AnimalID", "condition", "sample_class")
+  required <- c("AnimalID", "condition_code", "condition", "sample_class", "phenotypeWithinUnit")
   missing <- setdiff(required, rownames(cm))
   if (length(missing)) {
     stop("Animal-level GCT metadata is missing: ", paste(missing, collapse = ", "), call. = FALSE)
   }
+  if (!identical(colnames(cm), sample_ids)) {
+    stop("Rank-abundance expression and metadata sample columns are not aligned.", call. = FALSE)
+  }
+
+  metadata_values <- cm[required, , drop = FALSE]
+  metadata_values[] <- trimws(as.character(metadata_values))
+  if (anyNA(metadata_values) || any(!nzchar(metadata_values))) {
+    stop("AnimalID, condition_code, condition, sample_class, and phenotypeWithinUnit must be complete.", call. = FALSE)
+  }
+
+  raw_condition <- as.character(metadata_values["condition", ])
+  raw_sample_class <- as.character(metadata_values["sample_class", ])
+  if (any(!raw_sample_class %in% sample_classes) || !setequal(unique(raw_sample_class), sample_classes)) {
+    stop("Rank-abundance input must contain exactly the four canonical sample classes.", call. = FALSE)
+  }
+  if (any(!raw_condition %in% conditions) || !setequal(unique(raw_condition), conditions)) {
+    stop("Rank-abundance input must contain exactly the four canonical conditions.", call. = FALSE)
+  }
+
   metadata <- data.frame(
-    Sample = colnames(parsed$matrix),
-    AnimalID = trimws(as.character(cm["AnimalID", ])),
-    condition = normalize_condition(cm["condition", ]),
-    sample_class = normalize_sample_class(cm["sample_class", ]),
+    Sample = sample_ids,
+    AnimalID = as.character(metadata_values["AnimalID", ]),
+    condition_code = as.character(metadata_values["condition_code", ]),
+    condition = normalize_condition(raw_condition),
+    sample_class = normalize_sample_class(raw_sample_class),
+    phenotypeWithinUnit = as.character(metadata_values["phenotypeWithinUnit", ]),
+    stringsAsFactors = FALSE,
+    check.names = FALSE
+  )
+  expected_condition <- unname(condition_code_map[metadata$condition_code])
+  if (anyNA(expected_condition) || !identical(metadata$condition, expected_condition)) {
+    stop("Rank-abundance condition_code and condition metadata disagree.", call. = FALSE)
+  }
+  expected_phenotype <- paste(metadata$sample_class, metadata$condition, sep = "_")
+  if (!identical(metadata$phenotypeWithinUnit, expected_phenotype)) {
+    stop("Rank-abundance phenotypeWithinUnit metadata is inconsistent.", call. = FALSE)
+  }
+
+  hemisphere_pattern <- "(^|[_-])(left|right|l|r)($|[_-])|hemisphere|replicategroup|plate[0-9]"
+  if (any(grepl(hemisphere_pattern, metadata$Sample, ignore.case = TRUE, perl = TRUE)) ||
+      any(grepl(hemisphere_pattern, metadata$AnimalID, ignore.case = TRUE, perl = TRUE))) {
+    stop("Rank-abundance input contains hemisphere-level technical identifiers; animal-level units are required.", call. = FALSE)
+  }
+
+  if (length(unique(metadata$AnimalID)) != 12L) {
+    stop("Rank-abundance input must contain exactly 12 distinct, nonempty AnimalID values.", call. = FALSE)
+  }
+  unit_key <- paste(metadata$AnimalID, metadata$sample_class, metadata$condition, sep = "\r")
+  if (anyDuplicated(unit_key)) {
+    stop("Rank-abundance input contains duplicate AnimalID x sample_class x condition units.", call. = FALSE)
+  }
+
+  animal_condition <- unique(metadata[c("AnimalID", "condition")])
+  condition_count <- stats::aggregate(condition ~ AnimalID, animal_condition, function(x) length(unique(x)))
+  if (any(condition_count$condition != 1L)) {
+    stop("AnimalID maps to multiple conditions in the rank-abundance input.", call. = FALSE)
+  }
+
+  observation_counts <- stats::aggregate(
+    Sample ~ sample_class + condition,
+    metadata,
+    length
+  )
+  names(observation_counts)[names(observation_counts) == "Sample"] <- "n_observations"
+  animal_counts <- stats::aggregate(
+    AnimalID ~ sample_class + condition,
+    metadata,
+    function(x) length(unique(x))
+  )
+  names(animal_counts)[names(animal_counts) == "AnimalID"] <- "n_distinct_animals"
+  expected_grid <- expand.grid(
+    sample_class = sample_classes,
+    condition = conditions,
     stringsAsFactors = FALSE
   )
+  count_audit <- merge(expected_grid, observation_counts,
+                       by = c("sample_class", "condition"), all.x = TRUE, sort = FALSE)
+  count_audit <- merge(count_audit, animal_counts,
+                       by = c("sample_class", "condition"), all.x = TRUE, sort = FALSE)
+  count_audit$n_observations[is.na(count_audit$n_observations)] <- 0L
+  count_audit$n_distinct_animals[is.na(count_audit$n_distinct_animals)] <- 0L
+  if (nrow(observation_counts) != 16L || nrow(animal_counts) != 16L ||
+      any(count_audit$n_observations != 3L) || any(count_audit$n_distinct_animals != 3L)) {
+    stop(
+      "Rank-abundance requires exactly 3 observations and 3 distinct animals per sample_class x condition stratum.",
+      call. = FALSE
+    )
+  }
+
+  animals_per_condition <- lapply(conditions, function(condition_name) {
+    condition_metadata <- metadata[metadata$condition == condition_name, , drop = FALSE]
+    animal_sets <- lapply(sample_classes, function(class_name) {
+      sort(unique(condition_metadata$AnimalID[condition_metadata$sample_class == class_name]), method = "radix")
+    })
+    if (!all(vapply(animal_sets[-1], identical, logical(1), animal_sets[[1]]))) {
+      stop(
+        "Rank-abundance input has inconsistent AnimalID membership across sample classes for condition ",
+        condition_name, ".",
+        call. = FALSE
+      )
+    }
+    animal_sets[[1]]
+  })
+  if (length(unique(unlist(animals_per_condition))) != 12L) {
+    stop("Rank-abundance condition-specific animal sets do not resolve to exactly 12 animals.", call. = FALSE)
+  }
+
   metadata$group <- paste(metadata$sample_class, gsub("_", "-", metadata$condition), sep = "_")
-  list(matrix = parsed$matrix, metadata = metadata)
+  list(matrix = expression_matrix, metadata = metadata, count_audit = count_audit)
 }
 
 read_id_map <- function(path) {
@@ -184,7 +300,12 @@ read_id_map <- function(path) {
   if (anyDuplicated(d$original_protein_id)) {
     stop("Mapping file assigns more than one gene symbol to a protein id; refusing to guess.", call. = FALSE)
   }
-  stats::setNames(d$mapped_gene_symbol, d$original_protein_id)
+  list(
+    gene_of = stats::setNames(d$mapped_gene_symbol, d$original_protein_id),
+    n_rows = nrow(d),
+    n_unique_protein_ids = length(unique(d$original_protein_id)),
+    n_nonempty_gene_symbols = sum(!is.na(d$mapped_gene_symbol) & nzchar(trimws(d$mapped_gene_symbol)))
+  )
 }
 
 # ------------------------------------------------------------------------------
@@ -210,8 +331,12 @@ make_rank_data <- function(expression_matrix, metadata, gene_of) {
     d$LinearValue <- 2 ^ d$MeanLog2
     d <- d[order(-d$LinearValue), , drop = FALSE]
     d$Rank <- seq_len(nrow(d))
-    d$n_animals <- length(cols)
-    d$animals <- paste(sort(unique(metadata$AnimalID[cols])), collapse = ";")
+    animal_ids <- sort(unique(metadata$AnimalID[cols]), method = "radix")
+    if (length(cols) != length(animal_ids)) {
+      stop("Validated rank-abundance columns are not one-to-one with distinct animals.", call. = FALSE)
+    }
+    d$n_animals <- length(animal_ids)
+    d$animals <- paste(animal_ids, collapse = ";")
     d
   }))
 }
@@ -303,24 +428,64 @@ save_panel <- function(plot, file_name, width, height) {
 # ==============================================================================
 
 input <- read_animal_level_matrix(input_gct)
-gene_of <- read_id_map(id_map_path)
+mapping <- read_id_map(id_map_path)
+gene_of <- mapping$gene_of
 
 message(sprintf("Animal-level matrix: %d protein groups x %d samples, %d animals",
                 nrow(input$matrix), ncol(input$matrix), length(unique(input$metadata$AnimalID))))
-
-design <- table(input$metadata$sample_class, input$metadata$condition)
-if (!all(design == 3L)) {
-  stop("Expected exactly 3 animal-level samples per sample_class x condition; got ",
-       paste(sort(unique(as.vector(design))), collapse = ", "), call. = FALSE)
-}
 
 rank_data <- annotate_markers(make_rank_data(input$matrix, input$metadata, gene_of))
 message(sprintf("Rank table: %d groups x %d gene symbols",
                 length(unique(rank_data$Condition)), nrow(rank_data) / length(unique(rank_data$Condition))))
 
+feature_counts <- table(rank_data$Condition)
+if (length(feature_counts) != 16L || length(unique(as.integer(feature_counts))) != 1L) {
+  stop("Rank-abundance feature accounting differs across validated groups.", call. = FALSE)
+}
+final_feature_count <- unname(as.integer(feature_counts[[1]]))
+input_gct_sha256 <- tolower(digest::digest(file = input_gct, algo = "sha256"))
+mapping_sha256 <- tolower(digest::digest(file = id_map_path, algo = "sha256"))
+run_timestamp_utc <- format(Sys.time(), tz = "UTC", format = "%Y-%m-%dT%H:%M:%SZ")
+
+# All input/design/mapping validation is complete before this first output mutation.
+dir.create(saving_dir, recursive = TRUE, showWarnings = FALSE)
+
 utils::write.csv(
   rank_data[, c("Genes", "Condition", "MeanLog2", "LinearValue", "Rank", "n_animals", "animals", "MarkerType")],
   file.path(saving_dir, "processed_protein_ranks_animal_level.csv"),
+  row.names = FALSE
+)
+
+provenance <- input$count_audit
+provenance$run_timestamp_utc <- run_timestamp_utc
+provenance$input_gct_path <- normalizePath(input_gct, winslash = "/", mustWork = TRUE)
+provenance$input_gct_sha256 <- input_gct_sha256
+provenance$gct_protein_rows <- nrow(input$matrix)
+provenance$gct_sample_columns <- ncol(input$matrix)
+provenance$distinct_animal_ids <- length(unique(input$metadata$AnimalID))
+provenance$sample_classes <- paste(sample_classes, collapse = ";")
+provenance$conditions <- paste(conditions, collapse = ";")
+provenance$mapping_input_path <- normalizePath(id_map_path, winslash = "/", mustWork = TRUE)
+provenance$mapping_input_sha256 <- mapping_sha256
+provenance$mapping_rows <- mapping$n_rows
+provenance$mapping_unique_protein_ids <- mapping$n_unique_protein_ids
+provenance$mapping_nonempty_gene_symbols <- mapping$n_nonempty_gene_symbols
+provenance$final_feature_count <- final_feature_count
+provenance$sampling_unit <- "AnimalID_x_sample_class_x_condition"
+provenance$post_aggregation_transformations <- "none"
+provenance$r_version <- R.version.string
+provenance$platform <- R.version$platform
+provenance <- provenance[c(
+  "run_timestamp_utc", "input_gct_path", "input_gct_sha256", "gct_protein_rows",
+  "gct_sample_columns", "distinct_animal_ids", "sample_classes", "conditions",
+  "sample_class", "condition", "n_observations", "n_distinct_animals",
+  "mapping_input_path", "mapping_input_sha256", "mapping_rows",
+  "mapping_unique_protein_ids", "mapping_nonempty_gene_symbols", "final_feature_count",
+  "sampling_unit", "post_aggregation_transformations", "r_version", "platform"
+)]
+utils::write.csv(
+  provenance,
+  file.path(saving_dir, "rank_abundance_run_provenance.csv"),
   row.names = FALSE
 )
 
