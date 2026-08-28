@@ -155,11 +155,16 @@ if ($Tier -ne "Fast") {
         @{ NEHA_PCA_OUTPUT_ROOT = (Join-Path $scratch "pca") } `
         @( (Join-Path $dataRoot "02_data\animal_level\input_gct\neha_protigy_input_animal_level_primary.gct") )
 
-    # 3e. stages whose inputs are genuinely absent from the project tree
+    # 3e. animal-level rank-abundance QC (regenerates the Fig 3E / Supp D panels)
+    Invoke-Stage "02_rank_abundance (animal level)" "03_qc_exploration\02_rank_abundance_by_sample_class.r" `
+        @{ NEHA_RANK_ABUNDANCE_OUTPUT_DIR = (Join-Path $scratch "rank_abundance") } `
+        @( (Join-Path $dataRoot "02_data\animal_level\input_gct\neha_protigy_input_animal_level_primary.gct"),
+           (Join-Path $dataRoot "02_data\animal_level\mapped\forward\mcherry_paired_veh_vs_mcherry_unpaired_veh.csv") )
+
+    # 3f. stages whose inputs are genuinely absent from the project tree
     Record "01_impute"               "SKIP" "input pg.matrix_raw.tsv absent from project tree" 0
     Record "04_format_metadata"      "SKIP" "input sample_metadata.xlsx absent from project tree" 0
     Record "01_qc_protein_peptide"   "SKIP" "input quicksearch.stats.annotated.xlsx absent (known gap)" 0
-    Record "02_rank_abundance"       "SKIP" "input per-class imputed/ workbooks absent" 0
     Record "05_metadata_create_EXP9" "SKIP" "out of scope: Exp9_Social-Stress; quarantined in 99_out_of_scope/, guarded by NEHA_ALLOW_EXP9" 0
 }
 

@@ -138,6 +138,13 @@ Run the downstream animal-level PCA/QC checks:
 Rscript tests/test_pca_animal_level.R
 ```
 
+Run the animal-level rank-abundance checks (also guards against the stage reverting to its
+former, absent share-bound input):
+
+```bash
+Rscript tests/test_rank_abundance_animal_level.R
+```
+
 ### Pipeline smoke test
 
 `run_pipeline_check.ps1` runs the contract tests and then the runnable pipeline stages,
@@ -194,9 +201,29 @@ Full-analysis paths on shared storage are still supported when these settings po
 
 Large input files and some generated results are kept outside Git. Active QC scripts remain under `03_qc_exploration/`.
 
+### Rank-abundance QC (animal level)
+
+`03_qc_exploration/02_rank_abundance_by_sample_class.r` reads the validated animal-level GCT
+(`02_data/animal_level/input_gct/neha_protigy_input_animal_level_primary.gct`) and summarises by
+**sample_class × condition** — 16 groups, n = 3 animals each. Hemisphere-level observations are
+never used for a biological group summary.
+
+It regenerates the rank-abundance panels used in the corrected proteomics figures:
+
+| panel | groups |
+|---|---|
+| Figure 3E | `mcherry_paired-veh`, `mcherry_unpaired-veh` |
+| Supplementary proteomics D | `neuron_unpaired-veh`, `neuropil_unpaired-veh` |
+
+plus one panel per group, the full `processed_protein_ranks_animal_level.csv`, and the marker
+validation workbook. Outputs go to `03_output/qc/rank_abundance/`; redirect with
+`NEHA_RANK_ABUNDANCE_OUTPUT_DIR`. Contracts live in
+[`tests/test_rank_abundance_animal_level.R`](tests/test_rank_abundance_animal_level.R), which also
+fails if the stage is ever pointed back at the absent per-class imputed workbooks.
+
 ### Known unrunnable stages
 
-Five stages cannot run against the current project tree. `run_pipeline_check.ps1` records each as
+Four stages cannot run against the current project tree. `run_pipeline_check.ps1` records each as
 `SKIP` with a reason; the same list is reproduced here so it is discoverable without reading the
 PowerShell runner. None of these blocks the animal-level pipeline, which runs end to end.
 
@@ -205,7 +232,6 @@ PowerShell runner. None of these blocks the animal-level pipeline, which runs en
 | `01_preprocessing/01_impute.r` | input `pg.matrix_raw.tsv` absent from the project tree |
 | `01_preprocessing/04_format_metadata.r` | input `sample_metadata.xlsx` absent from the project tree |
 | `03_qc_exploration/01_qc_protein_peptide_plot.r` | input `quicksearch.stats.annotated.xlsx` has never existed for this project — see the caveat in [`CANONICAL_OUTPUTS.md`](CANONICAL_OUTPUTS.md), which also gives the recovery route |
-| `03_qc_exploration/02_rank_abundance_by_sample_class.r` | default input `02_data/gct/imputed/` (per-class imputed workbooks) is absent. The rank-abundance panels in the manuscript revision were regenerated from the animal-level GCT instead — see `06_manuscript_figure_revision/` |
 | `99_out_of_scope/05_metadata_create_EXP9.r` | out of scope: belongs to Exp9_Social-Stress, quarantined and guarded by `NEHA_ALLOW_EXP9` |
 
 Each script stops with an explanatory error naming the missing input and the environment variable
