@@ -23,8 +23,20 @@ Converting these to the repository's `option_or_env()` convention with relative 
 a `run_all.R` driver and a `run_pipeline_check.ps1` tier is deferred follow-up work; until that is
 done, treat this folder as read-only provenance.
 
-Because this is a copy rather than a move, the `corrected_source_script` provenance cells in the
-revision manifests still resolve correctly against the shared-drive location.
+The `corrected_source_script` cells in the finalized manifests intentionally remain historical
+execution provenance: they identify the scripts under
+`03_output/reviewer_revision_animal_level_20260827/scripts/` that actually ran. Those finalized
+shared-drive manifests are not rewritten to point at Git.
+
+[`SCRIPT_PROVENANCE.csv`](SCRIPT_PROVENANCE.csv) links every executed script to its durable
+`06_manuscript_figure_revision/` repository snapshot and records both SHA-256 values. All 20 pairs
+are byte-identical. The local `.gitattributes` keeps the R snapshots out of automatic line-ending
+conversion so that this byte-level contract is preserved on Windows checkouts.
+
+The dated [`RANK_ABUNDANCE_SUCCESSOR_NOTE_20260828.md`](RANK_ABUNDANCE_SUCCESSOR_NOTE_20260828.md)
+documents, without changing the frozen source map, that the current active rank-abundance
+successor now groups by `sample_class × condition`. Neither crosswalk makes this snapshot runnable
+or part of the active pipeline.
 
 ## Generations
 

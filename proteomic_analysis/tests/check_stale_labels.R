@@ -6,8 +6,9 @@ if (!dir.exists(repo_root)) repo_root <- normalizePath(getwd(), winslash = "/", 
 
 all_files <- list.files(repo_root, recursive = TRUE, full.names = TRUE, all.files = FALSE)
 # Archived, non-runnable snapshots are excluded the same way /legacy/ is: this audit
-# checks ACTIVE code. 06_manuscript_figure_revision/ is a verbatim provenance copy of
-# already-executed code (see its README) and must not be edited to satisfy a lint.
+# checks ACTIVE pipeline code. 06_manuscript_figure_revision/ is a frozen provenance
+# snapshot of already-executed code (see its README), not an active stage, and must not
+# be edited to satisfy an active-pipeline stale-label lint.
 archived <- "/legacy/|/06_manuscript_figure_revision/"
 active_files <- all_files[
   grepl("\\.(r|R|md|Rmd)$", all_files) &
@@ -30,25 +31,59 @@ add_hits <- function(label, pattern, ignore_case = TRUE) {
 add_hits("old con/res/sus condition mapping", '"[123]"\\s*=\\s*"(con|res|sus)"|phenotypes\\s*=\\s*c\\([^)]*"(con|res|sus)"|\\b(con|res|sus)_vs_(con|res|sus)\\b')
 add_hits("group-code regex missing code 4", "\\[123\\]")
 add_hits("old active sample-class parsing labels", "neuron_soma|neuron_neuropil|sample_class[^\\n]*(microglia|celltype_layer)|celltype_layer[^\\n]*sample_class")
-# Narrowed 2026-08-27. The original pattern was "\\bNature\\b|publication|manuscript".
-# Its purpose is to stop OUTPUT ARTEFACTS being named after a target venue ("Nature_Fig3.svg",
-# "publication_ready_theme"), which goes stale the moment the submission target changes.
-# Since the repository gained 06_manuscript_figure_revision/, the bare words "manuscript" and
-# "publication" became load-bearing domain vocabulary -- the stage exists precisely to regenerate
-# manuscript figure panels, and README/CANONICAL_OUTPUTS must be able to say so. The bare words
-# produced 15 false positives and 0 true positives ("Nature" appears nowhere in the repository).
-# The venue-naming smells below are still caught, as is theme_nature via its own rule.
-#
-# The journal name is checked case-SENSITIVELY and without \b on the right, because \b treats
-# "_" as a word character: the original "\\bNature\\b" never matched "Nature_Fig3.svg", which is
-# the exact artefact-naming case the rule exists to catch. Case sensitivity keeps ordinary prose
-# ("the nature of the effect") from tripping it.
-add_hits("journal-named output artefacts", "(?<![A-Za-z])Nature(?![a-z])", ignore_case = FALSE)
-add_hits("drafting-language output names/comments", "publication[- _]?(ready|quality|figure)")
-add_hits("old plotting helper names", "theme_nature|theme_nature_qc")
+
+# Output-identifier policy. Ordinary prose may discuss manuscripts, publications, or the
+# nature of a measurement. Active filenames/helper identifiers must not encode a target
+# journal, drafting status, or retired theme name. Separators are intentionally required
+# for manuscript/publication identifiers so prose such as "manuscript figure" remains valid.
+output_label_rules <- list(
+  journal_named_output = "(?i)(?<![A-Za-z])nature(?=(?:[_-](?:fig(?:ure)?[0-9]*|panel|plot|supp)|figure|\\.(?:svg|pdf|png|tiff?)))",
+  drafting_status_output = "(?i)(?<![A-Za-z])(publication|manuscript)[-_]+(ready|quality)(?:[-_]+figure)?",
+  retired_theme_helper = "(?i)(?<![A-Za-z0-9])theme[-_]?nature(?:_qc)?"
+)
+
+has_stale_output_label <- function(text) {
+  any(vapply(output_label_rules, function(pattern) grepl(pattern, text, perl = TRUE), logical(1)))
+}
+
+# Committed table-driven controls make changes to the output-label regex policy observable.
+control_cases <- data.frame(
+  text = c(
+    "Nature_Fig3.svg",
+    "NatureFigure.svg",
+    "nature_Fig3.svg",
+    "publication_ready_theme",
+    "publication-quality-figure",
+    "manuscript_ready.svg",
+    "theme_nature",
+    "This script regenerates manuscript panels.",
+    "Publication details are documented in README.",
+    "Nature of the measurement is descriptive."
+  ),
+  expected_rejected = c(rep(TRUE, 7L), rep(FALSE, 3L)),
+  stringsAsFactors = FALSE
+)
+control_cases$observed_rejected <- vapply(control_cases$text, has_stale_output_label, logical(1))
+misclassified <- control_cases$observed_rejected != control_cases$expected_rejected
+if (any(misclassified)) {
+  failures <- c(
+    failures,
+    paste0(
+      "stale-label control misclassified: ",
+      paste(control_cases$text[misclassified], collapse = " | ")
+    )
+  )
+}
+
+for (rule_name in names(output_label_rules)) {
+  add_hits(paste0("stale output identifier (", rule_name, ")"), output_label_rules[[rule_name]])
+}
 
 if (length(failures) > 0) {
   stop(paste(c("Stale-label audit failed:", failures), collapse = "\n"), call. = FALSE)
 }
 
-message("Stale-label audit passed for active code.")
+message(
+  "Stale-label controls passed: ", sum(control_cases$expected_rejected), " must-reject, ",
+  sum(!control_cases$expected_rejected), " must-allow; active-code audit passed."
+)
