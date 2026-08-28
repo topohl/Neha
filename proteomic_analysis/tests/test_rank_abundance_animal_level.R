@@ -2,9 +2,10 @@
 
 # Fail-closed contracts for 03_qc_exploration/02_rank_abundance_by_sample_class.r.
 #
-# Sections 1-3 are self-contained and always run. They execute the real stage
+# Sections 1-4 are self-contained and always run. They execute the real stage
 # against a valid 48-observation animal-level GCT and a syntactically valid but
-# biologically wrong 96-observation hemisphere-style GCT. Section 4 performs
+# biologically wrong 96-observation hemisphere-style GCT, plus an otherwise-valid
+# 48-observation GCT carrying technical-unit identifiers. Section 5 performs
 # full keyed equivalence against the locked canonical inputs and finalized
 # reviewer-revision reference when the shared drive is reachable; that external
 # section is reported explicitly as SKIP when its inputs are unavailable.
@@ -58,6 +59,23 @@ strip_r_comments <- function(path) {
     }
   }
   paste(lines, collapse = "\n")
+}
+
+extract_stage_function <- function(path, function_name) {
+  expressions <- parse(file = path, keep.source = FALSE)
+  matches <- vapply(expressions, function(expression) {
+    is.call(expression) &&
+      length(expression) >= 3L &&
+      identical(expression[[1L]], as.name("<-")) &&
+      is.symbol(expression[[2L]]) &&
+      identical(as.character(expression[[2L]]), function_name)
+  }, logical(1))
+  if (sum(matches) != 1L) {
+    stop("Expected exactly one stage definition for ", function_name, ".", call. = FALSE)
+  }
+  evaluation_environment <- new.env(parent = baseenv())
+  eval(expressions[[which(matches)]], envir = evaluation_environment)
+  get(function_name, envir = evaluation_environment, inherits = FALSE)
 }
 
 sha256_file <- function(path) {
@@ -164,7 +182,56 @@ ok("Fig3E group contract retained",
 ok("SuppD group contract retained",
    grepl('"neuron_unpaired-veh", "neuropil_unpaired-veh"', code, fixed = TRUE))
 
-cat("\n=== 2. self-contained GCT fixtures (always run) ===\n")
+cat("\n=== 2. technical-unit identifier controls (always run) ===\n")
+
+has_technical_identifier <- extract_stage_function(
+  stage,
+  "rank_abundance_has_technical_unit_identifier"
+)
+rejected_identifiers <- c(
+  "C11_L",
+  "C11-R",
+  "C11.R",
+  "C11 L",
+  "C11_left",
+  "C11-right",
+  "C11_LH",
+  "C11-RH",
+  "mouse12_hemisphere_L",
+  "sample_ReplicateGroup1",
+  "sample_replicate_group_2",
+  "animal5_Plate1",
+  "animal5_plate_1"
+)
+allowed_identifiers <- c(
+  "C11",
+  "C510",
+  "template1_C11",
+  "Rosa26",
+  "Lefty1",
+  "platelet_marker_C11"
+)
+identifier_controls <- data.frame(
+  identifier = c(rejected_identifiers, allowed_identifiers),
+  expected_rejected = c(
+    rep(TRUE, length(rejected_identifiers)),
+    rep(FALSE, length(allowed_identifiers))
+  ),
+  stringsAsFactors = FALSE
+)
+identifier_controls$observed_rejected <- has_technical_identifier(identifier_controls$identifier)
+for (i in seq_len(nrow(identifier_controls))) {
+  expected_label <- if (identifier_controls$expected_rejected[[i]]) "rejects" else "allows"
+  ok(
+    paste("identifier guard", expected_label, identifier_controls$identifier[[i]]),
+    identical(
+      identifier_controls$observed_rejected[[i]],
+      identifier_controls$expected_rejected[[i]]
+    )
+  )
+}
+
+cat("\n=== 3. self-contained GCT fixtures (always run) ===\n")
 
 scratch_root <- file.path(tempdir(), paste0("rank_abundance_contract_", Sys.getpid()))
 if (dir.exists(scratch_root)) unlink(scratch_root, recursive = TRUE)
@@ -234,14 +301,33 @@ write_protigy_gct_v13(
   wrong_gct
 )
 
+technical_metadata <- fixture_metadata
+technical_suffixes <- rep(c(".R", " left", "_LH", "-RH"), length.out = nrow(technical_metadata))
+technical_metadata$output_column_name <- paste0(technical_metadata$output_column_name, technical_suffixes)
+technical_matrix <- fixture_matrix
+colnames(technical_matrix) <- technical_metadata$output_column_name
+wrong_technical_gct <- file.path(scratch_root, "wrong_technical_identifiers_48.gct")
+write_protigy_gct_v13(
+  technical_matrix,
+  technical_metadata,
+  paste("fixture", fixture_genes),
+  wrong_technical_gct
+)
+
 parsed_valid <- validate_protigy_gct_v13(valid_gct, expected_matrix = fixture_matrix)
 parsed_wrong <- validate_protigy_gct_v13(wrong_gct, expected_matrix = hemisphere_matrix)
+parsed_wrong_technical <- validate_protigy_gct_v13(
+  wrong_technical_gct,
+  expected_matrix = technical_matrix
+)
 ok("valid fixture is a syntactically valid 48-column ProTigy GCT",
    nrow(parsed_valid$matrix) == 8L && ncol(parsed_valid$matrix) == 48L)
 ok("wrong fixture is a syntactically valid 96-column ProTigy GCT",
    nrow(parsed_wrong$matrix) == 8L && ncol(parsed_wrong$matrix) == 96L)
+ok("technical-ID fixture is an otherwise-valid 48-column ProTigy GCT",
+   nrow(parsed_wrong_technical$matrix) == 8L && ncol(parsed_wrong_technical$matrix) == 48L)
 
-cat("\n=== 3. real-stage fixture execution (always run) ===\n")
+cat("\n=== 4. real-stage fixture execution (always run) ===\n")
 
 wrong_output <- file.path(scratch_root, "wrong_output_must_not_exist")
 wrong_run <- run_stage(wrong_gct, fixture_map, wrong_output, "wrong_stage.log", scratch_root)
@@ -249,6 +335,20 @@ ok("NEGATIVE INPUT: 96-observation hemisphere-style GCT fails closed", wrong_run
 ok("NEGATIVE INPUT: failure names the animal-level experimental-unit contract",
    grepl("exactly 48 unique animal-level sample columns|hemisphere-level technical", wrong_run$log))
 ok("NEGATIVE INPUT: output directory is not created", !dir.exists(wrong_output))
+
+wrong_technical_output <- file.path(scratch_root, "wrong_technical_output_must_not_exist")
+wrong_technical_run <- run_stage(
+  wrong_technical_gct,
+  fixture_map,
+  wrong_technical_output,
+  "wrong_technical_stage.log",
+  scratch_root
+)
+ok("NEGATIVE INPUT: 48-observation technical-ID GCT fails closed", wrong_technical_run$status != 0L)
+ok("NEGATIVE INPUT: technical-ID failure names the experimental-unit contract",
+   grepl("hemisphere-level technical identifiers|animal-level units", wrong_technical_run$log))
+ok("NEGATIVE INPUT: technical-ID output directory is not created",
+   !dir.exists(wrong_technical_output))
 
 valid_output <- file.path(scratch_root, "valid_output")
 valid_run <- run_stage(valid_gct, fixture_map, valid_output, "valid_stage.log", scratch_root)
@@ -290,7 +390,7 @@ if (file.exists(fixture_ranks)) {
      !anyDuplicated(paste(fixture_rank_data$Condition, fixture_rank_data$Genes, sep = "\r")))
 }
 
-cat("\n=== 4. locked canonical and full reference equivalence (external) ===\n")
+cat("\n=== 5. locked canonical and full reference equivalence (external) ===\n")
 
 shared_root <- "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler"
 canonical_gct <- file.path(shared_root, "02_data", "animal_level", "input_gct",

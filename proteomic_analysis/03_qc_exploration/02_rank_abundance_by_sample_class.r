@@ -157,6 +157,18 @@ sample_class_colors <- c(
 # Input
 # ------------------------------------------------------------------------------
 
+rank_abundance_has_technical_unit_identifier <- function(x) {
+  technical_unit_token <- paste0(
+    "(^|[^[:alnum:]])",
+    "(?:l|r|lh|rh|left|right|hemisphere|",
+    "replicate[[:space:]_.-]*group(?:[[:space:]_.-]*[0-9]+)?|",
+    "plate[[:space:]_.-]*[0-9]+)",
+    "($|[^[:alnum:]])"
+  )
+  x <- as.character(x)
+  !is.na(x) & grepl(technical_unit_token, x, ignore.case = TRUE, perl = TRUE)
+}
+
 read_animal_level_matrix <- function(gct_path) {
   parsed <- validate_protigy_gct_v13(gct_path)
   expression_matrix <- as.matrix(parsed$matrix)
@@ -216,9 +228,8 @@ read_animal_level_matrix <- function(gct_path) {
     stop("Rank-abundance phenotypeWithinUnit metadata is inconsistent.", call. = FALSE)
   }
 
-  hemisphere_pattern <- "(^|[_-])(left|right|l|r)($|[_-])|hemisphere|replicategroup|plate[0-9]"
-  if (any(grepl(hemisphere_pattern, metadata$Sample, ignore.case = TRUE, perl = TRUE)) ||
-      any(grepl(hemisphere_pattern, metadata$AnimalID, ignore.case = TRUE, perl = TRUE))) {
+  if (any(rank_abundance_has_technical_unit_identifier(metadata$Sample)) ||
+      any(rank_abundance_has_technical_unit_identifier(metadata$AnimalID))) {
     stop("Rank-abundance input contains hemisphere-level technical identifiers; animal-level units are required.", call. = FALSE)
   }
 
