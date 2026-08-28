@@ -43,17 +43,46 @@ invisible when reading raw filenames, so treat any `bg*` file as neuropil.
 Sample classes: `mcherry`, `neuropil` (= `bg`), `cfos`, `neuron`.
 Condition codes: `1`=paired_cno, `2`=paired_veh, `3`=unpaired_cno, `4`=unpaired_veh.
 
+## What the `Plate1`/`Plate2` token records
+
+The `Plate1`/`Plate2` token parsed out of the sample identifier is **collection plate**
+information: which plate the sample was collected onto.
+
+It is **not** evidence of, and must not be described as, any of the following:
+
+- a proteomics preparation batch
+- a digestion batch
+- an LC-MS or acquisition batch
+- an instrument batch
+- a demonstrated technical proteomics artefact
+
+No technical proteomics batch metadata exists for this dataset. Whenever a contrast is described
+below as "associated with collection plate", that is a statement about the **identifiability of
+the design**, not a claim that a downstream proteomics batch effect was observed. Wording such as
+"confirmed plate confound", "driven by plate", or "technical plate effect" is unsupported by the
+metadata actually available and should not be used.
+
 ## Caveats carried forward from the audits
 
-- **Collection/acquisition plate is confounded with Pairing.** 11 of 12 animals follow
-  paired→Plate1 / unpaired→Plate2. The `paired_veh` vs `unpaired_veh` ("learning") contrast is
-  *completely* aliased with plate in every sample class. `tests/test_design_balance.R` asserts
-  this so it cannot be rediscovered by accident.
-- **The mcherry learning contrast (1132 FDR proteins) must not be read as biology** without
-  further technical investigation — broad one-directional shift, no GSEA/ORA pathway coherence,
-  and complete plate aliasing. See `03_output/inferential_checks/`.
-- **The Pairing×CNO interaction is post-hoc and n=3/cell.** It cannot be distinguished from a
-  Plate×Treatment technical effect, because Plate and Pairing are aliased.
+- **Collection plate is almost entirely associated with Pairing, and completely associated with
+  it in the learning contrast.** 11 of 12 animals follow paired→Plate1 / unpaired→Plate2, and in
+  the `paired_veh` vs `unpaired_veh` ("learning") contrast the association is *complete* in every
+  sample class. Because pairing condition was completely associated with collection plate in this
+  comparison, any collection-plate-associated contribution cannot be distinguished from a
+  pairing-associated contribution. No downstream proteomics batch effect attributable to
+  collection plate has been demonstrated. `tests/test_design_balance.R` asserts the association
+  numerically so this design property cannot be rediscovered by accident.
+- **The mcherry learning contrast yields 1132 FDR-significant proteins; the origin of that signal
+  is unresolved.** The statistical result stands as computed. What it reflects does not follow
+  from it: the shift is broad and one-directional with no GSEA/ORA pathway coherence, and pairing
+  condition is completely associated with collection plate in this contrast, so a
+  pairing-associated and a collection-plate-associated contribution cannot be separated. No
+  technical batch metadata exists that would let a technical origin be demonstrated either, so
+  neither a biological nor a technical explanation is established. See
+  `03_output/inferential_checks/`.
+- **The Pairing×CNO interaction is post-hoc and n=3/cell.** Because collection plate and Pairing
+  are associated, a Plate×Treatment contribution cannot be distinguished from a Pairing×Treatment
+  one. Neither has been demonstrated.
 - **`quicksearch.stats.annotated.xlsx` never existed for this project** (resolved 2026-08-27).
   A filesystem-wide search found that filename only under `Exp9_Social-Stress`, never under
   `Collabs/Neha`. The old hardcoded default —

@@ -177,11 +177,17 @@ Run the design-balance / identifiability contracts:
 Rscript tests/test_design_balance.R
 ```
 
-This asserts the documented confound structure of the cohort — most importantly that
-collection/acquisition plate is near-perfectly aliased with Pairing (11/12 animals), and that
-the `paired_veh` vs `unpaired_veh` contrast is **100%** aliased with plate. It quantifies which
-simple contrasts are plate-protected and which are not, so the confound cannot be rediscovered
-by accident. The cohort-level checks skip cleanly when the shared drive is unreachable.
+This asserts the documented association structure of the cohort — most importantly that
+collection plate is near-perfectly associated with Pairing (11/12 animals), and that the
+`paired_veh` vs `unpaired_veh` contrast is **100%** associated with collection plate.
+
+Because pairing condition was completely associated with collection plate in this comparison,
+any collection-plate-associated contribution cannot be distinguished from a pairing-associated
+contribution. No downstream proteomics batch effect attributable to collection plate has been
+demonstrated — see [`CANONICAL_OUTPUTS.md`](CANONICAL_OUTPUTS.md) for what the `Plate1`/`Plate2`
+token does and does not record. The checks also quantify which simple contrasts carry no
+collection-plate variation at all, so this design property cannot be rediscovered by accident.
+The cohort-level checks skip cleanly when the shared drive is unreachable.
 
 ## Running On Your Own Data
 

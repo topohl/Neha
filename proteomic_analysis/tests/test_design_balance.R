@@ -2,11 +2,19 @@
 
 # Design-balance / identifiability checks for the animal-level Neha design.
 #
-# Motivation: the plate-vs-Pairing confound in this cohort was only found by manual
-# provenance archaeology across two separate audits. These checks make the aliasing an
-# explicit, machine-checked property of the design rather than something to rediscover.
+# Motivation: the collection-plate-vs-Pairing association in this cohort was only found by
+# manual provenance archaeology across two separate audits. These checks make the association
+# an explicit, machine-checked property of the design rather than something to rediscover.
 #
-# They are descriptive contracts, not pass/fail judgements about the biology: the confound
+# SCOPE OF THE CLAIM. Plate1/Plate2 is COLLECTION PLATE information. It is not proteomics
+# preparation, digestion, LC-MS, instrument or any other technical batch metadata, and no
+# downstream proteomics batch effect attributable to collection plate has been demonstrated for
+# this dataset. What these checks establish is an IDENTIFIABILITY property: where pairing
+# condition and collection plate are completely associated, a collection-plate-associated
+# contribution cannot be distinguished from a pairing-associated one. That is a statement about
+# the design, not about a technical artefact having been observed.
+#
+# They are descriptive contracts, not pass/fail judgements about the biology: the association
 # is a real property of the collected cohort and cannot be fixed in software. The tests
 # fail only if the design's *identifiability structure* differs from what has been audited
 # and documented in CANONICAL_OUTPUTS.md -- i.e. if someone changes the assignment metadata
@@ -114,7 +122,9 @@ if (!file.exists(assignment_path)) {
   cat("    set NEHA_SOURCE_SAMPLE_ASSIGNMENT to run the cohort-level contracts.\n")
 } else {
   src <- utils::read.csv(assignment_path, stringsAsFactors = FALSE)
-  # Plate is embedded in the raw acquisition (.d) filename; it is acquisition-side provenance.
+  # The Plate token is embedded in the sample identifier and records COLLECTION PLATE, i.e.
+  # which plate the sample was collected onto. It is not a proteomics preparation, digestion,
+  # LC-MS or instrument batch label; no such technical batch metadata exists for this dataset.
   src$Plate <- sub(".*_(Plate[0-9]+)_.*", "\\1", src$sample_id)
   fac <- derive_design_factors(src$condition)
   src$Pairing <- fac$Pairing
@@ -127,31 +137,33 @@ if (!file.exists(assignment_path)) {
   expect(all(per_animal == 1L),
          "each AnimalID maps to exactly one Plate (so Plate is animal-level, not per-tissue)")
 
-  cat("\n=== cohort: documented aliasing structure ===\n")
+  cat("\n=== cohort: documented association structure ===\n")
   a_pairing <- aliasing_fraction(animals$Plate, animals$Pairing)
   a_treat <- aliasing_fraction(animals$Plate, animals$Treatment)
-  cat("    Plate~Pairing aliasing  :", sprintf("%.3f", a_pairing), "\n")
-  cat("    Plate~Treatment aliasing:", sprintf("%.3f", a_treat), "\n")
+  cat("    Plate~Pairing association  :", sprintf("%.3f", a_pairing), "\n")
+  cat("    Plate~Treatment association:", sprintf("%.3f", a_treat), "\n")
 
   expect(a_pairing >= 0.9,
-         sprintf("Plate remains near-perfectly aliased with Pairing (%.3f >= 0.9) as documented", a_pairing))
+         sprintf("Plate remains near-perfectly associated with Pairing (%.3f >= 0.9) as documented", a_pairing))
   expect(a_treat < 0.9,
-         sprintf("Plate is NOT strongly aliased with Treatment (%.3f < 0.9) as documented", a_treat))
+         sprintf("Plate is NOT strongly associated with Treatment (%.3f < 0.9) as documented", a_treat))
 
-  cat("\n=== cohort: which simple contrasts are plate-protected? ===\n")
+  cat("\n=== cohort: which simple contrasts carry no collection-plate variation? ===\n")
   unpaired <- animals[animals$Pairing == "unpaired", ]
   paired <- animals[animals$Pairing == "paired", ]
   expect(isTRUE(stratum_is_covariate_free(unpaired$Plate)),
-         "unpaired stratum is single-plate, so unpaired_cno-vs-unpaired_veh is free of an additive plate effect")
+         "unpaired stratum is single-plate, so unpaired_cno-vs-unpaired_veh carries no collection-plate variation")
   expect(isFALSE(stratum_is_covariate_free(paired$Plate)),
-         "paired stratum spans >1 plate, so paired_cno-vs-paired_veh is NOT fully plate-protected")
+         "paired stratum spans >1 collection plate, so paired_cno-vs-paired_veh does not carry a single plate level")
 
-  cat("\n=== cohort: learning contrast is completely aliased (the headline caveat) ===\n")
+  cat("\n=== cohort: learning contrast is completely associated with collection plate ===\n")
   learn <- animals[animals$condition %in% c("paired_veh", "unpaired_veh"), ]
   a_learn <- aliasing_fraction(learn$Plate, learn$condition)
-  cat("    Plate~condition aliasing within {paired_veh, unpaired_veh}:", sprintf("%.3f", a_learn), "\n")
+  cat("    Plate~condition association within {paired_veh, unpaired_veh}:", sprintf("%.3f", a_learn), "\n")
   expect(isTRUE(all.equal(a_learn, 1)),
-         "paired_veh-vs-unpaired_veh remains 100% aliased with Plate -- do not interpret it as biology alone")
+         paste("paired_veh-vs-unpaired_veh remains 100% associated with collection plate --",
+               "a collection-plate-associated and a pairing-associated contribution cannot be",
+               "distinguished here; no proteomics batch effect is implied"))
 }
 
 cat("\n=== RESULT ===\n")
