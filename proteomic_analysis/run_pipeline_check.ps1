@@ -35,21 +35,37 @@ $scratch = Join-Path $env:TEMP ("proteomics_pipeline_check_" + (Get-Date -Format
 New-Item -ItemType Directory -Force -Path $scratch | Out-Null
 
 # --------------------------------------------------------------------------------
-# Neutralise inherited PROTEOMICS_* overrides.
-# Every stage resolves paths as option -> env var -> default. A stale PROTEOMICS_* variable in
-# the calling shell is therefore silently honoured by the child Rscript processes, which
-# makes results depend on session history instead of the repo. Clear them all up front
-# (restoring on exit) so this check is reproducible, and report anything we found.
+# Fail-closed safety gates (added 2026-08-31 after the 2026-08-28 16:36 incident).
+# See run_pipeline_safety.ps1 for the full incident write-up. In short: the runner was
+# loaded from one commit, the tree was checked out to another mid-run, the stage scripts
+# then expected the pre-rename NEHA_* variables, and 37 files were written into the
+# validated shared-drive tree instead of scratch. Three gates now stand in front of every
+# producing stage: repository identity, override contract, and scratch-root containment.
 # --------------------------------------------------------------------------------
-$inheritedOverride = @{}
-Get-ChildItem Env: | Where-Object { $_.Name -like "PROTEOMICS_*" } | ForEach-Object {
-    $inheritedOverride[$_.Name] = $_.Value
-}
+. (Join-Path $PSScriptRoot "run_pipeline_safety.ps1")
+
+# Pin repository identity at startup. Every producing stage re-checks against this.
+$startupRepoState = Get-GitRepoState -RepoRoot $repo
+Write-Host ""
+Write-Host "repository pinned at startup:" -ForegroundColor Cyan
+Write-Host ("  root   : {0}" -f $startupRepoState.Root)
+Write-Host ("  HEAD   : {0}" -f $startupRepoState.Head)
+Write-Host ("  branch : {0}" -f $startupRepoState.Branch)
+
+# --------------------------------------------------------------------------------
+# Neutralise inherited PROTEOMICS_* / NEHA_* overrides.
+# Every stage resolves paths as option -> env var -> default. A stale variable in the
+# calling shell is therefore silently honoured by the child Rscript processes, which makes
+# results depend on session history instead of the repo. The pre-rename NEHA_* names are
+# swept too: a leftover legacy variable could still steer an older stage script at a
+# canonical path. Cleared up front, restored on exit, and reported.
+# --------------------------------------------------------------------------------
+$inheritedOverride = Clear-InheritedOverrides -Prefixes @("PROTEOMICS_", "NEHA_")
 if ($inheritedOverride.Count -gt 0) {
-    Write-Host "WARNING: cleared inherited PROTEOMICS_* override(s) from your shell for this run:" -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "WARNING: cleared inherited override(s) from your shell for this run:" -ForegroundColor Yellow
     foreach ($k in $inheritedOverride.Keys) {
         Write-Host ("  {0} = {1}" -f $k, $inheritedOverride[$k]) -ForegroundColor Yellow
-        Remove-Item -Path ("Env:" + $k) -ErrorAction SilentlyContinue
     }
     Write-Host "  (restored when this script exits; set them deliberately if you meant to override)" -ForegroundColor Yellow
     Write-Host ""
@@ -64,8 +80,11 @@ function Record($name, $status, $detail, $seconds) {
     if ($status -eq "PASS") { $color = "Green" }
     if ($status -eq "FAIL") { $color = "Red" }
     if ($status -eq "SKIP") { $color = "Yellow" }
-    Write-Host ("  [{0,-4}] {1,-38} {2,7:N1}s  {3}" -f $status, $name, $seconds, $detail) -ForegroundColor $color
+    if ($status -eq "ABORT") { $color = "Magenta" }
+    Write-Host ("  [{0,-5}] {1,-38} {2,7:N1}s  {3}" -f $status, $name, $seconds, $detail) -ForegroundColor $color
 }
+
+$script:safetyAborts = 0
 
 function Invoke-Stage($name, $scriptRelPath, $envMap, $requiredInputs) {
     foreach ($p in $requiredInputs) {
@@ -74,10 +93,45 @@ function Invoke-Stage($name, $scriptRelPath, $envMap, $requiredInputs) {
             return
         }
     }
+
+    # ---- fail-closed safety gates: all of these run BEFORE Rscript is invoked ----------
+    # Any violation records ABORT and returns without touching R, so a drifted tree or an
+    # unrecognised override can never reach a producing stage.
+    try {
+        # A. repository identity has not changed since startup
+        $currentRepoState = Get-GitRepoState -RepoRoot $repo
+        [void](Assert-NoCheckoutDrift -StartupState $startupRepoState -CurrentState $currentRepoState -StageName $name)
+
+        # A. the stage script still resolves where we expect, inside that repository
+        $stageFull = Assert-StageScriptResolves -RepoRoot $repo -StageRelPath $scriptRelPath -StageName $name
+
+        # B. the code about to run actually recognises every override we are handing it
+        [void](Assert-OverrideContract -RepoRoot $repo -StageFullPath $stageFull -EnvNames @($envMap.Keys) -StageName $name)
+
+        # C. every destination we direct lands inside this run's scratch root, never in a
+        #    protected canonical root
+        [void](Assert-SafeOutputTargets -EnvMap $envMap -ScratchRoot $scratch -StageName $name)
+    } catch {
+        $script:safetyAborts++
+        Record $name "ABORT" $_.Exception.Message 0
+        return
+    }
+
     foreach ($k in $envMap.Keys) { Set-Item -Path ("Env:" + $k) -Value $envMap[$k] }
+
+    # D. nothing else in the environment can redirect this stage
+    try {
+        [void](Assert-NoStaleOverridesPresent -EnvMap $envMap -StageName $name)
+    } catch {
+        foreach ($k in $envMap.Keys) { Remove-Item -Path ("Env:" + $k) -ErrorAction SilentlyContinue }
+        $script:safetyAborts++
+        Record $name "ABORT" $_.Exception.Message 0
+        return
+    }
+
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     $log = Join-Path $scratch ((Split-Path $scriptRelPath -Leaf) + ".log")
-    & $rscript (Join-Path $repo $scriptRelPath) *> $log
+    & $rscript $stageFull *> $log
     $code = $LASTEXITCODE
     $sw.Stop()
     foreach ($k in $envMap.Keys) { Remove-Item -Path ("Env:" + $k) -ErrorAction SilentlyContinue }
@@ -96,6 +150,35 @@ Write-Host ""
 
 # ---------------------------------------------------------------- 1. contracts
 Write-Host "1. Contract / unit tests" -ForegroundColor Cyan
+# The tests are read-only, but a tree that has already drifted makes every result below
+# meaningless, so check here too rather than only in front of the producing stages.
+try {
+    [void](Assert-NoCheckoutDrift -StartupState $startupRepoState `
+                                  -CurrentState (Get-GitRepoState -RepoRoot $repo) `
+                                  -StageName "contract tests")
+} catch {
+    Write-Host $_.Exception.Message -ForegroundColor Magenta
+    exit 1
+}
+# The safety net gates every producing stage below, so verify it before relying on it.
+# Fixture-only: touches no shared drive and invokes no R stage.
+$safetyTest = Join-Path $repo "tests\test_runner_safety.ps1"
+if (Test-Path -LiteralPath $safetyTest) {
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    $log = Join-Path $scratch "test_runner_safety.log"
+    & powershell -NoProfile -ExecutionPolicy Bypass -File $safetyTest *> $log
+    $code = $LASTEXITCODE
+    $sw.Stop()
+    if ($code -eq 0) {
+        Record "test_runner_safety (ps1)" "PASS" "ok" $sw.Elapsed.TotalSeconds
+    } else {
+        $tail = (Get-Content -LiteralPath $log -Tail 3 -ErrorAction SilentlyContinue) -join " | "
+        Record "test_runner_safety (ps1)" "FAIL" $tail $sw.Elapsed.TotalSeconds
+    }
+} else {
+    Record "test_runner_safety (ps1)" "FAIL" "safety contracts missing from tests/" 0
+}
+
 Get-ChildItem -LiteralPath (Join-Path $repo "tests") -Filter "*.R" | ForEach-Object {
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     $log = Join-Path $scratch ($_.BaseName + ".log")
@@ -200,10 +283,16 @@ Write-Host "===== SUMMARY =====" -ForegroundColor Cyan
 $results | Format-Table -AutoSize
 # NOTE: wrap in @() -- in PowerShell 5.1 a single-item pipeline result is a scalar whose
 # .Count is empty, which would silently under-report failures.
-$pass = @($results | Where-Object { $_.Status -eq "PASS" }).Count
-$fail = @($results | Where-Object { $_.Status -eq "FAIL" }).Count
-$skip = @($results | Where-Object { $_.Status -eq "SKIP" }).Count
-Write-Host ("PASS {0}   FAIL {1}   SKIP {2}" -f $pass, $fail, $skip)
+$pass  = @($results | Where-Object { $_.Status -eq "PASS" }).Count
+$fail  = @($results | Where-Object { $_.Status -eq "FAIL" }).Count
+$skip  = @($results | Where-Object { $_.Status -eq "SKIP" }).Count
+$abort = @($results | Where-Object { $_.Status -eq "ABORT" }).Count
+Write-Host ("PASS {0}   FAIL {1}   SKIP {2}   ABORT {3}" -f $pass, $fail, $skip, $abort)
+if ($abort -gt 0) {
+    Write-Host ""
+    Write-Host "SAFETY ABORT(S): a fail-closed gate stopped a stage BEFORE R was invoked." -ForegroundColor Magenta
+    Write-Host "No producing stage ran for those entries, so nothing was written anywhere." -ForegroundColor Magenta
+}
 $results | Export-Csv -LiteralPath (Join-Path $scratch "summary.csv") -NoTypeInformation
 Write-Host "logs + summary: $scratch"
 
@@ -213,8 +302,8 @@ if ($inheritedOverride.Count -gt 0) {
     Write-Host ("Restored {0} inherited PROTEOMICS_* override(s) in your shell." -f $inheritedOverride.Count) -ForegroundColor Yellow
 }
 
-if ($fail -gt 0) {
-    Write-Host "FAILURES PRESENT - inspect the logs above." -ForegroundColor Red
+if ($fail -gt 0 -or $abort -gt 0) {
+    Write-Host "FAILURES OR SAFETY ABORTS PRESENT - inspect the output above." -ForegroundColor Red
     exit 1
 }
 Write-Host "No failures. Validated outputs were not modified." -ForegroundColor Green
