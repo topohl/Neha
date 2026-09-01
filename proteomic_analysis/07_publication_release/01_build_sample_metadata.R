@@ -1,0 +1,484 @@
+#!/usr/bin/env Rscript
+
+# Publication release, stage 01 -- authoritative sample metadata tables.
+#
+# Produces
+#   metadata/sample_metadata.tsv              one row per acquisition/measurement (96)
+#   metadata/animal_level_sample_metadata.tsv one row per AnimalID x sample_class (48)
+#   metadata/metadata_field_provenance.tsv    per-field status, so nothing is guessed
+#
+# Everything is READ from validated artefacts. No value is inferred:
+#
+#   source_sample_assignment.csv          measurement -> animal assignment used to build
+#                                         the locked animal-level GCT
+#   collection_plate_provenance_audit.csv  acquisition-run-name tokens already parsed and
+#                                         audited (instrument alias, date, LC method,
+#                                         collection plate, well, injection index)
+#   design_identifiability_audit.csv       independent 48-row animal-level table with
+#                                         explicit left/right source samples
+#   sample_annotation.xlsx                 the ONLY artefact carrying original `.d`
+#                                         acquisition paths; sheet is named report.stats_
+#   sample_info.xlsx                       legacy 2024 schema (ReplicateGroup, plate, ...)
+#   the locked animal-level GCT             column names, verified against what we build
+#
+# The 48-row table is DERIVED from the 96-row table and then cross-checked against
+# design_identifiability_audit.csv. Two independent constructions agreeing is the point;
+# a single read would not catch a stale audit.
+
+suppressWarnings({
+  args <- commandArgs(trailingOnly = FALSE)
+  file_arg <- grep("^--file=", args, value = TRUE)
+  here <- if (length(file_arg) == 1L) dirname(sub("^--file=", "", file_arg)) else "07_publication_release"
+})
+source(file.path(here, "R", "release_utils.R"))
+REPO_ROOT <- release_repo_root()
+release_source_project_helpers(REPO_ROOT)
+source(file.path(REPO_ROOT, "07_publication_release", "R", "release_validation.R"))
+release_require("readxl", "digest")
+
+DATA_ROOT <- release_data_root()
+PROJECT_ROOT <- release_project_root()
+OUT_ROOT <- release_prepare_output_root()
+STAGE <- "07_publication_release/01_build_sample_metadata.R"
+
+release_banner("stage 01 -- sample metadata")
+release_log("release root: ", OUT_ROOT)
+
+# --------------------------------------------------------------------------------------
+# canonical inputs
+# --------------------------------------------------------------------------------------
+
+INFERENTIAL <- file.path(DATA_ROOT, "03_output", "inferential_checks",
+                         "final_inferential_checks_20260826")
+INPUT_GCT_DIR <- file.path(DATA_ROOT, "02_data", "animal_level", "input_gct")
+
+paths <- list(
+  source_assignment = file.path(INPUT_GCT_DIR, "source_sample_assignment.csv"),
+  aggregation_summary = file.path(INPUT_GCT_DIR, "aggregation_summary.csv"),
+  plate_provenance = file.path(INFERENTIAL, "collection_plate_provenance_audit.csv"),
+  design_identifiability = file.path(INFERENTIAL, "design_identifiability_audit.csv"),
+  sample_annotation = file.path(PROJECT_ROOT, "sample_annotation.xlsx"),
+  sample_info = file.path(DATA_ROOT, "01_input", "metadata", "sample_info.xlsx"),
+  animal_gct = release_locked_artefact_path("animal_level_input_gct", DATA_ROOT)
+)
+for (nm in names(paths)) release_assert_exists(paths[[nm]], nm)
+
+assignment <- release_read_csv(paths$source_assignment)
+plate <- release_read_csv(paths$plate_provenance)
+design48 <- release_read_csv(paths$design_identifiability)
+agg_summary <- release_read_csv(paths$aggregation_summary)
+annotation <- as.data.frame(
+  readxl::read_excel(paths$sample_annotation, sheet = 1, .name_repair = "minimal"),
+  stringsAsFactors = FALSE, check.names = FALSE)
+sample_info <- as.data.frame(
+  readxl::read_excel(paths$sample_info, sheet = 1, .name_repair = "minimal"),
+  stringsAsFactors = FALSE, check.names = FALSE)
+animal_gct <- release_read_gct(paths$animal_gct)
+
+stopifnot(nrow(assignment) == RELEASE_DESIGN_INVARIANTS$n_measurement_records)
+stopifnot(nrow(plate) == RELEASE_DESIGN_INVARIANTS$n_measurement_records)
+stopifnot(nrow(annotation) == RELEASE_DESIGN_INVARIANTS$n_measurement_records)
+stopifnot(nrow(sample_info) == RELEASE_DESIGN_INVARIANTS$n_measurement_records)
+stopifnot(nrow(design48) == RELEASE_DESIGN_INVARIANTS$n_animal_level_units)
+
+# --------------------------------------------------------------------------------------
+# raw acquisition file identity
+# --------------------------------------------------------------------------------------
+# sample_annotation.xlsx `Name` holds the original acquisition path, e.g.
+#   D:\Proteomics\Fabian\Tobias\Olive_20241217_..._1_8782.d
+# Stripping the directory and the `.d` suffix must reproduce the sample id exactly --
+# that equality is what licenses publishing a raw_file_basename at all. It is asserted,
+# not assumed; if it ever fails the stage stops rather than emitting a plausible name.
+
+annotation_name <- as.character(annotation$Name)
+raw_basename_no_ext <- sub("\\.d$", "", sub("^.*[\\\\/]", "", annotation_name), ignore.case = TRUE)
+annotation_by_nnumber <- stats::setNames(seq_len(nrow(annotation)), as.character(annotation$id))
+
+info_idx <- annotation_by_nnumber[as.character(sample_info$sampleNumber)]
+if (anyNA(info_idx)) {
+  stop("sample_annotation.xlsx does not cover every sample_info N-number.", call. = FALSE)
+}
+if (!identical(raw_basename_no_ext[info_idx], as.character(sample_info$id))) {
+  stop("Original `.d` acquisition names do not reproduce the sample ids; ",
+       "refusing to publish raw_file_basename.", call. = FALSE)
+}
+release_log("  raw acquisition identity verified for all ", nrow(sample_info),
+            " runs (basename(Name) minus .d == sample_id)")
+
+raw_by_sample <- data.frame(
+  sample_id = as.character(sample_info$id),
+  raw_file_basename = paste0(raw_basename_no_ext[info_idx], ".d"),
+  raw_file_original_path = annotation_name[info_idx],
+  raw_file_extension = ".d",
+  historical_group_label = as.character(annotation$group_label)[info_idx],
+  annotation_plate = as.character(annotation$Plate)[info_idx],
+  historical_hemisphere_label = as.character(annotation$label)[info_idx],
+  legacy_replicate_group = as.character(sample_info$ReplicateGroup),
+  legacy_sample_number = as.character(sample_info$sampleNumber),
+  legacy_shortname = as.character(sample_info$shortname),
+  legacy_row_name = as.character(sample_info$row.names),
+  legacy_group2 = as.character(sample_info$group2),
+  stringsAsFactors = FALSE, check.names = FALSE
+)
+
+# --------------------------------------------------------------------------------------
+# measurement-level table
+# --------------------------------------------------------------------------------------
+
+plate_idx <- match(assignment$sample_id, plate$sample_id)
+if (anyNA(plate_idx)) stop("collection-plate audit does not cover every source sample.", call. = FALSE)
+raw_idx <- match(assignment$sample_id, raw_by_sample$sample_id)
+if (anyNA(raw_idx)) stop("acquisition-name table does not cover every source sample.", call. = FALSE)
+
+cond <- release_split_condition(assignment$condition)
+acq_date_token <- as.character(plate$date_token)[plate_idx]
+acq_date_iso <- ifelse(
+  grepl("^[0-9]{8}$", acq_date_token),
+  paste(substr(acq_date_token, 1, 4), substr(acq_date_token, 5, 6), substr(acq_date_token, 7, 8),
+        sep = "-"),
+  NA_character_
+)
+
+measurement <- data.frame(
+  sample_id = as.character(assignment$sample_id),
+  acquisition_run_name = as.character(assignment$sample_id),
+  raw_file_basename = raw_by_sample$raw_file_basename[raw_idx],
+  raw_file_original_path = raw_by_sample$raw_file_original_path[raw_idx],
+  raw_file_extension = raw_by_sample$raw_file_extension[raw_idx],
+  AnimalID = as.character(assignment$AnimalID),
+  hemisphere = as.character(assignment$hemisphere),
+  hemisphere_evidence_source = as.character(assignment$hemisphere_crosscheck_mode),
+  historical_hemisphere_label = raw_by_sample$historical_hemisphere_label[raw_idx],
+  legacy_replicate_group = raw_by_sample$legacy_replicate_group[raw_idx],
+  sample_class = as.character(assignment$sample_class),
+  sample_class_historical_alias = release_sample_class_alias(assignment$sample_class),
+  sample_class_historical_group_label = raw_by_sample$historical_group_label[raw_idx],
+  condition_code = as.character(assignment$condition_code),
+  condition = as.character(assignment$condition),
+  pairing_status = cond$pairing_status,
+  treatment = cond$treatment,
+  collection_plate = as.character(plate$plate_token)[plate_idx],
+  plate_sample_number = as.character(plate$N_token)[plate_idx],
+  injection_index = as.integer(plate$N_number)[plate_idx],
+  plate_set_token = as.character(plate$S_token)[plate_idx],
+  well_position = as.character(plate$well_position)[plate_idx],
+  acquisition_run_trailing_id = as.character(plate$trailing_id)[plate_idx],
+  instrument_alias_token = as.character(plate$instrument_token)[plate_idx],
+  instrument_model = NA_character_,
+  acquisition_date = acq_date_iso,
+  acquisition_date_token = acq_date_token,
+  lc_and_method_token = as.character(plate$method_token)[plate_idx],
+  analysis_unit_primary = "animal",
+  included_in_animal_level = !as.logical(assignment$exclude),
+  animal_level_sample_id = as.character(assignment$output_column_name),
+  measurement_level_matrix_column = as.character(assignment$sample_id),
+  source_assignment_status = as.character(assignment$source_assignment_status),
+  legacy_sample_number = raw_by_sample$legacy_sample_number[raw_idx],
+  legacy_shortname = raw_by_sample$legacy_shortname[raw_idx],
+  legacy_group2_hemisphere_coded = raw_by_sample$legacy_group2[raw_idx],
+  stringsAsFactors = FALSE, check.names = FALSE
+)
+
+measurement <- measurement[order(measurement$sample_class, measurement$condition_code,
+                                 measurement$AnimalID, measurement$hemisphere), , drop = FALSE]
+rownames(measurement) <- NULL
+
+# --------------------------------------------------------------------------------------
+# sample-class corroboration against two independent sources
+# --------------------------------------------------------------------------------------
+# The analysis sample_class comes from sample_info.xlsx (`celltype`). Two independent
+# records of the same assignment exist: the `group_label` column of sample_annotation.xlsx,
+# and the autosampler plate layout implied by the well row letter. This block compares all
+# three and PUBLISHES the comparison. It deliberately does not correct anything: the
+# analysis class is what the validated results were computed on, and changing it here would
+# silently desynchronise the published metadata from the locked GCTs.
+
+annotation_class <- release_normalize_annotation_label(
+  raw_by_sample$historical_group_label[match(measurement$sample_id, raw_by_sample$sample_id)])
+if (anyNA(annotation_class)) {
+  stop("Could not normalise every sample_annotation.xlsx group_label to a canonical ",
+       "sample class: ",
+       paste(unique(raw_by_sample$historical_group_label[
+         match(measurement$sample_id[is.na(annotation_class)], raw_by_sample$sample_id)]),
+         collapse = ", "),
+       ". Refusing to run a corroboration check that would silently pass on NA.",
+       call. = FALSE)
+}
+
+well_row <- substr(measurement$well_position, 1, 1)
+# Modal class per well row, computed from the ANALYSIS class itself, so the layout rule is
+# not borrowed from the source it is being used to check.
+row_modal_class <- vapply(split(measurement$sample_class, well_row), function(x) {
+  names(sort(table(x), decreasing = TRUE))[[1]]
+}, character(1))
+layout_class <- unname(row_modal_class[well_row])
+
+measurement$sample_class_annotation_source <- annotation_class
+measurement$sample_class_plate_layout_implied <- layout_class
+measurement$sample_class_corroborated <-
+  measurement$sample_class == annotation_class &
+  measurement$sample_class == layout_class
+
+discrepant <- which(!measurement$sample_class_corroborated)
+sample_class_discrepancy <- if (length(discrepant)) {
+  data.frame(
+    sample_id = measurement$sample_id[discrepant],
+    raw_file_basename = measurement$raw_file_basename[discrepant],
+    plate_sample_number = measurement$plate_sample_number[discrepant],
+    collection_plate = measurement$collection_plate[discrepant],
+    plate_set_token = measurement$plate_set_token[discrepant],
+    well_position = measurement$well_position[discrepant],
+    AnimalID = measurement$AnimalID[discrepant],
+    condition = measurement$condition[discrepant],
+    hemisphere = measurement$hemisphere[discrepant],
+    sample_class_used_by_analysis = measurement$sample_class[discrepant],
+    sample_class_sample_annotation_xlsx = annotation_class[discrepant],
+    sample_class_plate_layout_implied = layout_class[discrepant],
+    animal_level_unit_affected = measurement$animal_level_sample_id[discrepant],
+    stringsAsFactors = FALSE, check.names = FALSE)
+} else {
+  data.frame(sample_id = character(0), raw_file_basename = character(0),
+             plate_sample_number = character(0), collection_plate = character(0),
+             plate_set_token = character(0), well_position = character(0),
+             AnimalID = character(0), condition = character(0), hemisphere = character(0),
+             sample_class_used_by_analysis = character(0),
+             sample_class_sample_annotation_xlsx = character(0),
+             sample_class_plate_layout_implied = character(0),
+             animal_level_unit_affected = character(0),
+             stringsAsFactors = FALSE, check.names = FALSE)
+}
+
+n_discrepant <- nrow(sample_class_discrepancy)
+release_log("  sample-class corroboration: ", nrow(measurement) - n_discrepant, "/",
+            nrow(measurement), " agree across all three sources")
+if (n_discrepant) {
+  release_log("  *** ", n_discrepant, " measurement(s) where the analysis sample_class is ",
+              "contradicted by BOTH independent sources ***")
+  for (i in seq_len(n_discrepant)) {
+    r <- sample_class_discrepancy[i, , drop = FALSE]
+    release_log("      ", r$plate_sample_number, " ", r$plate_set_token, "-",
+                r$well_position, " ", r$AnimalID, " ", r$hemisphere,
+                ": analysis=", r$sample_class_used_by_analysis,
+                " | annotation=", r$sample_class_sample_annotation_xlsx,
+                " | plate layout=", r$sample_class_plate_layout_implied)
+  }
+  release_log("  These are PUBLISHED as a documented discrepancy and NOT corrected here.")
+}
+
+# Cross-checks the design contracts depend on.
+stopifnot(nrow(measurement) == RELEASE_DESIGN_INVARIANTS$n_measurement_records)
+stopifnot(!anyDuplicated(measurement$sample_id))
+stopifnot(!anyDuplicated(measurement$raw_file_basename))
+stopifnot(all(measurement$hemisphere %in% c("Left", "Right")))
+stopifnot(all(measurement$sample_class %in% sample_classes))
+stopifnot(all(measurement$condition %in% condition_levels))
+stopifnot(all(measurement$included_in_animal_level))
+if (!identical(sort(unique(measurement$animal_level_sample_id)), sort(animal_gct$sample_ids))) {
+  stop("animal_level_sample_id does not reproduce the locked GCT column names.", call. = FALSE)
+}
+# Legacy ReplicateGroup is the numeric hemisphere encoding; confirm it still agrees.
+legacy_hemisphere <- ifelse(measurement$legacy_replicate_group == "1", "Left", "Right")
+if (!identical(legacy_hemisphere, measurement$hemisphere)) {
+  stop("Legacy ReplicateGroup disagrees with the audited hemisphere assignment.", call. = FALSE)
+}
+release_log("  measurement-level table: ", nrow(measurement), " rows x ", ncol(measurement), " cols")
+
+# --------------------------------------------------------------------------------------
+# animal-level table
+# --------------------------------------------------------------------------------------
+
+key <- paste(measurement$AnimalID, measurement$sample_class, sep = "\r")
+split_by_unit <- split(seq_len(nrow(measurement)), key)
+
+animal_level <- do.call(rbind, lapply(split_by_unit, function(idx) {
+  block <- measurement[idx, , drop = FALSE]
+  block <- block[order(block$hemisphere), , drop = FALSE]
+  if (length(unique(block$condition)) != 1L) {
+    stop("An AnimalID x sample_class unit spans more than one condition.", call. = FALSE)
+  }
+  if (length(unique(block$collection_plate)) != 1L) {
+    stop("An AnimalID x sample_class unit spans more than one collection plate.", call. = FALSE)
+  }
+  data.frame(
+    AnimalID = block$AnimalID[[1]],
+    sample_class = block$sample_class[[1]],
+    sample_class_historical_alias = block$sample_class_historical_alias[[1]],
+    condition = block$condition[[1]],
+    condition_code = block$condition_code[[1]],
+    pairing_status = block$pairing_status[[1]],
+    treatment = block$treatment[[1]],
+    collection_plate = block$collection_plate[[1]],
+    n_hemisphere_measurements = nrow(block),
+    hemispheres_present = paste(block$hemisphere, collapse = ";"),
+    source_sample_ids = paste(block$sample_id, collapse = ";"),
+    source_raw_file_basenames = paste(block$raw_file_basename, collapse = ";"),
+    left_source_sample = block$sample_id[block$hemisphere == "Left"][[1]],
+    right_source_sample = block$sample_id[block$hemisphere == "Right"][[1]],
+    animal_level_column_name = block$animal_level_sample_id[[1]],
+    phenotype_within_unit = paste(block$sample_class[[1]], block$condition[[1]], sep = "_"),
+    aggregation_policy = "equal_weight_mean_LR_on_existing_imputed_log2_values",
+    analysis_unit = "animal",
+    stringsAsFactors = FALSE, check.names = FALSE
+  )
+}))
+animal_level <- animal_level[order(animal_level$sample_class, animal_level$condition_code,
+                                   animal_level$AnimalID), , drop = FALSE]
+rownames(animal_level) <- NULL
+
+# Independent cross-check against the canonical 48-row identifiability audit.
+d48 <- design48[order(design48$sample_class, design48$AnimalID), , drop = FALSE]
+a48 <- animal_level[order(animal_level$sample_class, animal_level$AnimalID), , drop = FALSE]
+for (pair in list(c("AnimalID", "AnimalID"), c("sample_class", "sample_class"),
+                  c("condition", "condition"), c("left_source_sample", "left_source_sample"),
+                  c("right_source_sample", "right_source_sample"))) {
+  if (!identical(as.character(a48[[pair[[1]]]]), as.character(d48[[pair[[2]]]]))) {
+    stop("Derived animal-level table disagrees with design_identifiability_audit.csv on ",
+         pair[[1]], call. = FALSE)
+  }
+}
+if (!identical(as.character(a48$collection_plate), as.character(d48$Plate))) {
+  stop("Derived collection plate disagrees with design_identifiability_audit.csv.", call. = FALSE)
+}
+release_log("  animal-level table cross-checks against design_identifiability_audit.csv")
+
+design_checks <- release_check_animal_level_design(animal_level)
+if (any(!design_checks$pass)) {
+  stop("Animal-level design invariants violated:\n",
+       paste("  -", design_checks$check[!design_checks$pass], collapse = "\n"), call. = FALSE)
+}
+# The canonical aggregation summary independently records 3 animals and complete bilateral
+# pairing in all 16 strata; require it to still say so.
+if (!all(agg_summary$n_unique_animals == 3L) ||
+    !all(agg_summary$complete_bilateral_pairs == 3L) ||
+    !all(agg_summary$one_sided_pairs == 0L) || !all(agg_summary$missing_pairs == 0L)) {
+  stop("Canonical aggregation_summary.csv no longer reports 3/3 complete bilateral pairs.",
+       call. = FALSE)
+}
+release_log("  animal-level table: ", nrow(animal_level), " rows x ", ncol(animal_level), " cols")
+
+# --------------------------------------------------------------------------------------
+# per-field provenance -- what is known, what is not, and what would be needed
+# --------------------------------------------------------------------------------------
+
+fld <- function(field, status, source, evidence, note = NA_character_) {
+  data.frame(field = field, status = status, current_source = source,
+             evidence = evidence, note = note,
+             stringsAsFactors = FALSE, check.names = FALSE)
+}
+
+field_provenance <- rbind(
+  fld("sample_id", "KNOWN_VERIFIED", paths$source_assignment,
+      "96 unique values; identical to the measurement-level GCT column names and to sample_info.xlsx id",
+      "This string is the acquisition run name, not an arbitrary label."),
+  fld("raw_file_basename", "KNOWN_VERIFIED", paths$sample_annotation,
+      "basename(Name) with the .d suffix removed equals sample_id for all 96 runs (asserted in this stage)",
+      "Name values are of the form D:\\Proteomics\\Fabian\\Tobias\\<run>.d"),
+  fld("raw_file_original_path", "KNOWN_VERIFIED", paths$sample_annotation,
+      "verbatim Name column",
+      "Acquisition-machine path; the files themselves are not in the project tree."),
+  fld("raw_file_extension", "KNOWN_VERIFIED", paths$sample_annotation,
+      "every Name ends in .d",
+      paste("`.d` is a vendor-specific acquisition directory format (Bruker).",
+            "The instrument MODEL is not recorded anywhere in the project.")),
+  fld("AnimalID", "KNOWN_VERIFIED", paths$source_assignment,
+      "12 distinct values: C11 C12 C14 C25 C26 C27 C33f C34f C45f C46 C47 C510",
+      NA_character_),
+  fld("hemisphere", "KNOWN_VERIFIED", paths$sample_annotation,
+      "explicit _left/_right suffix on the annotation label; numeric ReplicateGroup 1/2 agrees one-to-one (asserted in this stage)",
+      "The 2024 acquisition run names contain no L/R token; hemisphere is NOT inferred from sample_id."),
+  fld("sample_class",
+      if (n_discrepant > 0L) "KNOWN_BUT_NEEDS_STANDARDIZATION" else "KNOWN_VERIFIED",
+      paths$source_assignment,
+      paste0("4 classes; historical labels cFosN/Background/mCherryN/neuron normalise ",
+             "through R/analysis_labels.R. Corroborated against sample_annotation.xlsx ",
+             "group_label and the plate-layout rule for ",
+             nrow(measurement) - n_discrepant, " of ", nrow(measurement), " measurements."),
+      if (n_discrepant > 0L) {
+        paste0("UNRESOLVED DISCREPANCY: for ", n_discrepant, " measurement(s) the class ",
+               "used by the analysis is contradicted by BOTH independent sources. See ",
+               "metadata/sample_class_source_discrepancy.tsv. Not corrected here: doing so ",
+               "would change the validated analysis. Requires a decision from the ",
+               "experimenter before publication.")
+      } else "Historical alias `bg` == neuropil."),
+  fld("condition / condition_code", "KNOWN_VERIFIED", paths$source_assignment,
+      "ExpGroup 1..4 maps through condition_code_map to paired_cno/paired_veh/unpaired_cno/unpaired_veh",
+      NA_character_),
+  fld("collection_plate", "KNOWN_VERIFIED", paths$plate_provenance,
+      "Plate1/Plate2 token parsed from the acquisition run name; agrees with sample_info plate",
+      paste("Collection plate only. NOT a proteomics preparation, digestion, LC-MS,",
+            "acquisition or instrument batch.")),
+  fld("well_position / plate_set_token / injection_index", "KNOWN_VERIFIED", paths$plate_provenance,
+      "S4/S5 set token, well A1..H7 and running index 1..96 parsed from the acquisition run name",
+      NA_character_),
+  fld("acquisition_date", "KNOWN_BUT_NEEDS_STANDARDIZATION", paths$plate_provenance,
+      "date_token 20241217 in every acquisition run name; single acquisition date for all 96 runs",
+      paste("Derived from the run-name token, not from an instrument record.",
+            "Confirm against the acquisition log before submission.")),
+  fld("instrument_alias_token", "KNOWN_BUT_NEEDS_STANDARDIZATION", paths$plate_provenance,
+      "token `Olive` in every acquisition run name",
+      paste("A local instrument alias, not a model. Do not publish it as an instrument model.")),
+  fld("instrument_model", "MISSING_RECOVERABLE", "NONE",
+      "no instrument model string exists anywhere in the project tree",
+      "Needed from: the acquisition facility, an instrument method file, or the .d metadata."),
+  fld("lc_and_method_token", "KNOWN_BUT_NEEDS_STANDARDIZATION", paths$plate_provenance,
+      "token `FCo_Evo2_80SPDzoom_5cmRapid_Tobias` in every acquisition run name",
+      paste("Preserved verbatim and deliberately NOT decoded. It is an operator method",
+            "label; the acquisition method itself is not documented.")),
+  fld("sex", "MISSING_RECOVERABLE", "NONE",
+      "sample_info.xlsx and sample_annotation.xlsx have no sex column",
+      "Needed from: animal-facility records."),
+  fld("age", "MISSING_RECOVERABLE", "NONE",
+      "sample_info.xlsx and sample_annotation.xlsx have no age column",
+      "Needed from: animal-facility records."),
+  fld("organism", "KNOWN_VERIFIED", file.path(DATA_ROOT, "01_input", "references",
+                                              "MOUSE_10090_idmapping.dat"),
+      "mapping reference is MOUSE_10090_idmapping.dat; 02_id_mapping queries organism_id = 10090; org.Mm.eg.db used throughout; protein entry names end in _MOUSE",
+      "Mus musculus, NCBI taxid 10090."),
+  fld("organism part / brain region", "MISSING_RECOVERABLE", "NONE",
+      "no dissected-region field or statement exists in the analysis tree",
+      paste("The EWCE cell-type reference is l1_amygdala.loom, which records a reference",
+            "choice, not the dissected tissue. Needed from: the manuscript methods.")),
+  fld("technical_replicate", "NOT_APPLICABLE", paths$source_assignment,
+      "each acquisition run is one biological hemisphere sample; no run was injected twice",
+      "Left/Right are anatomical subsamples of one animal, not technical replicates.")
+)
+release_assert_metadata_status(field_provenance$status)
+
+# --------------------------------------------------------------------------------------
+# write
+# --------------------------------------------------------------------------------------
+
+canonical_sources <- c(paths$source_assignment, paths$plate_provenance,
+                       paths$design_identifiability, paths$sample_annotation,
+                       paths$sample_info, paths$aggregation_summary)
+canonical_hashes <- vapply(canonical_sources, release_sha256, character(1), USE.NAMES = FALSE)
+
+w1 <- release_write_table(measurement, release_path("metadata", "sample_metadata.tsv"))
+release_register("metadata/sample_metadata.tsv", "sample metadata, one row per acquisition/measurement",
+                 canonical_sources, canonical_hashes, STAGE, "tsv")
+
+w2 <- release_write_table(animal_level, release_path("metadata", "animal_level_sample_metadata.tsv"))
+release_register("metadata/animal_level_sample_metadata.tsv",
+                 "animal-level inferential units, one row per AnimalID x sample_class",
+                 canonical_sources, canonical_hashes, STAGE, "tsv")
+
+w3 <- release_write_table(field_provenance,
+                          release_path("metadata", "metadata_field_provenance.tsv"))
+release_register("metadata/metadata_field_provenance.tsv",
+                 "per-field metadata status: verified / needs standardisation / missing",
+                 canonical_sources, canonical_hashes, STAGE, "tsv")
+
+w4 <- release_write_table(sample_class_discrepancy,
+                          release_path("metadata", "sample_class_source_discrepancy.tsv"))
+release_register("metadata/sample_class_source_discrepancy.tsv",
+                 paste("measurements whose analysis sample_class is contradicted by both",
+                       "independent metadata sources; published, not corrected"),
+                 c(paths$sample_info, paths$sample_annotation),
+                 c(release_sha256(paths$sample_info), release_sha256(paths$sample_annotation)),
+                 STAGE, "tsv")
+
+release_log("  wrote sample_metadata.tsv (", w1$rows, "x", w1$cols, ")")
+release_log("  wrote animal_level_sample_metadata.tsv (", w2$rows, "x", w2$cols, ")")
+release_log("  wrote metadata_field_provenance.tsv (", w3$rows, "x", w3$cols, ")")
+release_log("  wrote sample_class_source_discrepancy.tsv (", w4$rows, "x", w4$cols, ")")
+release_log("stage 01 complete")
