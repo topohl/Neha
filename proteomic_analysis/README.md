@@ -263,6 +263,28 @@ after the statistical unit was corrected from hemisphere-level to animal-level. 
 version-control snapshot rather than a runnable copy — the scripts still resolve their paths to
 the shared drive. See [`06_manuscript_figure_revision/README.md`](06_manuscript_figure_revision/README.md).
 
+### Publication and data deposition
+
+`07_publication_release/` builds the publication package: editor source data, PRIDE/SDRF
+metadata, data lineage, exact software versions and a SHA-256 release manifest. It **reads**
+validated canonical outputs and repackages them — no model is fitted, no enrichment is run,
+no PCA is recomputed, and a test enforces that by parsing every builder. Its output root is
+validated before anything is written and refuses to overlap `01_input/`, `02_data/`,
+`99_historical/` or any canonical `03_output` analysis branch.
+
+```bash
+PROTEOMICS_RELEASE_OUTPUT_ROOT="$TEMP/amp_release_$(date +%Y%m%d_%H%M%S)" \
+  Rscript 07_publication_release/run_release.R
+PROTEOMICS_RELEASE_OUTPUT_ROOT="<same root>" \
+  Rscript 07_publication_release/13_validate_release.R
+```
+
+Two things it surfaced that are **not** consequences of the animal-level correction and
+need a decision before publication: a sample-class discrepancy affecting 6 of the 96
+acquisitions, and the fact that the canonical `logFC` is a standardised mean difference
+rather than a log2 fold change. Both are documented in the package and neither was
+corrected here. See [`07_publication_release/README.md`](07_publication_release/README.md).
+
 ### Out-of-scope code
 
 `99_out_of_scope/` holds code that lives here for historical reasons but is **not** part of this

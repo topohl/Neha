@@ -110,7 +110,14 @@ legacy_collaborator_exceptions <- c(
   # The deprecated shim's own filename, which documentation legitimately refers to. Whether any
   # active file actually SOURCES it is a separate contract, asserted by
   # tests/test_deprecated_path_utils_shim.R.
-  "neha_path_utils.R"
+  "neha_path_utils.R",
+  # Two more artefacts that exist on the shared drive under these exact names and that the
+  # publication release layer must cite by path: the ProTigy parameter record for the
+  # animal-level run, and the 2025-11-07 ProTigy session folder whose params.txt is the only
+  # surviving evidence of that application's version. Renaming validated data to satisfy a
+  # naming audit is not an option, so the names are exempted rather than the files renamed.
+  "neha_proteome_parameters.yaml",
+  "20251107_pg.matrix_Neha"
 )
 
 strip_legacy_exceptions <- function(text) {
@@ -128,9 +135,13 @@ branding_controls <- data.frame(
     "# Neha proteomics workflow",
     "NEHA_PCA_OUTPUT_ROOT",
     "validate_neha_pca_animal_input",
-    "source(file.path(repo_root, 'R', 'project_path_utils.R'))"
+    "source(file.path(repo_root, 'R', 'project_path_utils.R'))",
+    "neha_proteome_parameters.yaml",
+    "20251107_pg.matrix_Neha",
+    "neha_publication_release_utils.R"
   ),
-  expected_rejected = c(FALSE, FALSE, FALSE, TRUE, TRUE, TRUE, FALSE),
+  expected_rejected = c(FALSE, FALSE, FALSE, TRUE, TRUE, TRUE, FALSE,
+                        FALSE, FALSE, TRUE),
   stringsAsFactors = FALSE
 )
 branding_controls$observed_rejected <- vapply(

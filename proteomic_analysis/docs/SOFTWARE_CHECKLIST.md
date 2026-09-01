@@ -22,3 +22,30 @@ This document maps checklist items to repository files for the Associative Memor
 | Code repository link | `https://github.com/topohl/AssociativeMemoryProteomics` |
 
 The lightweight demo is designed to run without private shared-drive paths or heavy enrichment analysis.
+
+## Publication and data deposition
+
+Built by `proteomic_analysis/07_publication_release/` (see its
+[README](../07_publication_release/README.md)). Every item below is produced into a release
+root that is validated against the protected canonical roots before anything is written.
+
+| Requirement | Repository location | Release artefact |
+| --- | --- | --- |
+| Publication release code | `proteomic_analysis/07_publication_release/` | — |
+| Editor source data | `07_publication_release/07_build_editor_source_workbook.R` | `editor_source_data/Proteomics_Source_Data_Animal_Level.xlsx` |
+| Revision changelog for editors | `07_publication_release/08_build_editor_changelog.R` | `editor_source_data/REVISION_PROTEOMICS_DATA_CHANGELOG.md` |
+| Figure source data and panel provenance | `07_publication_release/06_build_figure_source_data.R` | `editor_source_data/figure_source_map.tsv`, `editor_source_data/figure_source_data/` |
+| PRIDE metadata | `07_publication_release/09_build_pride_sdrf.R` | `pride/README_PRIDE.md`, `pride/pride_readiness.tsv` |
+| SDRF | `07_publication_release/09_build_pride_sdrf.R` | `pride/sdrf.tsv`, `pride/sdrf_field_status.tsv`, `pride/SDRF_MISSING_METADATA.md` |
+| Data lineage | `07_publication_release/10_build_provenance.R` | `provenance/data_lineage.tsv`, `provenance/UPSTREAM_PREPROCESSING_GAP.md` |
+| Exact software and database versions | `07_publication_release/10_build_provenance.R` | `provenance/software_versions.tsv`, `provenance/analysis_parameters.tsv`, `provenance/sessionInfo_release.txt` |
+| Release SHA manifest | `07_publication_release/12_build_release_manifest.R` | `provenance/release_manifest.tsv`, `provenance/SHA256SUMS.txt` |
+| Data dictionary | `07_publication_release/11_build_readme_and_dictionary.R` | `README_DATA.md`, `metadata/data_dictionary.tsv` |
+| Release validation | `07_publication_release/13_validate_release.R`, `07_publication_release/tests/` | `provenance/VALIDATION_REPORT.md`, `provenance/validation_results.tsv` |
+
+Exact package versions are recorded per canonical run rather than as version families:
+`provenance/software_versions.tsv` takes them from the enrichment run audit, the EWCE
+`sessionInfo`, and the PCA `sessionInfo`, and records `UNKNOWN` with a named recovery source
+where no version exists (ProTigy for the animal-level run, the search software, the
+instrument). This supersedes the `1.1.x`-style families in `requirements_R.md` for
+publication reporting.
