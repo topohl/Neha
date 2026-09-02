@@ -12,12 +12,14 @@ enrichment_normalize_path <- function(path, must_work = FALSE) project_normalize
 enrichment_path_is_within <- function(path, parent) project_path_is_within(path, parent)
 enrichment_paths_overlap <- function(left, right) project_paths_overlap(left, right)
 
+# The digest itself is delegated to project_file_sha256(), which hashes bytes it has
+# actually read rather than letting digest() infer readability from an SMB ACL probe.
+# Path normalisation and the error wording stay here.
 enrichment_sha256 <- function(path) {
   if (!requireNamespace("digest", quietly = TRUE)) {
     stop("Package 'digest' is required for enrichment provenance.", call. = FALSE)
   }
-  path <- enrichment_normalize_path(path, must_work = TRUE)
-  tolower(digest::digest(path, algo = "sha256", file = TRUE, serialize = FALSE))
+  project_file_sha256(enrichment_normalize_path(path, must_work = TRUE))
 }
 
 enrichment_default_paths <- function() {

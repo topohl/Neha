@@ -58,6 +58,7 @@ if (!file.exists(file.path(repo_root, "R", "protigy_input_utils.R"))) {
   repo_root <- normalizePath(getwd(), winslash = "/", mustWork = TRUE)
 }
 source(file.path(repo_root, "R", "analysis_labels.R"))
+source(file.path(repo_root, "R", "project_path_utils.R"))
 source(file.path(repo_root, "R", "protigy_input_utils.R"))
 
 project_root <- "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler"
@@ -454,8 +455,12 @@ if (length(feature_counts) != 16L || length(unique(as.integer(feature_counts))) 
   stop("Rank-abundance feature accounting differs across validated groups.", call. = FALSE)
 }
 final_feature_count <- unname(as.integer(feature_counts[[1]]))
-input_gct_sha256 <- tolower(digest::digest(file = input_gct, algo = "sha256"))
-mapping_sha256 <- tolower(digest::digest(file = id_map_path, algo = "sha256"))
+# project_file_sha256() hashes bytes read from the file. digest(file = ...) asks
+# file.access() for permission first, and the SMB share answers -1 on inputs that read
+# back byte-perfect, which aborted this stage on intact canonical data. Same digest --
+# see the note in R/project_path_utils.R.
+input_gct_sha256 <- project_file_sha256(input_gct)
+mapping_sha256 <- project_file_sha256(id_map_path)
 run_timestamp_utc <- format(Sys.time(), tz = "UTC", format = "%Y-%m-%dT%H:%M:%SZ")
 
 # All input/design/mapping validation is complete before this first output mutation.

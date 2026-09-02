@@ -62,7 +62,7 @@ if (!file.exists(gct_path)) {
 }
 
 cat("=== validated animal-level GCT ===\n")
-observed <- digest::digest(file = gct_path, algo = "sha256")
+observed <- project_file_sha256(gct_path)
 expect(identical(observed, PRIMARY_GCT_SHA256),
        sprintf("primary GCT SHA256 matches the locked contract (%s)", substr(observed, 1, 16)))
 
@@ -110,7 +110,7 @@ for (f in idx_files) {
       if (!file.exists(p)) { problems <- c(problems, paste("missing:", p)); next }
       if (dir.exists(p)) next
       checked <- checked + 1L
-      if (!identical(digest::digest(file = p, algo = "sha256"), s)) {
+      if (!identical(project_file_sha256(p), s)) {
         problems <- c(problems, paste("hash mismatch:", p, "recorded in", basename(f), sc))
       }
     }

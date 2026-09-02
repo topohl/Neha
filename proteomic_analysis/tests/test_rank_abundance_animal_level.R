@@ -20,6 +20,7 @@ if (!file.exists(file.path(repo_root, "R", "analysis_labels.R"))) {
 }
 
 source(file.path(repo_root, "R", "analysis_labels.R"))
+source(file.path(repo_root, "R", "project_path_utils.R"))
 source(file.path(repo_root, "R", "protigy_input_utils.R"))
 if (!requireNamespace("digest", quietly = TRUE)) {
   stop("Package 'digest' is required for rank-abundance provenance contracts.", call. = FALSE)
@@ -78,8 +79,12 @@ extract_stage_function <- function(path, function_name) {
   get(function_name, envir = evaluation_environment, inherits = FALSE)
 }
 
+# project_file_sha256() hashes bytes it has read. digest(file = ...) cannot be used against
+# the canonical inputs: it probes with file.access(), which the SMB share answers with -1 on
+# perfectly readable files, so section 5 aborted on unchanged data. See the note in
+# R/project_path_utils.R.
 sha256_file <- function(path) {
-  tolower(digest::digest(file = path, algo = "sha256"))
+  project_file_sha256(path)
 }
 
 restore_environment <- function(previous) {

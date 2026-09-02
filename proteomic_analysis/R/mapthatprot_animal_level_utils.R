@@ -279,9 +279,11 @@ validate_mapthatprot_partition <- function(input, mapped, unmapped) {
   TRUE
 }
 
+# Digest delegated to project_file_sha256() -- see the note there on why
+# digest(file = ...) is unsafe against this project's SMB share.
 mapthatprot_sha256 <- function(path) {
   if (!requireNamespace("digest", quietly = TRUE)) stop("The digest package is required for SHA-256 provenance.", call. = FALSE)
-  tolower(digest::digest(normalize_mapthatprot_path(path, must_work = TRUE), algo = "sha256", file = TRUE, serialize = FALSE))
+  project_file_sha256(normalize_mapthatprot_path(path, must_work = TRUE))
 }
 
 mapthatprot_reference_provenance <- function(
