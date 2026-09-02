@@ -121,6 +121,46 @@ expect(all(nzchar(idm$evidence_sha256) & !is.na(idm$evidence_sha256)),
 expect(any(grepl("ProTigy", sw$component)), "ProTigy is recorded")
 expect(any(grepl("DIA-NN", sw$component)), "the search software is recorded")
 
+# The ProTigy version for the canonical animal-level run was recovered on 2026-09-02 by
+# cross-source audit (installed 2.4.1 built 2026-08-24 12:48 UTC; that run's v2-only YAML
+# parameter export written 13:06 UTC the same day). These contracts pin the recovered
+# value AND the thing that makes it defensible: that it was not silently carried over from
+# the 2025 runs, which used different versions.
+prot_animal <- sw[grepl("animal-level statistical GCT", sw$component, fixed = TRUE), ,
+                  drop = FALSE]
+expect(nrow(prot_animal) == 1L, "exactly one ProTigy row covers the animal-level run")
+if (nrow(prot_animal) == 1L) {
+  expect(identical(as.character(prot_animal$version), "2.4.1"),
+         sprintf("the animal-level ProTigy version is the recovered 2.4.1 (got %s)",
+                 as.character(prot_animal$version)))
+  expect(identical(as.character(prot_animal$status), "KNOWN_VERIFIED"),
+         "the recovered animal-level ProTigy version is marked KNOWN_VERIFIED")
+  expect(!grepl("1.1.8", as.character(prot_animal$version), fixed = TRUE),
+         "the animal-level run does NOT claim the 2025 hemisphere-level version")
+  expect(grepl("2026-08-24", as.character(prot_animal$notes)) &&
+           grepl("DISPROVEN|disproven", as.character(prot_animal$notes)),
+         "the notes carry the build/export date evidence and record v1.1.8 as disproven")
+  expect(nzchar(as.character(prot_animal$evidence_sha256)) &&
+           !is.na(prot_animal$evidence_sha256) &&
+           as.character(prot_animal$evidence_sha256) != "NONE",
+         "the recovered version cites a hashed evidence artefact")
+}
+prot_2025 <- sw[grepl("hemisphere-level runs", sw$component, fixed = TRUE), , drop = FALSE]
+if (nrow(prot_2025) == 1L) {
+  expect(as.character(prot_2025$version) %in% c("1.1.8", "v1.1.8"),
+         "the 2025 hemisphere-level ProTigy rows still report v1.1.8")
+  expect(!identical(as.character(prot_2025$version),
+                    as.character(prot_animal$version)),
+         "the 2025 and animal-level ProTigy versions are recorded as different")
+}
+# The lineage row for the statistics step must agree with the software table -- a version
+# recorded in one place and UNKNOWN in the other is exactly the drift this layer guards.
+stat_step <- lineage[lineage$artifact_id == "A09_protigy_statistics", , drop = FALSE]
+if (nrow(stat_step) == 1L) {
+  expect(identical(as.character(stat_step$software_version), "2.4.1"),
+         "the lineage statistics step carries the same recovered ProTigy version")
+}
+
 cat("\n=== analysis parameters ===\n")
 expect(nrow(ap) > 30L, sprintf("%d analysis parameters recorded", nrow(ap)))
 expect(any(ap$parameter == "ranking_statistic" & ap$value == "t"),

@@ -61,6 +61,74 @@ ewce_session_path <- file.path(EWCE_ROOT, "03_QC_Mapping_Logs",
 pca_session_path <- file.path(PCA_ROOT, "tables", "meta", "sessionInfo.txt")
 
 # --------------------------------------------------------------------------------------
+# ProTigy version for the CANONICAL animal-level run (2026-08-24).
+#
+# Recovered 2026-09-02 by targeted audit. It is recorded as a constant rather than read
+# from whatever ProTigy happens to be installed on the machine running this build: the
+# question is which version produced a specific run in the past, and a build-time lookup
+# would silently answer a different question on a different machine. That is the same trap
+# as carrying the 2025 version forward.
+#
+# The evidence is five strands that agree:
+#   1. The only ProTigy present on the analysis machine is 2.4.1, and its installed
+#      DESCRIPTION records Packaged 2026-08-24 12:47:48 UTC / Built 2026-08-24 12:48:07 UTC.
+#   2. The canonical run's parameter export, neha_proteome_parameters.yaml, was written
+#      2026-08-24 13:06:11 UTC -- 18 minutes after that build finished.
+#   3. ProTigy v2's exporter (R/tab_export.R) writes paste0(ome, "_parameters.yaml");
+#      the canonical file is neha_proteome_parameters.yaml, i.e. ome = "neha_proteome".
+#   4. That exporter writes the parameter list minus "gct_file_path". The canonical YAML
+#      carries gct_file_name and no gct_file_path, exactly as the code does.
+#   5. All 19 schema keys in the canonical YAML are a subset of 2.4.1's
+#      setup_parameters/setupDefaults.yaml; the two extras (gct_file_name,
+#      annotation_column) are added at runtime by 2.4.1; and the two absent data-filter
+#      keys are precisely the ones 2.4.1 sets to NULL when data_filter is None, which is
+#      this run's setting.
+#
+# The negative result matters as much: v1.1.x writes a params.txt whose first lines are
+# "## <timestamp>" / "## Protigy (vX.Y.Z)". The canonical run produced no such file, and
+# its YAML key set does not exist in the v1.1.x format at all. v1.1.8 is therefore
+# disproven for this run, not merely unproven.
+#
+# Recorded evidence_path stays the canonical YAML because that is the durable, hashed
+# artefact on shared storage; the installed-package DESCRIPTION is machine-local and is
+# named in the notes instead.
+PROTIGY_ANIMAL_LEVEL_VERSION <- "2.4.1"
+PROTIGY_ANIMAL_LEVEL_EVIDENCE <- paste(
+  "Recovered 2026-09-02 by cross-source audit, not read from the build machine.",
+  "The installed Protigy DESCRIPTION (R library, sha256",
+  "74ac5f7c35dfeb06e62e472c5a072b136e52ccc8965531e0a5380dc4b65da37d) reports version",
+  "2.4.1, Packaged 2026-08-24 12:47:48 UTC and Built 2026-08-24 12:48:07 UTC; this run's",
+  "parameter export was written 18 minutes later, at 2026-08-24 13:06:11 UTC. The export",
+  "is a v2-only artefact: ProTigy v2's tab_export.R writes <ome>_parameters.yaml with the",
+  "parameter list minus gct_file_path, which is exactly this file's name and key set, and",
+  "all 19 of its schema keys are a subset of 2.4.1's setupDefaults.yaml. v1.1.8 is",
+  "DISPROVEN for this run rather than merely unproven: v1.1.x emits a params.txt with a",
+  "'## Protigy (vX.Y.Z)' header and none of these keys. See the recovery audit for the",
+  "full evidence table."
+)
+
+# Fail closed if the artefact this claim rests on stops looking like a ProTigy v2 export.
+# Without this, a future change to the canonical YAML could leave a version claim standing
+# on evidence that no longer exists.
+if (file.exists(animal_param_yaml)) {
+  .pp <- readLines(animal_param_yaml, warn = FALSE)
+  .has_v2_keys <- all(vapply(c("gct_file_name:", "annotation_column:", "group_normalization:",
+                               "convert_ids_to_gene_symbol:", "id_mapping_species:"),
+                             function(k) any(startsWith(.pp, k)), logical(1)))
+  # The v1.1.x marker is a literal "## Protigy (vX.Y.Z)" comment line; matched with
+  # startsWith on trimmed lines so this check carries no regex escaping of its own.
+  .has_v1_header <- any(startsWith(trimws(.pp), "## Protigy (v"))
+  .has_gct_file_path <- any(startsWith(.pp, "gct_file_path:"))
+  if (!.has_v2_keys || .has_v1_header || .has_gct_file_path) {
+    stop("The animal-level ProTigy parameter export no longer carries the ProTigy v2 ",
+         "export signature that the recovered version ", PROTIGY_ANIMAL_LEVEL_VERSION,
+         " rests on (", animal_param_yaml, "). Re-verify the version before releasing.",
+         call. = FALSE)
+  }
+  rm(.pp, .has_v2_keys, .has_v1_header, .has_gct_file_path)
+}
+
+# --------------------------------------------------------------------------------------
 # lineage
 # --------------------------------------------------------------------------------------
 
@@ -208,13 +276,16 @@ lineage <- rbind(
             "imputation or remapping is applied at this step.")),
   lin("A09_protigy_statistics", "differential statistics GCT",
       p_stat_gct, "A08_animal_level_matrix",
-      "within-sample-class two-sample moderated t", "ProTigy", UNKNOWN, "animal",
+      "within-sample-class two-sample moderated t", "ProTigy",
+      PROTIGY_ANIMAL_LEVEL_VERSION, "animal",
       hash_or(p_stat_gct), "yes",
       paste("LOCKED artefact. Parameters recorded in",
             "02_data/animal_level/neha_proteome_parameters.yaml. ProTigy VERSION for THIS",
-            "(2026-08-24) run is", UNKNOWN, "-- v1.1.8 is proven only for the 2025-11-07",
-            "and 2025-12-12 hemisphere-level runs, whose params.txt survive. Do not carry",
-            "that version across.")),
+            "(2026-08-24) run is", PROTIGY_ANIMAL_LEVEL_VERSION, "-- recovered 2026-09-02",
+            "by cross-source audit and NOT carried over from the 2025 runs, which used",
+            "v1.1.5 (2025-03-28) and v1.1.8 (2025-11-07, 2025-12-12). v1.1.8 is disproven",
+            "for this run: it emits a params.txt header, this run emitted a v2 YAML export.",
+            "See provenance/software_versions.tsv for the evidence.")),
   lin("A10_split_differential_tables", "differential result tables",
       file.path(ANIMAL_ROOT, "split", "forward"), "A09_protigy_statistics",
       "split into 12 forward and 12 reverse per-contrast tables",
@@ -551,13 +622,16 @@ external <- rbind(
      ifelse(is.na(protigy_version_2025), UNKNOWN, protigy_version_2025), "KNOWN_VERIFIED",
      "ProTigy params.txt header", protigy_params_2025,
      "hemisphere-level ProTigy statistics (superseded)",
-     "Both surviving params.txt headers report the same version."),
-  sv("ProTigy (animal-level statistical GCT, 2026-08-24)", "external application", UNKNOWN,
-     "MISSING_RECOVERABLE", "no params.txt accompanies the animal-level run",
+     paste("Both hemisphere-level params.txt headers report this same version. The",
+           "2026-09-02 audit also found seven older params.txt files under the project's",
+           "protigy/ folder, all reporting v1.1.5 for exploratory runs on 2025-03-28.",
+           "The version therefore changed across this project's history",
+           "(1.1.5 -> 1.1.8 -> 2.4.1), which is why no version is carried between runs.")),
+  sv("ProTigy (animal-level statistical GCT, 2026-08-24)", "external application",
+     PROTIGY_ANIMAL_LEVEL_VERSION, "KNOWN_VERIFIED",
+     "recovered by cross-source audit, 2026-09-02",
      animal_param_yaml, "canonical animal-level differential statistics",
-     paste("Input parameters ARE recorded in neha_proteome_parameters.yaml, but the",
-           "application version is not. The 2025 version must NOT be assumed to apply.",
-           "Recoverable from the operator's ProTigy installation.")),
+     PROTIGY_ANIMAL_LEVEL_EVIDENCE),
   sv("DIA-NN", "external application", UNKNOWN, "MISSING_RECOVERABLE",
      "no version string exists in the project tree", "NONE",
      "peptide/protein identification and quantification",
