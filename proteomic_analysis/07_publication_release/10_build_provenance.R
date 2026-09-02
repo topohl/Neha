@@ -75,7 +75,7 @@ pca_session_path <- file.path(PCA_ROOT, "tables", "meta", "sessionInfo.txt")
 #   2. The canonical run's parameter export, neha_proteome_parameters.yaml, was written
 #      2026-08-24 13:06:11 UTC -- 18 minutes after that build finished.
 #   3. ProTigy v2's exporter (R/tab_export.R) writes paste0(ome, "_parameters.yaml");
-#      the canonical file is neha_proteome_parameters.yaml, i.e. ome = "neha_proteome".
+#      the canonical file is neha_proteome_parameters.yaml, i.e. the historical project-specific proteome identifier.
 #   4. That exporter writes the parameter list minus "gct_file_path". The canonical YAML
 #      carries gct_file_name and no gct_file_path, exactly as the code does.
 #   5. All 19 schema keys in the canonical YAML are a subset of 2.4.1's
