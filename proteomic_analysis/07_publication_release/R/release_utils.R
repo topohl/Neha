@@ -314,9 +314,10 @@ release_read_gct <- function(path, what = basename(path)) {
 
 #' Strip characters that would corrupt an unquoted TSV.
 #'
-#' GO term names and DIA-NN protein descriptions are free text; a stray tab or newline
-#' would silently shift every downstream column. Replaced with a single space rather
-#' than dropped, so field content stays readable.
+#' GO term names and the protein descriptions carried in the retained search/quantification
+#' output are free text; a stray tab or newline would silently shift every downstream
+#' column. Replaced with a single space rather than dropped, so field content stays
+#' readable.
 release_sanitize_tsv <- function(df) {
   for (nm in names(df)) {
     if (is.character(df[[nm]]) || is.factor(df[[nm]])) {

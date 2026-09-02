@@ -123,10 +123,11 @@ sw <- rbind(
              recorded_by = ifelse(is.na(protigy_version), "NOT RECOVERED",
                                   "ProTigy params.txt header (2025-11-07 run)"),
              evidence_path = protigy_params_path, stringsAsFactors = FALSE, check.names = FALSE),
-  data.frame(component = "DIA-NN (search / quantification)", version = "UNKNOWN",
-             recorded_by = paste("software identity evidenced by the DIA-NN pg_matrix column",
-                                 "schema and a report.stats-derived annotation sheet;",
-                                 "no version string exists in the project"),
+  data.frame(component = "upstream search / quantification software", version = "UNKNOWN",
+             recorded_by = paste("NOT RECOVERED -- the retained processed files use the",
+                                 "historical pg.matrix naming convention, but the exact",
+                                 "upstream search/quantification software and configuration",
+                                 "could not be recovered from the retained project files"),
              evidence_path = "NONE", stringsAsFactors = FALSE, check.names = FALSE)
 )
 sw <- sw[!duplicated(paste(sw$component, sw$version)), , drop = FALSE]

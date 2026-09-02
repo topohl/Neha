@@ -192,7 +192,7 @@ DESCRIPTIONS <- c(
   uniprot_accession = "UniProt accession of the leading (master) protein in the group.",
   gene_symbol = "Resolved gene symbol for the leading protein. Never a UniProt identifier.",
   gene_symbols_in_group = "All gene symbols in the protein group, semicolon-separated, as reported by the search output.",
-  protein_description = "Protein description from the search output (DIA-NN First.Protein.Description).",
+  protein_description = "Protein description from the First.Protein.Description annotation field in the retained search/quantification output.",
   n_proteins_in_group = "Number of proteins in the group.",
   is_protein_group = "TRUE if the group contains more than one protein.",
   id_mapping_status = "mapped or unmapped. 5327 of 5349 map; the 22 unmapped are non-mouse contaminant identifiers.",

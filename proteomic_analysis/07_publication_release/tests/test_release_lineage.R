@@ -98,6 +98,43 @@ expect(any(lineage$sha256 == RELEASE_LOCKED_ARTEFACTS$animal_level_input_gct$sha
 expect(any(lineage$sha256 == RELEASE_LOCKED_ARTEFACTS$protigy_stat_gct$sha256, na.rm = TRUE),
        "the ProTigy statistics GCT hash appears in the lineage")
 
+cat("\n=== no unsupported upstream-software identity claim survives ===\n")
+# Phrases the PRIDE metadata recovery audit ruled unsupported: DIA-NN use itself is not
+# proven from the retained project files, so a bare DIA-NN mention may only appear as an
+# explicitly qualified recovery example.
+unsupported_claims <- c(
+  "DIA-NN column schema", "DIA-NN pg_matrix", "DIA-NN output establishes",
+  "software identity evidenced by", "DIA-NN First.Protein.Description",
+  "expected DIA-NN column", "DIA-NN report / library",
+  "DIA-NN report / spectral library", "DIA-NN search output",
+  "Quantification software | DIA-NN"
+)
+claim_files <- c(
+  list.files(OUT_ROOT, pattern = "[.]md$", recursive = TRUE, full.names = TRUE),
+  list.files(file.path(OUT_ROOT, c("provenance", "pride", "metadata")),
+             pattern = "[.]tsv$", full.names = TRUE)
+)
+claim_files <- unique(claim_files[file.exists(claim_files)])
+expect(length(claim_files) > 0L,
+       sprintf("release narrative artefacts are present to audit (%d files)",
+               length(claim_files)))
+for (f in claim_files) {
+  txt <- paste(readLines(f, warn = FALSE), collapse = "\n")
+  txt_lower <- tolower(txt)
+  hits <- unsupported_claims[vapply(tolower(unsupported_claims),
+                                    function(b) grepl(b, txt_lower, fixed = TRUE),
+                                    logical(1))]
+  expect(length(hits) == 0L,
+         sprintf("%s makes no unsupported upstream-software identity claim%s",
+                 basename(f),
+                 if (length(hits)) paste0(" (found: ", paste(hits, collapse = "; "), ")")
+                 else ""))
+  if (grepl("DIA-?NN", txt, ignore.case = TRUE)) {
+    expect(grepl("if DIA-NN was used", txt, fixed = TRUE),
+           sprintf("%s mentions DIA-NN only as a qualified recovery example", basename(f)))
+  }
+}
+
 cat("\n=== software and database versions ===\n")
 expect(nrow(sw) > 20L, sprintf("versions recorded for %d components", nrow(sw)))
 expect(!any(grepl("[0-9]+[.][0-9]*[.]?x$", sw$version)),
@@ -119,7 +156,29 @@ idm <- sw[grepl("idmapping", sw$component, ignore.case = TRUE), , drop = FALSE]
 expect(all(nzchar(idm$evidence_sha256) & !is.na(idm$evidence_sha256)),
        "the mapping reference carries a SHA256")
 expect(any(grepl("ProTigy", sw$component)), "ProTigy is recorded")
-expect(any(grepl("DIA-NN", sw$component)), "the search software is recorded")
+# The upstream search/quantification software is NOT established by the retained files: no
+# run log, no configuration, no report table and no spectral library survive, and the
+# retained processed files carry only the historical `pg.matrix` naming convention. The
+# contract is therefore that the component IS listed but honestly marked unknown, and that
+# no artefact in this layer asserts a specific upstream software identity.
+usq <- sw[grepl("search / quantification software", sw$component, fixed = TRUE), ,
+          drop = FALSE]
+expect(nrow(usq) == 1L,
+       "exactly one row covers the upstream search / quantification software")
+if (nrow(usq) == 1L) {
+  expect(identical(as.character(usq$version), "UNKNOWN"),
+         sprintf("the upstream search/quantification software version is UNKNOWN (got %s)",
+                 as.character(usq$version)))
+  expect(identical(as.character(usq$status), "MISSING_RECOVERABLE"),
+         sprintf("that software row is marked MISSING_RECOVERABLE (got %s)",
+                 as.character(usq$status)))
+  expect(nzchar(usq$recorded_by) && !grepl("DIA-?NN", usq$component, ignore.case = TRUE),
+         "the software row names no specific upstream search engine")
+}
+expect(!any(grepl("DIA-?NN", sw$component, ignore.case = TRUE)),
+       "no software component asserts a specific upstream search-software identity")
+expect(!any(grepl("DIA-?NN", lineage$software, ignore.case = TRUE)),
+       "no lineage row attributes an artefact to a specific upstream search software")
 
 # The ProTigy version for the canonical animal-level run was recovered on 2026-09-02 by
 # cross-source audit (installed 2.4.1 built 2026-08-24 12:48 UTC; that run's v2-only YAML

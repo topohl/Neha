@@ -100,8 +100,9 @@ and would have broken that contract silently.
 holds a UniProt entry name in `split/` and a UniProt accession in `mapped/`, and its
 `Description` column holds gene symbols. The published names are `protein_group_id`,
 `uniprot_accession`, `gene_symbol` and `protein_description`, each carrying what its name
-says. A real protein description exists only in the search output (`pg.matrix_raw.txt`,
-DIA-NN `First.Protein.Description`) and is joined in from there — 5,347 of 5,349 populated.
+says. A real protein description exists only in the search output (`pg.matrix_raw.txt`: the
+`First.Protein.Description` annotation field in the retained search/quantification output)
+and is joined in from there — 5,347 of 5,349 populated.
 `release_column_is_misleading_gene_symbol()` fails the build if a published `gene_symbol`
 column ever fills with accessions.
 

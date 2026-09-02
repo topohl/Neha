@@ -21,9 +21,9 @@
 #
 # The published names are therefore protein_group_id / uniprot_accession / gene_symbol /
 # protein_description, each carrying what its name says. A real protein description does
-# exist, but only in the search output (pg.matrix_raw.txt, DIA-NN column
-# `T: First.Protein.Description`) -- so it is joined in from there rather than faked from
-# the gene symbol.
+# exist, but only in the search output (pg.matrix_raw.txt: the
+# `T: First.Protein.Description` annotation field in the retained search/quantification
+# output) -- so it is joined in from there rather than faked from the gene symbol.
 
 suppressWarnings({
   args <- commandArgs(trailingOnly = FALSE)
@@ -168,7 +168,7 @@ if (length(col_desc) != 1L) {
 }
 for (needed in c(col_entry_names, col_accessions, col_genes)) {
   if (!needed %in% names(search_out)) {
-    stop("Search output is missing the expected DIA-NN column: ", needed, call. = FALSE)
+    stop("Search output is missing the expected annotation column: ", needed, call. = FALSE)
   }
 }
 if (length(col_desc) != 1L) {
