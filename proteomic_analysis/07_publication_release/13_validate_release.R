@@ -96,49 +96,106 @@ expect("design", "raw acquisition filenames unique and complete",
        !anyDuplicated(sm$raw_file_basename) && all(nzchar(sm$raw_file_basename)) &&
          all(grepl("[.]d$", sm$raw_file_basename)))
 
-# Sample-class corroboration. The contract is NOT that there are no discrepancies -- there
-# are, and suppressing them would be the failure mode. The contract is that every one is
-# detected, published, flagged per row, and surfaced in the reader-facing documents.
-disc_path <- rel("metadata", "sample_class_source_discrepancy.tsv")
-expect("design", "sample-class corroboration was performed against two independent sources",
-       all(c("sample_class_annotation_source", "sample_class_plate_layout_implied",
-             "sample_class_corroborated") %in% names(sm)) &&
-         !anyNA(sm$sample_class_annotation_source))
-if (!file.exists(disc_path)) {
-  record("design", "sample-class discrepancies are published", "FAIL",
-         "sample_class_source_discrepancy.tsv missing")
-} else {
-  disc <- read_tsv_or <- read.delim(disc_path, sep = "\t", quote = "",
-                                    stringsAsFactors = FALSE, check.names = FALSE)
-  flagged <- sum(!as.logical(sm$sample_class_corroborated))
-  expect("design", "every flagged measurement appears in the discrepancy table",
-         nrow(disc) == flagged &&
-           setequal(disc$sample_id, sm$sample_id[!as.logical(sm$sample_class_corroborated)]),
-         paste(nrow(disc), "discrepancy row(s),", flagged, "flagged in sample metadata"))
-  if (nrow(disc) > 0L) {
-    record("design", "UNRESOLVED sample-class discrepancy is documented, not suppressed",
-           "SKIP",
-           paste0(nrow(disc), " measurement(s) affecting ",
-                  length(unique(disc$animal_level_unit_affected)),
-                  " animal-level unit(s): ",
-                  paste(sort(unique(disc$animal_level_unit_affected)), collapse = ", "),
-                  " -- requires an experimenter decision before publication"))
-    readme_txt <- paste(readLines(rel("README_DATA.md"), warn = FALSE), collapse = " ")
-    changelog_txt <- paste(readLines(
-      rel("editor_source_data", "REVISION_PROTEOMICS_DATA_CHANGELOG.md"), warn = FALSE),
-      collapse = " ")
-    expect("design", "the discrepancy is stated in README_DATA.md",
-           grepl("SAMPLE-CLASS DISCREPANCY", readme_txt, fixed = TRUE))
-    expect("design", "the discrepancy is stated in the editor changelog",
-           grepl("sample class used by the validated analysis is contradicted",
-                 changelog_txt, fixed = TRUE))
-    fp <- read.delim(rel("metadata", "metadata_field_provenance.tsv"), sep = "\t",
-                     quote = "", stringsAsFactors = FALSE, check.names = FALSE)
-    expect("design", "sample_class is not reported as fully verified while disputed",
-           fp$status[fp$field == "sample_class"] == "KNOWN_BUT_NEEDS_STANDARDIZATION")
-  }
-}
+# Sample-class correction. The contract is NOT that every measurement carries its original
+# class -- six do not, deliberately -- and it is NOT that the difference is an open question.
+# The forensic audit resolved it as an intentional correction, so what is checked here is
+# that the correction is documented exactly, both identities are retained, and nothing about
+# it is left as an unresolved blocker.
+corr_path <- rel("metadata", "sample_class_corrections.tsv")
+expect("design", "both original and analysis sample-class labels are retained for all 96",
+       all(c("original_sample_class", "analysis_sample_class", "sample_class_corrected")
+           %in% names(sm)) &&
+         !anyNA(sm$original_sample_class) && all(nzchar(sm$original_sample_class)) &&
+         !anyNA(sm$analysis_sample_class) && all(nzchar(sm$analysis_sample_class)))
+expect("design", "analysis_sample_class equals the canonical sample_class column",
+       identical(as.character(sm$analysis_sample_class), as.character(sm$sample_class)))
+expect("design", "sample_class_corrected is exactly where the two labels differ",
+       identical(as.logical(sm$sample_class_corrected),
+                 sm$original_sample_class != sm$analysis_sample_class))
 
+n_corr_flagged <- sum(as.logical(sm$sample_class_corrected))
+expect("design",
+       sprintf("exactly %d of 96 measurements are corrected, %d unchanged",
+               RELEASE_N_SAMPLE_CLASS_CORRECTED,
+               inv$n_measurement_records - RELEASE_N_SAMPLE_CLASS_CORRECTED),
+       n_corr_flagged == RELEASE_N_SAMPLE_CLASS_CORRECTED &&
+         sum(!as.logical(sm$sample_class_corrected)) ==
+           inv$n_measurement_records - RELEASE_N_SAMPLE_CLASS_CORRECTED,
+       paste(n_corr_flagged, "corrected"))
+
+if (!file.exists(corr_path)) {
+  record("design", "the sample-class correction is published", "FAIL",
+         "sample_class_corrections.tsv missing")
+} else {
+  corr <- read.delim(corr_path, sep = "\t", quote = "", stringsAsFactors = FALSE,
+                     check.names = FALSE)
+  expect("design", "the correction table covers exactly the flagged measurements",
+         nrow(corr) == n_corr_flagged &&
+           setequal(corr$sample_id, sm$sample_id[as.logical(sm$sample_class_corrected)]),
+         paste(nrow(corr), "row(s)"))
+
+  # The full contract: count, identity, hemisphere, animals, plate positions, both class
+  # vectors and the 3-cycle. Reported per check so a failure names what diverged.
+  for (i in seq_len(nrow(cc <- release_check_sample_class_corrections(corr)))) {
+    expect("design", cc$check[i], cc$pass[i])
+  }
+
+  # The cited correction record must still hash to what the forensic audit recorded.
+  ref <- release_verify_sample_class_correction_reference(DATA_ROOT, require_match = FALSE)
+  expect("design", "the preserved correction record matches its recorded SHA256",
+         isTRUE(ref$matches),
+         paste0(substr(ref$observed_sha256, 1, 16), "... (mtime ", ref$observed_mtime, ")"))
+  expect("design", "the published correction table cites that same record by hash",
+         all(as.character(corr$correction_reference_sha256) == ref$expected_sha256))
+  expect("design", "no corrected row claims a quantitative change",
+         all(toupper(as.character(corr$quantitative_values_changed)) == "FALSE"))
+
+  # This is the check that used to be a SKIP. It is a PASS now, and it is a real check:
+  # the correction has to be RESOLVED, documented in the reader-facing documents, and
+  # described without the vocabulary of an open discrepancy.
+  readme_txt <- paste(readLines(rel("README_DATA.md"), warn = FALSE), collapse = " ")
+  changelog_txt <- paste(readLines(
+    rel("editor_source_data", "REVISION_PROTEOMICS_DATA_CHANGELOG.md"), warn = FALSE),
+    collapse = " ")
+  documented <- grepl("SAMPLE-CLASS CORRECTION", readme_txt, fixed = TRUE) &&
+    grepl("sample-class assignments corrected during historical sample-identity",
+          readme_txt, fixed = TRUE) &&
+    grepl("A sample-class correction, resolved", changelog_txt, fixed = TRUE)
+  resolved <- all(as.character(corr$correction_status) ==
+                    RELEASE_SAMPLE_CLASS_CORRECTION$status) &&
+    all(as.character(corr$correction_status) %in%
+          release_sample_class_correction_statuses)
+  record("design", "sample-class correction is RESOLVED and documented, not an open item",
+         if (documented && resolved) "PASS" else "FAIL",
+         paste0(nrow(corr), " corrected measurement(s), status ",
+                unique(corr$correction_status),
+                "; affected animal-level unit(s): ",
+                paste(sort(unique(corr$animal_level_unit_affected)), collapse = ", ")))
+
+  # The reader-facing documents must not describe it as unresolved or as a mislabelling.
+  forbidden <- c("UNRESOLVED SAMPLE-CLASS", "unresolved sample-class",
+                 "unresolved metadata discrepancy", "requires an experimenter decision",
+                 "requires a decision from the experimenter", "mislabelled samples",
+                 "mislabeled samples", "samples requiring reanalysis")
+  hit <- forbidden[vapply(forbidden, function(f) {
+    grepl(f, readme_txt, fixed = TRUE) || grepl(f, changelog_txt, fixed = TRUE)
+  }, logical(1))]
+  expect("design", "no document still calls the sample-class correction unresolved",
+         length(hit) == 0L,
+         if (length(hit)) paste("found:", paste(hit, collapse = "; ")) else "")
+
+  # The absence of a written rationale is a fact and must stay stated.
+  expect("design", "the missing prose rationale is disclosed, not glossed",
+         grepl("No surviving prose note", changelog_txt, fixed = TRUE) ||
+           grepl("no surviving prose note", changelog_txt, fixed = TRUE))
+
+  fp <- read.delim(rel("metadata", "metadata_field_provenance.tsv"), sep = "\t",
+                   quote = "", stringsAsFactors = FALSE, check.names = FALSE)
+  expect("design", "sample_class is reported as verified now that the correction is resolved",
+         fp$status[fp$field == "sample_class"] == "KNOWN_VERIFIED")
+  expect("design", "original_sample_class carries its own field provenance entry",
+         "original_sample_class" %in% fp$field)
+}
 # --------------------------------------------------------------------------------------
 cat("\n=== contrasts ===\n")
 # --------------------------------------------------------------------------------------
@@ -284,6 +341,121 @@ if (!dir.exists(ENRICH_ROOT)) {
          if (length(bad)) paste(head(bad, 3), collapse = "; ") else
            paste(checked, "comparisons verified"))
 }
+
+# --------------------------------------------------------------------------------------
+cat("\n=== effect-size semantics ===\n")
+# --------------------------------------------------------------------------------------
+# The published effect size must be named for what it is, traceable to what it came from,
+# and numerically identical to it. The scan below is the check that no reader-facing
+# document slipped back into calling it a fold change.
+
+da_head <- read.delim(gzfile(rel("differential_analysis",
+                                 "primary_differential_proteins.tsv.gz")),
+                      sep = "\t", quote = "", stringsAsFactors = FALSE,
+                      check.names = FALSE, nrows = 5L)
+ds_eff <- read_release(rel("differential_analysis", "primary_differential_summary.tsv"))
+
+expect("effect_size", "the public effect-size column is present and correctly named",
+       RELEASE_EFFECT_SIZE$public_field %in% names(da_head),
+       RELEASE_EFFECT_SIZE$public_field)
+expect("effect_size", "no published column is named logFC, log2FC or log2fc",
+       !any(tolower(names(da_head)) %in% c("logfc", "log2fc", "log2foldchange",
+                                           "log2_fold_change")),
+       paste(length(names(da_head)), "columns"))
+expect("effect_size", "the source statistic is recorded for provenance",
+       "source_statistic_field" %in% names(da_head) &&
+         all(da_head$source_statistic_field == RELEASE_EFFECT_SIZE$source_field),
+       RELEASE_EFFECT_SIZE$source_field)
+expect("effect_size", "the effect-size units are stated per row",
+       "effect_size_units" %in% names(da_head) &&
+         all(da_head$effect_size_units == RELEASE_EFFECT_SIZE$units))
+expect("effect_size", "the summary carries the full effect-size definition",
+       "effect_size_definition" %in% names(ds_eff) &&
+         all(ds_eff$effect_size_definition == RELEASE_EFFECT_SIZE$definition))
+expect("effect_size", "the definition states explicitly that it is not a log2 fold change",
+       all(grepl("NOT a log2 fold change", ds_eff$effect_size_definition, fixed = TRUE)))
+expect("effect_size", "the effect size is not called a standardised mean difference alone",
+       !any(grepl("standardised mean difference", ds_eff$effect_size_definition,
+                  fixed = TRUE)) &&
+         !any(grepl("standardized mean difference", ds_eff$effect_size_definition,
+                    fixed = TRUE)))
+
+# Canonical GSEA ranking must still be the moderated t, and the sensitivity rows must still
+# be separated. Terminology changed; the statistic did not.
+gsea_go_v <- read_release(rel("enrichment", "primary_GSEA_GO_BP.tsv.gz"))
+gsea_kegg_v <- read_release(rel("enrichment", "primary_GSEA_KEGG.tsv.gz"))
+expect("effect_size", "canonical GSEA is still ranked by the moderated t",
+       all(gsea_go_v$rank_statistic == "moderated_t") &&
+         all(gsea_kegg_v$rank_statistic == "moderated_t") &&
+         all(gsea_go_v$analysis_role == "canonical") &&
+         all(gsea_kegg_v$analysis_role == "canonical"))
+expect("effect_size", "the sensitivity ranking keeps its canonical `log2fc` token",
+       all(sens$rank_statistic == "log2fc") && all(sens$analysis_role == "sensitivity"))
+
+# The terminology audit, and the scan of every reader-facing document. Builder sources are
+# deliberately not scanned: they hold the claim list and the audit rows themselves.
+audit_path <- rel("editor_source_data", "EFFECT_SIZE_TERMINOLOGY_AUDIT.tsv")
+if (!file.exists(audit_path)) {
+  record("effect_size", "the terminology audit is published", "FAIL",
+         "EFFECT_SIZE_TERMINOLOGY_AUDIT.tsv missing")
+} else {
+  aud <- read_release(audit_path)
+  expect("effect_size", "every audited occurrence carries a sanctioned classification",
+         all(aud$status %in% c("INTERNAL_PROVENANCE", "PUBLIC_MISLABEL",
+                               "LEGITIMATE_OTHER_CONTEXT")))
+  expect("effect_size", "the audit records corrections, retained tokens and other contexts",
+         all(c("INTERNAL_PROVENANCE", "PUBLIC_MISLABEL", "LEGITIMATE_OTHER_CONTEXT")
+             %in% aud$status),
+         paste(nrow(aud), "rows"))
+  expect("effect_size", "no audited PUBLIC_MISLABEL is left unresolved",
+         !any(grepl("^RESIDUAL", aud$notes)),
+         paste(sum(grepl("^RESIDUAL", aud$notes)), "residual"))
+}
+
+PUBLIC_DOCS <- c(
+  "README_DATA.md",
+  "metadata/data_dictionary.tsv",
+  "metadata/primary_contrast_manifest.tsv",
+  "metadata/secondary_analysis_manifest.tsv",
+  "metadata/sample_class_corrections.tsv",
+  "metadata/sample_metadata.tsv",
+  "differential_analysis/primary_differential_summary.tsv",
+  "editor_source_data/REVISION_PROTEOMICS_DATA_CHANGELOG.md",
+  "editor_source_data/MANUSCRIPT_TERMINOLOGY_ACTIONS.md",
+  "editor_source_data/figure_source_map.tsv",
+  "pride/README_PRIDE.md",
+  "pride/SDRF_MISSING_METADATA.md",
+  "provenance/UPSTREAM_PREPROCESSING_GAP.md",
+  "provenance/data_lineage.tsv"
+)
+mislabel_rows <- list()
+for (doc in PUBLIC_DOCS) {
+  p <- file.path(OUT_ROOT, doc)
+  if (!file.exists(p)) next
+  h <- release_fold_change_mislabels(readLines(p, warn = FALSE))
+  if (nrow(h)) mislabel_rows[[doc]] <- h
+}
+n_mislabel <- sum(vapply(mislabel_rows, nrow, integer(1)))
+if (n_mislabel > 0L) {
+  for (doc in names(mislabel_rows)) {
+    for (i in seq_len(nrow(mislabel_rows[[doc]]))) {
+      cat("        ", doc, ":", mislabel_rows[[doc]]$line[i], " [",
+          mislabel_rows[[doc]]$term[i], "] ",
+          substr(mislabel_rows[[doc]]$text[i], 1, 120), "\n", sep = "")
+    }
+  }
+}
+expect("effect_size",
+       "no reader-facing document describes the published effect size as a fold change",
+       n_mislabel == 0L,
+       paste(length(PUBLIC_DOCS), "documents scanned,", n_mislabel, "mislabel(s)"))
+
+# The methods-safe definition has to actually be present for someone to copy.
+readme_lines <- readLines(rel("README_DATA.md"), warn = FALSE)
+expect("effect_size", "README_DATA.md carries the methods-safe definition",
+       any(grepl(RELEASE_EFFECT_SIZE$methods_sentence, readme_lines, fixed = TRUE)))
+expect("effect_size", "the manuscript action note lists the out-of-repo corrections",
+       file.exists(rel("editor_source_data", "MANUSCRIPT_TERMINOLOGY_ACTIONS.md")))
 
 # --------------------------------------------------------------------------------------
 cat("\n=== no hemisphere-level inference presented as animal-level ===\n")
@@ -485,6 +657,42 @@ expect("pride", "deposition is not overstated as PRIDE_READY",
 record("pride", "missing required SDRF fields", if (n_req == 0L) "PASS" else "SKIP",
        if (n_req == 0L) "none" else
          paste(fs$sdrf_field[fs$status == "MISSING_REQUIRED_METADATA"], collapse = "; "))
+
+# The sample-class correction must NOT be carried as a PRIDE gap. It used to be the reason
+# for one of the two SKIPs; it is resolved, so the SDRF factor is populated and the
+# deposition documents say so. This is a PASS, and a real one: the factor has to be
+# populated from the analysis-time class and the correction has to be described as resolved.
+sdrf_v <- read_release(rel("pride", "sdrf.tsv"))
+class_col <- "factor value[sample class]"
+expect("pride", "the SDRF sample-class factor is populated for every acquisition",
+       class_col %in% names(sdrf_v) &&
+         all(nzchar(sdrf_v[[class_col]])) &&
+         !any(sdrf_v[[class_col]] %in% c("not available", "not applicable")))
+expect("pride", "the SDRF sample-class factor is the validated analysis-time class",
+       class_col %in% names(sdrf_v) &&
+         setequal(unique(sdrf_v[[class_col]]), unique(sm$analysis_sample_class)))
+expect("pride", "sample class is not recorded as missing SDRF metadata",
+       !any(fs$status == "MISSING_REQUIRED_METADATA" &
+              grepl("sample class", fs$sdrf_field, fixed = TRUE)))
+pride_txt <- paste(c(readLines(rel("pride", "README_PRIDE.md"), warn = FALSE),
+                     readLines(rel("pride", "SDRF_MISSING_METADATA.md"), warn = FALSE)),
+                   collapse = " ")
+record("pride", "sample-class correction is resolved, not a deposition blocker",
+       if (grepl("RESOLVED", pride_txt, fixed = TRUE) &&
+           any(pr$key == "sample_class_correction_status") &&
+           pr$value[pr$key == "sample_class_correction_status"] ==
+             RELEASE_SAMPLE_CLASS_CORRECTION$status) "PASS" else "FAIL",
+       paste0("status ", RELEASE_SAMPLE_CLASS_CORRECTION$status, "; ",
+              RELEASE_N_SAMPLE_CLASS_CORRECTED,
+              " corrected measurement(s), original class retained in companion tables"))
+
+# ...and the genuinely missing acquisition metadata must STAY missing. Nothing above may be
+# read as closing that gap. Reported as SKIP because it is unresolved, which is the truth.
+expect("pride", "the acquisition-metadata gap is still reported as incomplete",
+       pride_status == "PRIDE_METADATA_INCOMPLETE" || n_req == 0L,
+       pride_status)
+expect("pride", "PRIDE readiness is not claimed while required fields are missing",
+       !(pride_status %in% c("PRIDE_READY", "PRIDE_READY_PENDING_RAW_UPLOAD") && n_req > 0L))
 
 # --------------------------------------------------------------------------------------
 # summarise

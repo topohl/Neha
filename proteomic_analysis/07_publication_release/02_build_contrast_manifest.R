@@ -76,16 +76,19 @@ arm_n <- function(sample_class, condition) {
 INTERPRETATION <- c(
   paired_cno_vs_paired_veh = paste(
     "Chemogenetic (CNO) effect within associatively paired animals:",
-    "paired_cno relative to paired_veh. Positive log2FC = higher in paired_cno."),
+    "paired_cno relative to paired_veh. A positive effect_size_sd_units means higher in",
+    "paired_cno."),
   paired_veh_vs_unpaired_veh = paste(
     "Pairing-associated (learning) signature under vehicle:",
-    "paired_veh relative to unpaired_veh. Positive log2FC = higher in paired_veh.",
+    "paired_veh relative to unpaired_veh. A positive effect_size_sd_units means higher",
+    "in paired_veh.",
     "Because pairing condition was completely associated with collection plate in this",
     "comparison, any collection-plate-associated contribution cannot be distinguished",
     "from a pairing-associated contribution."),
   unpaired_cno_vs_unpaired_veh = paste(
     "Chemogenetic (CNO) effect within unpaired control animals:",
-    "unpaired_cno relative to unpaired_veh. Positive log2FC = higher in unpaired_cno.")
+    "unpaired_cno relative to unpaired_veh. A positive effect_size_sd_units means higher",
+    "in unpaired_cno.")
 )
 
 primary <- data.frame(
@@ -198,7 +201,8 @@ secondary <- rbind(
             "residual df 6 before empirical-Bayes moderation: low power; inference must be",
             "treated cautiously.")),
   sec("gsea_log2fc_rank_sensitivity",
-      "GSEA ranked by log2FC (sensitivity analysis)",
+      paste("GSEA ranked by the standardised-abundance effect size",
+            "(effect-size-ranked sensitivity analysis)"),
       "gene_set_enrichment_sensitivity",
       "all 12 primary comparisons",
       "same as the primary contrasts",
@@ -210,7 +214,9 @@ secondary <- rbind(
                 "GSEA_{GO_BP,KEGG}_log2fc_sensitivity.csv"),
       "04_differential_expression_enrichment/01_clusterProfiler.r",
       paste("Robustness check on the choice of ranking statistic. The CANONICAL GSEA ranks",
-            "by the moderated t statistic; these rows exist only as sensitivity."),
+            "by the moderated t statistic; these rows exist only as sensitivity. The",
+            "ranking statistic recorded upstream as `log2fc` is the standardised-abundance",
+            "effect size, not a log2 fold change."),
       paste("Must never be reported as the primary enrichment result. Carried in the",
             "release with analysis_role = sensitivity and in a separate file.")),
   sec("posthoc_pairing_x_cno_interaction",

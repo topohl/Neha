@@ -6,15 +6,23 @@
 #   enrichment/primary_GSEA_GO_BP.tsv.gz        canonical, ranked by the moderated t
 #   enrichment/primary_GSEA_KEGG.tsv.gz         canonical, ranked by the moderated t
 #   enrichment/primary_ORA_GO_BP.tsv.gz         all four query-list variants
-#   enrichment/GSEA_log2FC_sensitivity.tsv.gz   SENSITIVITY ONLY, GO-BP + KEGG
+#   enrichment/GSEA_log2FC_sensitivity.tsv.gz   SENSITIVITY ONLY, GO-BP + KEGG;
+#                                               effect-size-ranked, NOT a log2 fold change
 #   enrichment/primary_EWCE.tsv.gz              cell-type enrichment, all settings
 #   enrichment/enrichment_run_parameters.tsv    the canonical run parameters as recorded
 #
 # NOTHING IS RECOMPUTED. Rows are read from the canonical enrichment folder and relabelled.
 #
-# The canonical GSEA ranking statistic is the moderated t. log2FC-ranked GSEA exists only
-# as a sensitivity analysis and is written to a SEPARATE file, and every row in every file
+# The canonical GSEA ranking statistic is the moderated t. The secondary ranking exists only
+# as a sensitivity analysis, is written to a SEPARATE file, and every row in every file
 # carries analysis_role so canonical and sensitivity rows can never be silently pooled.
+#
+# TERMINOLOGY. That sensitivity ranking is publicly an EFFECT-SIZE-RANKED sensitivity
+# analysis, not a "log2FC-ranked" one: the statistic it ranks by is the standardised-
+# abundance effect size ProTigy stores as `logFC`, which is not a log2 fold change. The
+# FILENAMES and the `rank_statistic` VALUE keep the historical `log2fc` token, because that
+# is how this export is matched back to the canonical run and renaming them would break the
+# provenance chain. The documentation explains what the statistic is; the identifiers stay.
 #
 # Note on cutoffs: the canonical run used pvalue_cutoff = 1 and qvalue_cutoff = 1, so these
 # tables are the COMPLETE tested result, not a significant-only subset. Filter on
@@ -71,7 +79,8 @@ if (!all(as.character(enrich_index$ranking_statistic) == "t") ||
   stop("Canonical enrichment run no longer declares t-ranked canonical / log2fc-ranked ",
        "sensitivity. Refusing to relabel it.", call. = FALSE)
 }
-release_log("  canonical ranking statistic confirmed: moderated t (sensitivity: log2fc)")
+release_log("  canonical ranking statistic confirmed: moderated t (sensitivity ranks by ",
+            "the standardised-abundance effect size, recorded upstream as log2fc)")
 
 ORA_UNIVERSE <- unique(as.character(enrich_index$ora_universe_definition))
 release_log("  ORA universe: ", paste(ORA_UNIVERSE, collapse = "; "))
@@ -269,7 +278,7 @@ bind_blocks <- function(blocks, label) {
 gsea_go_tbl <- bind_blocks(gsea_go, "GSEA GO-BP")
 gsea_kegg_tbl <- bind_blocks(gsea_kegg, "GSEA KEGG")
 ora_tbl <- bind_blocks(ora, "ORA GO-BP")
-sens_tbl <- bind_blocks(sensitivity, "GSEA log2FC sensitivity")
+sens_tbl <- bind_blocks(sensitivity, "GSEA effect-size-ranked sensitivity")
 
 for (nm in names(list(gsea_go_tbl = gsea_go_tbl, gsea_kegg_tbl = gsea_kegg_tbl))) {
   tbl <- get(nm)
@@ -289,7 +298,8 @@ release_log("  GSEA GO-BP:        ", nrow(gsea_go_tbl), " rows")
 release_log("  GSEA KEGG:         ", nrow(gsea_kegg_tbl), " rows")
 release_log("  ORA GO-BP:         ", nrow(ora_tbl), " rows over ",
             length(unique(ora_tbl$query_list)), " query-list variants")
-release_log("  GSEA sensitivity:  ", nrow(sens_tbl), " rows (log2fc-ranked, NOT canonical)")
+release_log("  GSEA sensitivity:  ", nrow(sens_tbl),
+            " rows (effect-size-ranked, source field logFC; NOT canonical)")
 
 # --------------------------------------------------------------------------------------
 # exact re-verification against the canonical enrichment files
@@ -465,7 +475,9 @@ emit(ora_tbl, "enrichment/primary_ORA_GO_BP.tsv.gz",
      "GO-BP over-representation analysis over four query-list definitions",
      c(canon_ora, paths$enrichment_index), c(hash_of(canon_ora), index_hash))
 emit(sens_tbl, "enrichment/GSEA_log2FC_sensitivity.tsv.gz",
-     "SENSITIVITY ONLY: GSEA GO-BP and KEGG ranked by log2FC instead of the moderated t",
+     paste("SENSITIVITY ONLY:", RELEASE_EFFECT_SIZE$sensitivity_public_label,
+           "-- GSEA GO-BP and KEGG ranked by the standardised-abundance effect size",
+           "(stored as logFC) instead of the moderated t. Not a log2 fold change."),
      c(canon_sens, paths$enrichment_index), c(hash_of(canon_sens), index_hash))
 emit(ewce, "enrichment/primary_EWCE.tsv.gz",
      "EWCE cell-type enrichment across all top-N and annotation-level settings",

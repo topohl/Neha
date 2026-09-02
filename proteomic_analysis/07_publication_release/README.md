@@ -66,14 +66,14 @@ holds `sample_annotation.xlsx`, `pg.matrix_raw.txt` and `protein_count.xlsx`.
 
 | Stage | Produces | Mission phase |
 |---|---|---|
-| `01_build_sample_metadata.R` | `metadata/sample_metadata.tsv` (96), `animal_level_sample_metadata.tsv` (48), `metadata_field_provenance.tsv`, `sample_class_source_discrepancy.tsv` | 3 |
+| `01_build_sample_metadata.R` | `metadata/sample_metadata.tsv` (96), `animal_level_sample_metadata.tsv` (48), `metadata_field_provenance.tsv`, `sample_class_corrections.tsv` (6) | 3 |
 | `02_build_contrast_manifest.R` | `metadata/primary_contrast_manifest.tsv` (12), `secondary_analysis_manifest.tsv` | 4 |
 | `03_build_processed_data_exports.R` | `processed_data/` abundance matrices and feature annotation | 5 |
 | `04_build_differential_results.R` | `differential_analysis/` long-format statistics and summary | 6 |
 | `05_build_enrichment_exports.R` | `enrichment/` GSEA, ORA, EWCE, sensitivity, coverage, parameters | 7 |
 | `06_build_figure_source_data.R` | `editor_source_data/figure_source_map.tsv` and the copied panel data | 16 |
 | `07_build_editor_source_workbook.R` | `editor_source_data/Proteomics_Source_Data_Animal_Level.xlsx` | 8 |
-| `08_build_editor_changelog.R` | `editor_source_data/REVISION_PROTEOMICS_DATA_CHANGELOG.md` | 9 |
+| `08_build_editor_changelog.R` | `editor_source_data/REVISION_PROTEOMICS_DATA_CHANGELOG.md`, `EFFECT_SIZE_TERMINOLOGY_AUDIT.tsv`, `MANUSCRIPT_TERMINOLOGY_ACTIONS.md` | 9 |
 | `09_build_pride_sdrf.R` | `pride/sdrf.tsv`, field status, missing-metadata and deposition notes | 10, 19 |
 | `10_build_provenance.R` | `provenance/` lineage, upstream gap, versions, parameters, sessionInfo | 11, 12, 13 |
 | `11_build_readme_and_dictionary.R` | `README_DATA.md`, `metadata/data_dictionary.tsv` | 15 |
@@ -141,6 +141,7 @@ in stage 10 that quotes the historical imputation formula verbatim. The scan now
 | `PROTEOMICS_RELEASE_PROJECT_ROOT` | `S:/…/Collabs/Neha` |
 | `PROTEOMICS_RELEASE_RAW_FILE_ROOT` | unset — set it to the store holding the 96 `.d` directories to re-evaluate PRIDE readiness |
 | `PROTEOMICS_RELEASE_ALLOW_SHARED_DRIVE` | unset — required to be `true` before the release may be written anywhere under the shared data root |
+| `PROTEOMICS_RELEASE_OLD_PACKAGE_ROOT` | unset — point it at an extracted original journal submission package to upgrade the crosswalk from `DIMENSIONS_AND_CONTENT_LINEAGE` to `DIRECT_VERIFICATION` with real hashes |
 
 Each also has a `getOption()` equivalent, matching the idiom every scientific stage uses.
 
@@ -154,19 +155,73 @@ Rscript 07_publication_release/tests/test_release_differential_results.R
 Rscript 07_publication_release/tests/test_release_enrichment.R
 Rscript 07_publication_release/tests/test_release_lineage.R
 Rscript 07_publication_release/tests/test_release_manifest.R
+Rscript 07_publication_release/tests/test_release_sample_class_correction.R
+Rscript 07_publication_release/tests/test_release_effect_size_semantics.R
 ```
 
 All but the first skip cleanly when no built release is reachable, so they are safe in CI.
 Point them at a build with `PROTEOMICS_RELEASE_OUTPUT_ROOT`.
 
+## Two reporting corrections carried by the package
+
+**The six C46/C47 sample classes are a resolved correction, not an open discrepancy.** For 6
+of the 96 acquisitions the analysis-time sample class differs from every pre-correction
+record. A forensic audit established that this was a deliberate correction applied during
+historical sample-identity QC: the left hemispheres of C46 and C47 were cyclically
+reassigned `neuropil -> mcherry -> neuron -> neuropil`. Only metadata changed — the
+acquisition identities and quantitative abundance profiles are the same bytes either way,
+and the affected animal-level units were built from the corrected assignments in the first
+place, so no reanalysis is implied.
+
+`RELEASE_SAMPLE_CLASS_CORRECTION` in [`R/release_validation.R`](R/release_validation.R) is
+the contract. Stage 01 re-derives the correction from three independent pre-correction
+records — the `group_label` column of `sample_annotation.xlsx`, the autosampler plate
+layout, and the retained UMAP correction table — requires all three to agree, verifies the
+correction table against the SHA256 the audit recorded, and then requires the result to
+equal the contract. Both labels are published (`original_sample_class`,
+`analysis_sample_class`, `sample_class_corrected`) for all 96 measurements, with per-row
+provenance in `metadata/sample_class_corrections.tsv`.
+
+Two things are deliberately *not* claimed. No surviving prose note explains the rationale —
+the correction table itself is the preserved record, and that absence is published rather
+than glossed. And UMAP is not treated as ground truth: its nearest-class-centre suggestion
+agrees with the applied correction for five of the six and differs for N60 (suggested
+`cfos`, applied `neuron`), so the suggestion is published in
+`umap_nearest_class_suggestion` alongside the applied class.
+
+**The effect size is not a log2 fold change.** The analysis matrix is standardised
+separately for each protein across the measurement-level dataset, so the coefficient ProTigy
+stores as `logFC` is a **standardized abundance difference (SD units)**, not a log2 ratio.
+`RELEASE_EFFECT_SIZE` holds the one definition every builder and the validator read, so the
+wording cannot drift between them.
+
+Two phrasings are avoided on purpose: *standardised mean difference* unqualified, because it
+reads as Cohen's d (a pooled within-group SD, not the across-dataset per-protein SD used
+here); and *z-scored*, because the released values carry two decimals, no row is exactly
+mean 0 / sd 1 on those bytes, and the producing operation is UNRESOLVED in the lineage.
+`release_standardization_evidence()` measures the matrix and returns `exact_zscore` so the
+builders choose wording from evidence rather than habit.
+
+Internal provenance is kept: `enrichment/GSEA_log2FC_sensitivity.tsv.gz` keeps its filename,
+`rank_statistic` keeps the value `log2fc`, and every differential row carries
+`source_statistic_field = "logFC"`. Renaming those would break the link to the canonical
+run. The exported `effect_size_sd_units` is bit-identical to the source `logFC` for all
+64,188 rows, re-verified at build time and again by
+[`tests/test_release_effect_size_semantics.R`](tests/test_release_effect_size_semantics.R).
+Every fold-change mention in the publication-facing surface is classified in
+`editor_source_data/EFFECT_SIZE_TERMINOLOGY_AUDIT.tsv`; the items that must be fixed by hand
+outside this repository — figure axes, captions, manuscript text — are listed in
+`editor_source_data/MANUSCRIPT_TERMINOLOGY_ACTIONS.md`.
+
+The terminology scan runs against the *built documents*, not the builder sources: the
+sources necessarily contain the vocabulary being classified, so scanning them would report
+the detector as a defect.
+
 ## Open item carried by the package
 
-Preparing this package surfaced a metadata discrepancy that is **not** a consequence of the
-statistical-unit correction: for 6 of the 96 acquisitions the sample class used by the
-validated analysis is contradicted by both independent records of the same assignment
-(`sample_annotation.xlsx`, and the autosampler plate layout the other 90 follow). It has
-**not** been corrected — that would change the animal-level aggregation and every
-downstream statistic — and is published as
-`metadata/sample_class_source_discrepancy.tsv`, flagged per row by
-`sample_class_corroborated`, and stated in `README_DATA.md` and the editor changelog. It
-needs a decision from the experimenter before publication.
+The PRIDE deposition is `PRIDE_METADATA_INCOMPLETE`, and that is not a formatting problem.
+Instrument model, digestion enzyme, DIA acquisition method, search-software version,
+labelling chemistry, modification parameters, organism part and cell type are absent from
+the project and are published as missing; the 96 `.d` acquisition files are identified by
+name but not held here. `pride/SDRF_MISSING_METADATA.md` is the authority for what is
+missing and what would supply it. The sample-class correction is **not** among these items.

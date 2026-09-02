@@ -59,6 +59,8 @@ gsea_go <- read_release(rel("enrichment", "primary_GSEA_GO_BP.tsv.gz"))
 gsea_kegg <- read_release(rel("enrichment", "primary_GSEA_KEGG.tsv.gz"))
 ora <- read_release(rel("enrichment", "primary_ORA_GO_BP.tsv.gz"))
 sens <- read_release(rel("enrichment", "GSEA_log2FC_sensitivity.tsv.gz"))
+corrections_wb <- read_release(rel("metadata", "sample_class_corrections.tsv"))
+n_class_corrected_wb <- nrow(corrections_wb)
 ewce <- read_release(rel("enrichment", "primary_EWCE.tsv.gz"))
 coverage <- read_release(rel("enrichment", "enrichment_coverage.tsv"))
 figure_map <- read_release(rel("editor_source_data", "figure_source_map.tsv"))
@@ -159,7 +161,8 @@ readme <- rbind(
     "them, is superseded by this package."), stringsAsFactors = FALSE, check.names = FALSE),
   data.frame(item = "5. GSEA RANKING STATISTIC", statement = paste(
     "The canonical GSEA ranks proteins by the MODERATED t STATISTIC. The original",
-    "submission ranked by log2FC. log2FC-ranked results are retained here only as a",
+    "submission ranked by the effect size ProTigy stores as `logFC`. Those",
+    "effect-size-ranked results are retained here only as a",
     "sensitivity analysis, in a separate file, with analysis_role = sensitivity on every",
     "row."), stringsAsFactors = FALSE, check.names = FALSE),
   data.frame(item = "6. PRIMARY COMPARISONS", statement = paste(
@@ -168,7 +171,7 @@ readme <- rbind(
     "paired_veh vs unpaired_veh; unpaired_cno vs unpaired_veh). See the",
     "Primary_Contrasts sheet."), stringsAsFactors = FALSE, check.names = FALSE),
   data.frame(item = "7. SECONDARY ANALYSES ARE SEPARATE", statement = paste(
-    "Cross-compartment comparisons (Supplementary E), the log2FC-ranked GSEA sensitivity",
+    "Cross-compartment comparisons (Supplementary E), the effect-size-ranked GSEA sensitivity",
     "analysis, the post-hoc Pairing x CNO interaction and the EWCE baseline analysis are",
     "SECONDARY. They are listed on the Secondary_Analyses sheet and are never mixed into",
     "the primary contrast table."), stringsAsFactors = FALSE, check.names = FALSE),
@@ -225,6 +228,30 @@ readme <- rbind(
     "labelling, fractionation, animal sex and animal age are NOT recorded anywhere in the",
     "project and have deliberately been left blank rather than inferred. See the",
     "Metadata_Field_Status sheet and pride/SDRF_MISSING_METADATA.md."),
+    stringsAsFactors = FALSE, check.names = FALSE),
+  data.frame(item = "16. THE EFFECT SIZE IS NOT A LOG2 FOLD CHANGE", statement = paste(
+    "The abundance matrix is standardised separately for each protein, so the coefficient",
+    "ProTigy stores as `logFC` is a standardized abundance difference expressed in SD",
+    "units of that scale -- NOT a log2 ratio. A value of 2 means two standard deviations,",
+    "not four-fold. It is published as `effect_size_sd_units`, with",
+    "`source_statistic_field = logFC` for provenance, and the exported numbers are",
+    "bit-identical to the canonical values. Only the label changed. Figure axes and",
+    "manuscript text still say log2FC and must be relabelled by hand; see",
+    "editor_source_data/MANUSCRIPT_TERMINOLOGY_ACTIONS.md."),
+    stringsAsFactors = FALSE, check.names = FALSE),
+  data.frame(item = "17. SIX SAMPLE CLASSES WERE CORRECTED, AND THAT IS RESOLVED", statement = paste0(
+    "For ", n_class_corrected_wb, " of the 96 acquisitions -- the left hemispheres of ",
+    paste(sort(unique(corrections_wb$AnimalID)), collapse = " and "),
+    " -- the sample-class assignment was corrected during historical sample-identity",
+    " quality control: a cyclic reassignment among the mCherry-, neuropil- and",
+    " neuron-enriched samples. Only metadata were reassigned; acquisition identifiers and",
+    " quantitative abundance profiles were unchanged, and the affected animal-level units",
+    " were built from the corrected assignments in the first place, so no reanalysis is",
+    " implied. Sample_Metadata carries BOTH labels (original_sample_class and",
+    " analysis_sample_class) with sample_class_corrected marking the six; `sample_class`",
+    " is the analysis-time class. Per-row provenance is in",
+    " metadata/sample_class_corrections.tsv. This is NOT an unresolved discrepancy and NOT",
+    " a mislabelling."),
     stringsAsFactors = FALSE, check.names = FALSE)
 )
 

@@ -124,7 +124,7 @@ PANEL_ANALYSIS <- c(
   "Figure3|E" = "rank-abundance curves by sample class and condition (descriptive)",
   "Figure3|F" = "GSEA GO-BP bubble grid, paired_veh vs unpaired_veh across sample classes",
   "Figure3|G" = "ORA GO-BP lollipop over the mCherry FDR-significant upregulated list",
-  "Figure3|H" = "scatter of learning log2FC against CNO log2FC, mCherry (descriptive)",
+  "Figure3|H" = "scatter of the learning effect size against the CNO effect size (standardised abundance differences, SD units), mCherry (descriptive)",
   "Figure3|I" = "GSEA NES heatmap, learning and paired-CNO contrasts",
   "Supplementary_proteomics|A" = "protein and peptide identification counts per acquisition (technical QC)",
   "Supplementary_proteomics|B1" = "PCA of animal-level protein abundance coloured by experimental group",

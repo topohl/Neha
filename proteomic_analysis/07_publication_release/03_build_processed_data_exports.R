@@ -83,24 +83,34 @@ if (!setequal(meas$sample_ids, sample_metadata$sample_id)) {
 
 # What scale are these values actually on? The filename says `pcaAdjusted_unnormalized`,
 # which suggests neither, and a package that mislabels its own units is worse than one that
-# says it does not know. Measured directly: every protein has mean 0 and sd 1 across the 96
-# acquisitions, i.e. the matrix is standardised PER PROTEIN. It is therefore not log2
-# abundance, and a difference of group means on it is in units of per-protein SD.
-# Asserted here so the description this package publishes cannot drift from the data.
-row_mean <- rowMeans(meas$mat)
-row_sd <- apply(meas$mat, 1L, stats::sd)
-is_row_standardised <- max(abs(row_mean)) < 1e-2 && max(abs(row_sd - 1)) < 5e-2
-release_log("  value scale: per-protein mean ", signif(stats::median(row_mean), 3),
-            ", per-protein sd ", signif(stats::median(row_sd), 4),
-            " -> row-standardised = ", is_row_standardised)
-if (!is_row_standardised) {
+# says it does not know. Measured directly: each protein is standardised across the 96
+# acquisitions, so the values are neither log2 abundance nor raw intensity, and a difference
+# of group means on them is in units of that per-protein SD.
+#
+# Deliberately NOT called "z-scored". The released values are serialised to 2 decimals, and
+# on those bytes no row is exactly mean 0 / sd 1 -- the residual deviations are of exactly
+# the size 2-decimal rounding produces. The producing operation is also UNRESOLVED in the
+# lineage (no script, no parameters; see provenance/UPSTREAM_PROVENANCE_GAP.md). So the
+# release states what the numbers support, "standardised per protein", and reports the
+# measured deviations rather than asserting a specific formula.
+std <- release_standardization_evidence(meas$mat)
+release_log("  value scale: max |row mean| ", signif(std$max_abs_row_mean, 3),
+            ", max |row sd - 1| ", signif(std$max_abs_row_sd_minus_1, 3),
+            " -> standardised = ", std$approximately_standardized,
+            ", exactly z-scored = ", std$exact_zscore)
+if (!std$approximately_standardized) {
   stop("The measurement-level matrix is no longer per-protein standardised. The release ",
        "describes these values as standardised; refusing to publish a description the ",
        "data contradict.", call. = FALSE)
 }
-VALUE_SCALE <- paste(
-  "per-protein standardised (z-scored) abundance: each protein has mean 0 and standard",
-  "deviation 1 across the 96 acquisitions. NOT log2 abundance and NOT raw intensity.")
+VALUE_SCALE <- paste0(
+  "per-protein standardised abundance: each protein is standardised separately across the ",
+  "96 acquisitions, giving row means of approximately 0 (max |mean| ",
+  signif(std$max_abs_row_mean, 3), ") and row standard deviations of approximately 1 ",
+  "(max |sd - 1| ", signif(std$max_abs_row_sd_minus_1, 3), "). NOT log2 abundance and NOT ",
+  "raw intensity. The values carry 2 decimals, so no row is exactly mean 0 / sd 1 and the ",
+  "release does not claim a specific standardisation formula; the producing step is ",
+  "unresolved (see provenance/UPSTREAM_PROVENANCE_GAP.md).")
 
 meas_order <- match(sample_metadata$sample_id, meas$sample_ids)
 measurement_export <- data.frame(

@@ -279,11 +279,22 @@ PROTEOMICS_RELEASE_OUTPUT_ROOT="<same root>" \
   Rscript 07_publication_release/13_validate_release.R
 ```
 
-Two things it surfaced that are **not** consequences of the animal-level correction and
-need a decision before publication: a sample-class discrepancy affecting 6 of the 96
-acquisitions, and the fact that the canonical `logFC` is a standardised mean difference
-rather than a log2 fold change. Both are documented in the package and neither was
-corrected here. See [`07_publication_release/README.md`](07_publication_release/README.md).
+Two reporting items it surfaced, neither a consequence of the animal-level correction, are
+now **resolved in the reporting layer** — no scientific value changed for either:
+
+- **The six C46/C47 sample classes are a confirmed intentional correction**, not an open
+  discrepancy. The left hemispheres of C46 and C47 were cyclically reassigned
+  `neuropil → mcherry → neuron → neuropil` during historical sample-identity QC. Only
+  metadata changed; acquisition identities and quantitative abundance profiles are
+  unchanged, and the affected animal-level units were built from the corrected assignments
+  in the first place. Both the original and the analysis-time labels are published.
+- **The canonical `logFC` is a standardized abundance difference (SD units)**, not a log2
+  fold change: the analysis matrix is standardised separately for each protein. Publication
+  exports carry it as `effect_size_sd_units` with `source_statistic_field = "logFC"`;
+  internal canonical columns and filenames keep the historical token so provenance holds.
+
+See [`07_publication_release/README.md`](07_publication_release/README.md). The PRIDE
+deposition remains `PRIDE_METADATA_INCOMPLETE` for genuinely absent acquisition metadata.
 
 ### Out-of-scope code
 
@@ -324,7 +335,7 @@ The EWCE workflow in `05_celltype_enrichment_EWCE/01_EWCE.r` uses shared sample-
 
 In mapped comparison CSVs, the first column `gene_symbol` is retained for current downstream compatibility but remains historically misnamed: it contains the resolved UniProt accession used by clusterProfiler. `original_protein_id` preserves the original GCT `id`, `Description` preserves the source gene-style description, and `mapped_gene_symbol` provides the mapped gene annotation when available. All source DA statistics are carried through unchanged. Unmapped rows are written separately and participate in an exact mapped-plus-unmapped row-accounting audit.
 
-`04_differential_expression_enrichment/01_clusterProfiler.r` consumes the 12 forward files recorded in `02_data/animal_level/mapped/indexMappedComparisons.csv` and writes an isolated canonical branch under `03_output/enrichment`. It uses `uniprot_accession` explicitly. Repeated accessions are collapsed once, deterministically, by the largest absolute `log2fc` while preserving its sign, with source-row and protein-ID tie breakers and a per-comparison audit. The same selected source row is then used for every rank sensitivity. Canonical GO and KEGG GSEA rank by the ProTigy/limma moderated `t` statistic by default; positive values still mean higher abundance in the indexed numerator. The standard `t` run also writes `log2fc` sensitivity results (`GSEA_GO_BP_log2fc_sensitivity.csv` and `GSEA_KEGG_log2fc_sensitivity.csv`) with the established comparison/analysis seeds. `PROTEOMICS_ENRICHMENT_GSEA_RANK=log2fc` provides an explicit legacy-primary run without duplicating that sensitivity output. GO ORA is unchanged: it uses `padj` and signed `log2fc` foreground definitions and all unique successfully mapped, measured UniProt accessions in that comparison as its explicit universe. Rank source, analysis role, tie diagnostics, deterministic seeds, parameters, input hashes, counts, warnings, and output paths are recorded in `indexEnrichmentComparisons.csv` and per-comparison audits.
+`04_differential_expression_enrichment/01_clusterProfiler.r` consumes the 12 forward files recorded in `02_data/animal_level/mapped/indexMappedComparisons.csv` and writes an isolated canonical branch under `03_output/enrichment`. It uses `uniprot_accession` explicitly. Repeated accessions are collapsed once, deterministically, by the largest absolute `log2fc` while preserving its sign, with source-row and protein-ID tie breakers and a per-comparison audit. The same selected source row is then used for every rank sensitivity. Canonical GO and KEGG GSEA rank by the ProTigy/limma moderated `t` statistic by default; positive values still mean higher abundance in the indexed numerator. The standard `t` run also writes `log2fc` sensitivity results (`GSEA_GO_BP_log2fc_sensitivity.csv` and `GSEA_KEGG_log2fc_sensitivity.csv`) with the established comparison/analysis seeds. `PROTEOMICS_ENRICHMENT_GSEA_RANK=log2fc` provides an explicit legacy-primary run without duplicating that sensitivity output. GO ORA is unchanged: it uses `padj` and signed `log2fc` foreground definitions and all unique successfully mapped, measured UniProt accessions in that comparison as its explicit universe. Rank source, analysis role, tie diagnostics, deterministic seeds, parameters, input hashes, counts, warnings, and output paths are recorded in `indexEnrichmentComparisons.csv` and per-comparison audits. Note on units: `log2fc` here is the ProTigy/limma coefficient on a per-protein standardised abundance scale — a standardized abundance difference in SD units, not a log2 fold change. The internal column name is retained for provenance; publication exports rename it to `effect_size_sd_units`.
 
 The downstream `02_compareGO.r`, `03_compare_pathways.r`, and `04_compare_sig_expr.r` scripts consume the canonical indexes instead of historical filenames. Historical comparison aliases remain provenance metadata only. `04_compare_sig_expr.r` now compares animal-level contrast statistics; it does not fabricate per-animal expression from mapped differential-result tables.
 

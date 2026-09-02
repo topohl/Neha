@@ -6,6 +6,7 @@
 #   metadata/sample_metadata.tsv              one row per acquisition/measurement (96)
 #   metadata/animal_level_sample_metadata.tsv one row per AnimalID x sample_class (48)
 #   metadata/metadata_field_provenance.tsv    per-field status, so nothing is guessed
+#   metadata/sample_class_corrections.tsv     the 6 corrected sample-class assignments
 #
 # Everything is READ from validated artefacts. No value is inferred:
 #
@@ -184,86 +185,211 @@ measurement <- measurement[order(measurement$sample_class, measurement$condition
 rownames(measurement) <- NULL
 
 # --------------------------------------------------------------------------------------
-# sample-class corroboration against two independent sources
+# sample-class correction: both identities are preserved
 # --------------------------------------------------------------------------------------
-# The analysis sample_class comes from sample_info.xlsx (`celltype`). Two independent
-# records of the same assignment exist: the `group_label` column of sample_annotation.xlsx,
-# and the autosampler plate layout implied by the well row letter. This block compares all
-# three and PUBLISHES the comparison. It deliberately does not correct anything: the
-# analysis class is what the validated results were computed on, and changing it here would
-# silently desynchronise the published metadata from the locked GCTs.
+# Six acquisitions carry an analysis-time sample class that differs from every
+# pre-correction record. The forensic audit resolved what that is: a deliberate correction
+# applied during historical sample-identity QC, not a mislabelling and not an open
+# question. Only class METADATA was reassigned -- the acquisition identities and the
+# quantitative abundance profiles are the same bytes either way.
+#
+# This block therefore publishes BOTH identities for all 96 measurements rather than
+# choosing one. `sample_class` stays the canonical analysis-time assignment, because that
+# is what the locked GCTs and every validated statistic were computed on; changing it
+# would desynchronise the published metadata from the results. `original_sample_class`
+# carries the pre-correction assignment, so nothing is discarded.
+#
+# Three independent pre-correction records exist and are compared here:
+#
+#   1. sample_annotation.xlsx `group_label`  -- the acquisition-era annotation (all 96)
+#   2. the autosampler plate layout          -- implied by the well row letter (all 96)
+#   3. the retained UMAP correction table    -- the six corrected rows only
+#
+# The correction is only accepted if all three agree with each other AND the resulting six
+# rows equal RELEASE_SAMPLE_CLASS_CORRECTION. Deriving it three ways and then requiring the
+# contract to match is the point: a single read would let a stale source pass unnoticed.
 
-annotation_class <- release_normalize_annotation_label(
+CORRECTION <- RELEASE_SAMPLE_CLASS_CORRECTION
+
+# The preserved correction record is cited by hash in the released provenance table, so the
+# hash is computed here and required to match what the forensic audit recorded. It is never
+# taken on trust from the narrative, and mtime alone is never treated as sufficient.
+correction_ref <- release_verify_sample_class_correction_reference(DATA_ROOT)
+release_log("  correction reference verified: ", basename(correction_ref$path))
+release_log("    sha256 ", correction_ref$observed_sha256)
+release_log("    mtime  ", correction_ref$observed_mtime,
+            " (audit recorded ", correction_ref$expected_mtime, ")")
+
+# Record 1: the acquisition-era annotation, normalised to the canonical vocabulary.
+original_sample_class <- release_normalize_annotation_label(
   raw_by_sample$historical_group_label[match(measurement$sample_id, raw_by_sample$sample_id)])
-if (anyNA(annotation_class)) {
+if (anyNA(original_sample_class)) {
   stop("Could not normalise every sample_annotation.xlsx group_label to a canonical ",
        "sample class: ",
        paste(unique(raw_by_sample$historical_group_label[
-         match(measurement$sample_id[is.na(annotation_class)], raw_by_sample$sample_id)]),
+         match(measurement$sample_id[is.na(original_sample_class)], raw_by_sample$sample_id)]),
          collapse = ", "),
-       ". Refusing to run a corroboration check that would silently pass on NA.",
+       ". Refusing to run a comparison that would silently pass on NA.",
        call. = FALSE)
 }
 
+# Record 2: the autosampler plate layout. The modal class per well row is computed from the
+# ANALYSIS class, so the layout rule is not borrowed from the source it is used to check;
+# with only 6 of 96 reassigned the mode still recovers the pre-correction layout.
 well_row <- substr(measurement$well_position, 1, 1)
-# Modal class per well row, computed from the ANALYSIS class itself, so the layout rule is
-# not borrowed from the source it is being used to check.
 row_modal_class <- vapply(split(measurement$sample_class, well_row), function(x) {
   names(sort(table(x), decreasing = TRUE))[[1]]
 }, character(1))
 layout_class <- unname(row_modal_class[well_row])
 
-measurement$sample_class_annotation_source <- annotation_class
+measurement$original_sample_class <- original_sample_class
+measurement$analysis_sample_class <- measurement$sample_class
 measurement$sample_class_plate_layout_implied <- layout_class
-measurement$sample_class_corroborated <-
-  measurement$sample_class == annotation_class &
-  measurement$sample_class == layout_class
+measurement$sample_class_corrected <-
+  measurement$original_sample_class != measurement$analysis_sample_class
 
-discrepant <- which(!measurement$sample_class_corroborated)
-sample_class_discrepancy <- if (length(discrepant)) {
-  data.frame(
-    sample_id = measurement$sample_id[discrepant],
-    raw_file_basename = measurement$raw_file_basename[discrepant],
-    plate_sample_number = measurement$plate_sample_number[discrepant],
-    collection_plate = measurement$collection_plate[discrepant],
-    plate_set_token = measurement$plate_set_token[discrepant],
-    well_position = measurement$well_position[discrepant],
-    AnimalID = measurement$AnimalID[discrepant],
-    condition = measurement$condition[discrepant],
-    hemisphere = measurement$hemisphere[discrepant],
-    sample_class_used_by_analysis = measurement$sample_class[discrepant],
-    sample_class_sample_annotation_xlsx = annotation_class[discrepant],
-    sample_class_plate_layout_implied = layout_class[discrepant],
-    animal_level_unit_affected = measurement$animal_level_sample_id[discrepant],
-    stringsAsFactors = FALSE, check.names = FALSE)
-} else {
-  data.frame(sample_id = character(0), raw_file_basename = character(0),
-             plate_sample_number = character(0), collection_plate = character(0),
-             plate_set_token = character(0), well_position = character(0),
-             AnimalID = character(0), condition = character(0), hemisphere = character(0),
-             sample_class_used_by_analysis = character(0),
-             sample_class_sample_annotation_xlsx = character(0),
-             sample_class_plate_layout_implied = character(0),
-             animal_level_unit_affected = character(0),
-             stringsAsFactors = FALSE, check.names = FALSE)
+plate_position <- paste(measurement$plate_set_token, measurement$well_position, sep = "-")
+corrected_idx <- which(measurement$sample_class_corrected)
+
+# --------------------------------------------------------------------------------------
+# record 3: the retained UMAP correction table
+# --------------------------------------------------------------------------------------
+# Parsed for the pre-correction class it recorded per run. Its `potential_switch_celltype`
+# column is the UMAP nearest-class-centre SUGGESTION and is deliberately NOT used as the
+# corrected class: for N60 the suggestion was cFosN while the correction actually applied
+# was neuron. UMAP identified the switch; it is not treated as ground truth for what the
+# switch was. The applied classes come from the validated analysis assignment, and the
+# independent profile-similarity and left/right-pair analyses support them.
+
+correction_table <- utils::read.csv(correction_ref$path, sep = ";", stringsAsFactors = FALSE,
+                                    check.names = FALSE)
+correction_table <- correction_table[nzchar(trimws(correction_table$outlier)), , drop = FALSE]
+ct_n_token <- sub("^.*_(N[0-9]{2})_S[45]-[A-H][0-9].*$", "\\1", correction_table$outlier)
+ct_original <- release_normalize_annotation_label(correction_table$outlier_celltype)
+ct_suggested <- release_normalize_annotation_label(correction_table$potential_switch_celltype)
+names(ct_original) <- ct_n_token
+names(ct_suggested) <- ct_n_token
+
+release_log("  correction table lists ", nrow(correction_table),
+            " historical outlier acquisition(s); ", length(intersect(ct_n_token,
+            CORRECTION$expected$plate_sample_number)), " of them are the corrected six")
+
+# --------------------------------------------------------------------------------------
+# assemble the correction provenance table and require it to equal the contract
+# --------------------------------------------------------------------------------------
+
+correction_reference_relpath <- paste(c("clusterProfiler", CORRECTION$reference_relative),
+                                      collapse = "/")
+
+sample_class_corrections <- data.frame(
+  sample_id = measurement$sample_id[corrected_idx],
+  plate_sample_number = measurement$plate_sample_number[corrected_idx],
+  AnimalID = measurement$AnimalID[corrected_idx],
+  hemisphere = measurement$hemisphere[corrected_idx],
+  plate_position = plate_position[corrected_idx],
+  collection_plate = measurement$collection_plate[corrected_idx],
+  condition = measurement$condition[corrected_idx],
+  original_sample_class = measurement$original_sample_class[corrected_idx],
+  analysis_sample_class = measurement$analysis_sample_class[corrected_idx],
+  correction_status = CORRECTION$status,
+  correction_method = CORRECTION$method,
+  correction_date = CORRECTION$correction_date,
+  correction_reference = correction_reference_relpath,
+  correction_reference_sha256 = correction_ref$observed_sha256,
+  correction_reference_mtime = correction_ref$observed_mtime,
+  quantitative_values_changed = FALSE,
+  umap_nearest_class_suggestion = unname(ct_suggested[measurement$plate_sample_number[corrected_idx]]),
+  original_class_corroborating_records = paste(
+    "sample_annotation.xlsx group_label; autosampler plate layout;",
+    "umap_outlier_samples_with_switches_CORRECTED.csv outlier_celltype"),
+  animal_level_unit_affected = measurement$animal_level_sample_id[corrected_idx],
+  notes = paste(
+    "Sample-class metadata reassigned during historical sample-identity QC. Acquisition",
+    "identity and quantitative protein-abundance profile unchanged. No surviving prose",
+    "note records the rationale; the correction table itself is the preserved historical",
+    "correction record."),
+  stringsAsFactors = FALSE, check.names = FALSE
+)
+sample_class_corrections <- sample_class_corrections[
+  order(match(sample_class_corrections$plate_sample_number,
+              CORRECTION$expected$plate_sample_number)), , drop = FALSE]
+rownames(sample_class_corrections) <- NULL
+
+correction_checks <- release_check_sample_class_corrections(sample_class_corrections)
+if (any(!correction_checks$pass)) {
+  stop("The sample-class correction derived from the canonical sources does not match the ",
+       "release contract:\n",
+       paste("  -", correction_checks$check[!correction_checks$pass], collapse = "\n"),
+       "\nRefusing to publish a correction record that disagrees with the forensic audit.",
+       call. = FALSE)
 }
 
-n_discrepant <- nrow(sample_class_discrepancy)
-release_log("  sample-class corroboration: ", nrow(measurement) - n_discrepant, "/",
-            nrow(measurement), " agree across all three sources")
-if (n_discrepant) {
-  release_log("  *** ", n_discrepant, " measurement(s) where the analysis sample_class is ",
-              "contradicted by BOTH independent sources ***")
-  for (i in seq_len(n_discrepant)) {
-    r <- sample_class_discrepancy[i, , drop = FALSE]
-    release_log("      ", r$plate_sample_number, " ", r$plate_set_token, "-",
-                r$well_position, " ", r$AnimalID, " ", r$hemisphere,
-                ": analysis=", r$sample_class_used_by_analysis,
-                " | annotation=", r$sample_class_sample_annotation_xlsx,
-                " | plate layout=", r$sample_class_plate_layout_implied)
-  }
-  release_log("  These are PUBLISHED as a documented discrepancy and NOT corrected here.")
+# The plate layout must independently reproduce the pre-correction class, for all 96.
+if (!identical(measurement$sample_class_plate_layout_implied,
+               measurement$original_sample_class)) {
+  bad <- which(measurement$sample_class_plate_layout_implied !=
+                 measurement$original_sample_class)
+  stop("The autosampler plate layout and sample_annotation.xlsx disagree about the ",
+       "pre-correction sample class for ", length(bad), " measurement(s): ",
+       paste(measurement$plate_sample_number[bad], collapse = ", "),
+       ". Two pre-correction records that do not agree cannot corroborate each other.",
+       call. = FALSE)
 }
+
+# The correction table must independently reproduce the pre-correction class for the six.
+ct_for_six <- unname(ct_original[sample_class_corrections$plate_sample_number])
+if (anyNA(ct_for_six)) {
+  stop("The preserved correction table does not cover every corrected measurement: ",
+       paste(sample_class_corrections$plate_sample_number[is.na(ct_for_six)], collapse = ", "),
+       call. = FALSE)
+}
+if (!identical(ct_for_six, sample_class_corrections$original_sample_class)) {
+  stop("The preserved correction table records a different pre-correction class than ",
+       "sample_annotation.xlsx for at least one corrected measurement.", call. = FALSE)
+}
+
+# 90 of 96 must be untouched, and no non-corrected row may differ.
+n_corrected <- nrow(sample_class_corrections)
+n_unchanged <- sum(!measurement$sample_class_corrected)
+if (n_corrected != RELEASE_N_SAMPLE_CLASS_CORRECTED ||
+    n_unchanged != RELEASE_DESIGN_INVARIANTS$n_measurement_records -
+      RELEASE_N_SAMPLE_CLASS_CORRECTED) {
+  stop("Expected exactly ", RELEASE_N_SAMPLE_CLASS_CORRECTED, " corrected and ",
+       RELEASE_DESIGN_INVARIANTS$n_measurement_records - RELEASE_N_SAMPLE_CLASS_CORRECTED,
+       " unchanged sample classes; got ", n_corrected, " and ", n_unchanged, ".",
+       call. = FALSE)
+}
+unchanged <- measurement[!measurement$sample_class_corrected, , drop = FALSE]
+if (!identical(unchanged$original_sample_class, unchanged$analysis_sample_class)) {
+  stop("A measurement not flagged as corrected nonetheless has differing original and ",
+       "analysis sample classes.", call. = FALSE)
+}
+
+# Per-row correction provenance. Blank rather than repeated boilerplate on the 90 rows
+# where nothing was corrected, so a reader filtering on these fields gets the six.
+blank_if_uncorrected <- function(value) {
+  ifelse(measurement$sample_class_corrected, value, NA_character_)
+}
+measurement$sample_class_correction_status <-
+  ifelse(measurement$sample_class_corrected, CORRECTION$status, "not_corrected")
+measurement$sample_class_correction_method <- blank_if_uncorrected(CORRECTION$method)
+measurement$sample_class_correction_provenance <-
+  blank_if_uncorrected(correction_reference_relpath)
+measurement$sample_class_correction_reference_sha256 <-
+  blank_if_uncorrected(correction_ref$observed_sha256)
+measurement$sample_class_correction_date <- blank_if_uncorrected(CORRECTION$correction_date)
+
+release_log("  sample class: ", n_unchanged, "/", nrow(measurement),
+            " measurements unchanged, ", n_corrected, " corrected (",
+            CORRECTION$status, ")")
+for (i in seq_len(nrow(sample_class_corrections))) {
+  r <- sample_class_corrections[i, , drop = FALSE]
+  release_log("      ", r$plate_sample_number, " ", r$plate_position, " ", r$AnimalID,
+              " ", r$hemisphere, ": ", r$original_sample_class, " -> ",
+              r$analysis_sample_class)
+}
+release_log("  both original and analysis sample-class labels are retained for all ",
+            nrow(measurement), " measurements")
 
 # Cross-checks the design contracts depend on.
 stopifnot(nrow(measurement) == RELEASE_DESIGN_INVARIANTS$n_measurement_records)
@@ -386,20 +512,36 @@ field_provenance <- rbind(
   fld("hemisphere", "KNOWN_VERIFIED", paths$sample_annotation,
       "explicit _left/_right suffix on the annotation label; numeric ReplicateGroup 1/2 agrees one-to-one (asserted in this stage)",
       "The 2024 acquisition run names contain no L/R token; hemisphere is NOT inferred from sample_id."),
-  fld("sample_class",
-      if (n_discrepant > 0L) "KNOWN_BUT_NEEDS_STANDARDIZATION" else "KNOWN_VERIFIED",
-      paths$source_assignment,
+  fld("sample_class", "KNOWN_VERIFIED", paths$source_assignment,
       paste0("4 classes; historical labels cFosN/Background/mCherryN/neuron normalise ",
-             "through R/analysis_labels.R. Corroborated against sample_annotation.xlsx ",
-             "group_label and the plate-layout rule for ",
-             nrow(measurement) - n_discrepant, " of ", nrow(measurement), " measurements."),
-      if (n_discrepant > 0L) {
-        paste0("UNRESOLVED DISCREPANCY: for ", n_discrepant, " measurement(s) the class ",
-               "used by the analysis is contradicted by BOTH independent sources. See ",
-               "metadata/sample_class_source_discrepancy.tsv. Not corrected here: doing so ",
-               "would change the validated analysis. Requires a decision from the ",
-               "experimenter before publication.")
-      } else "Historical alias `bg` == neuropil."),
+             "through R/analysis_labels.R. Analysis-time class agrees with the ",
+             "pre-correction records for ", n_unchanged, " of ", nrow(measurement),
+             " measurements; the remaining ", n_corrected, " were corrected during ",
+             "historical sample-identity QC and are documented row by row in ",
+             "metadata/sample_class_corrections.tsv."),
+      paste0("Historical alias `bg` == neuropil. This column is the ANALYSIS-TIME class, ",
+             "i.e. the class the locked GCTs and every validated statistic were computed ",
+             "on. The pre-correction assignment is retained for all 96 measurements in ",
+             "`original_sample_class`; neither label is discarded.")),
+  fld("original_sample_class", "KNOWN_VERIFIED", paths$sample_annotation,
+      paste0("sample_annotation.xlsx group_label normalised to the canonical vocabulary, ",
+             "independently reproduced for all 96 measurements by the autosampler ",
+             "plate layout and, for the ", n_corrected, " corrected rows, by the retained ",
+             "UMAP correction table (asserted in this stage)."),
+      "Pre-correction sample-class assignment. Retained so the original identity is not lost."),
+  fld("sample_class_corrected", "KNOWN_VERIFIED",
+      release_sample_class_correction_reference_path(DATA_ROOT),
+      paste0("TRUE for exactly ", n_corrected, " of ", nrow(measurement),
+             " measurements: ", paste(sample_class_corrections$plate_sample_number,
+                                      collapse = " "),
+             ", all left hemisphere, animals ",
+             paste(sort(unique(sample_class_corrections$AnimalID)), collapse = " and "),
+             ". Correction reference verified by SHA256 ",
+             substr(correction_ref$observed_sha256, 1, 16), "..."),
+      paste0("Status ", CORRECTION$status, ". Only sample-class metadata were reassigned; ",
+             "acquisition identifiers and quantitative protein-abundance profiles were ",
+             "unchanged. No surviving prose note records the rationale -- the correction ",
+             "table itself is the preserved historical correction record.")),
   fld("condition / condition_code", "KNOWN_VERIFIED", paths$source_assignment,
       "ExpGroup 1..4 maps through condition_code_map to paired_cno/paired_veh/unpaired_cno/unpaired_veh",
       NA_character_),
@@ -468,17 +610,20 @@ release_register("metadata/metadata_field_provenance.tsv",
                  "per-field metadata status: verified / needs standardisation / missing",
                  canonical_sources, canonical_hashes, STAGE, "tsv")
 
-w4 <- release_write_table(sample_class_discrepancy,
-                          release_path("metadata", "sample_class_source_discrepancy.tsv"))
-release_register("metadata/sample_class_source_discrepancy.tsv",
-                 paste("measurements whose analysis sample_class is contradicted by both",
-                       "independent metadata sources; published, not corrected"),
-                 c(paths$sample_info, paths$sample_annotation),
-                 c(release_sha256(paths$sample_info), release_sha256(paths$sample_annotation)),
+w4 <- release_write_table(sample_class_corrections,
+                          release_path("metadata", "sample_class_corrections.tsv"))
+release_register("metadata/sample_class_corrections.tsv",
+                 paste("the six measurements whose sample-class metadata were corrected",
+                       "during historical sample-identity QC; both the original and the",
+                       "analysis-time class, with the preserved correction record and its",
+                       "SHA256"),
+                 c(paths$sample_info, paths$sample_annotation, correction_ref$path),
+                 c(release_sha256(paths$sample_info), release_sha256(paths$sample_annotation),
+                   correction_ref$observed_sha256),
                  STAGE, "tsv")
 
 release_log("  wrote sample_metadata.tsv (", w1$rows, "x", w1$cols, ")")
 release_log("  wrote animal_level_sample_metadata.tsv (", w2$rows, "x", w2$cols, ")")
 release_log("  wrote metadata_field_provenance.tsv (", w3$rows, "x", w3$cols, ")")
-release_log("  wrote sample_class_source_discrepancy.tsv (", w4$rows, "x", w4$cols, ")")
+release_log("  wrote sample_class_corrections.tsv (", w4$rows, "x", w4$cols, ")")
 release_log("stage 01 complete")

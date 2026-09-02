@@ -113,6 +113,410 @@ release_verify_locked_artefacts <- function(data_root = release_data_root()) {
 }
 
 # --------------------------------------------------------------------------------------
+# sample-class correction contract
+# --------------------------------------------------------------------------------------
+#
+# Six acquisitions from the LEFT hemispheres of C46 and C47 carry a sample-class assignment
+# that differs from every pre-correction record. The forensic audit resolved this: it was a
+# deliberate correction applied during historical sample-identity QC, not a mislabelling
+# and not an open question. Only class METADATA was reassigned -- acquisition identities and
+# quantitative abundance profiles are untouched.
+#
+# The reassignment is the same 3-cycle for both animals:
+#   neuropil -> mcherry,  mcherry -> neuron,  neuron -> neuropil
+#
+# This constant is the contract, not a description of one. Stage 01 derives the correction
+# from the canonical sources independently and then requires the result to equal what is
+# written here; the builders and the validator all read this single definition, so the six
+# rows cannot drift apart between the metadata table, the provenance table and the prose.
+
+release_sample_class_correction_statuses <- c(
+  "confirmed_intentional_switch_correction",
+  "unresolved_discrepancy"
+)
+
+RELEASE_SAMPLE_CLASS_CORRECTION <- list(
+  status = "confirmed_intentional_switch_correction",
+
+  # Date of the applied metadata edit. Evidenced by the 2025-11-07 processed-matrix drop
+  # under 01_input/raw_proteomics/20251107_pg.matrix_Neha/, not by a prose note -- see
+  # prose_rationale_exists below.
+  correction_date = "2025-11-07",
+
+  method = "historical_sample_identity_qc_umap_correction_table",
+  method_label = paste(
+    "Identified during historical sample-identity QC from UMAP nearest-class-centre",
+    "distances, recorded in a retained project correction table, and subsequently supported",
+    "by independent proteomic profile-similarity and left/right-pair analyses."),
+
+  # The preserved historical correction record. READ-ONLY: it lives under 99_historical,
+  # which this layer must never write into.
+  reference_relative = c("99_historical", "pca_plots_legacy", "tables", "umap",
+                         "umap_outlier_samples_with_switches_CORRECTED.csv"),
+  reference_sha256 = "76ad0ca3d27d628fedd10a3260dfff1b914fe307849bb935d782eab3e4c08e11",
+  reference_mtime = "2025-11-05 15:12:56",
+
+  # Established by the forensic audit: the quantitative matrix was compared across the
+  # metadata edit and the maximum absolute numeric difference was exactly 0.
+  quantitative_values_changed = FALSE,
+  max_abs_numeric_difference = 0,
+
+  # There is NO surviving prose note recording the rationale. That absence is published as
+  # a fact rather than papered over; the correction table itself is the preserved record.
+  prose_rationale_exists = FALSE,
+
+  expected = data.frame(
+    plate_sample_number   = c("N53", "N60", "N67", "N81", "N88", "N95"),
+    AnimalID              = c("C46", "C46", "C46", "C47", "C47", "C47"),
+    hemisphere            = rep("Left", 6L),
+    plate_position        = c("S5-B6", "S5-C6", "S5-D6", "S5-F6", "S5-G6", "S5-H6"),
+    original_sample_class = c("neuropil", "mcherry", "neuron", "neuropil", "mcherry", "neuron"),
+    analysis_sample_class = c("mcherry", "neuron", "neuropil", "mcherry", "neuron", "neuropil"),
+    stringsAsFactors = FALSE, check.names = FALSE
+  ),
+
+  # The cycle, stated independently of the six rows so a typo in either is caught.
+  cycle = c(neuropil = "mcherry", mcherry = "neuron", neuron = "neuropil")
+)
+
+#' Number of measurements whose sample class was corrected. Exactly 6 of 96.
+RELEASE_N_SAMPLE_CLASS_CORRECTED <- nrow(RELEASE_SAMPLE_CLASS_CORRECTION$expected)
+
+release_sample_class_correction_reference_path <- function(data_root = release_data_root()) {
+  do.call(file.path, c(list(data_root),
+                       as.list(RELEASE_SAMPLE_CLASS_CORRECTION$reference_relative)))
+}
+
+#' Verify the preserved correction table against the hash the forensic audit recorded.
+#'
+#' The hash is computed here and REQUIRED to match; it is never taken on trust from the
+#' audit narrative. mtime is reported alongside but is deliberately not the check -- a
+#' modification time is not an integrity guarantee.
+release_verify_sample_class_correction_reference <- function(data_root = release_data_root(),
+                                                             require_match = TRUE) {
+  path <- release_sample_class_correction_reference_path(data_root)
+  observed <- release_sha256(path)
+  expected <- RELEASE_SAMPLE_CLASS_CORRECTION$reference_sha256
+  mtime <- if (file.exists(path)) {
+    format(as.POSIXct(file.info(path)$mtime), "%Y-%m-%d %H:%M:%S")
+  } else NA_character_
+  out <- list(path = path, exists = file.exists(path),
+              observed_sha256 = if (is.na(observed)) "FILE_ABSENT" else observed,
+              expected_sha256 = expected,
+              matches = identical(observed, expected),
+              observed_mtime = mtime,
+              expected_mtime = RELEASE_SAMPLE_CLASS_CORRECTION$reference_mtime)
+  if (isTRUE(require_match) && !out$matches) {
+    stop("The preserved sample-class correction table does not match the SHA256 recorded ",
+         "by the forensic audit.\n  path:     ", path,
+         "\n  expected: ", expected, "\n  observed: ", out$observed_sha256,
+         "\nRefusing to publish a correction provenance record citing a file whose bytes ",
+         "have changed.", call. = FALSE)
+  }
+  out
+}
+
+#' Assert a correction table equals the contract on every field that matters.
+#'
+#' Returns a check/pass data frame shaped like release_check_animal_level_design(), so
+#' callers report both the same way.
+release_check_sample_class_corrections <- function(corrections) {
+  exp <- RELEASE_SAMPLE_CLASS_CORRECTION$expected
+  cyc <- RELEASE_SAMPLE_CLASS_CORRECTION$cycle
+  got <- as.data.frame(corrections, stringsAsFactors = FALSE, check.names = FALSE)
+  ord <- if ("plate_sample_number" %in% names(got)) {
+    got[order(match(got$plate_sample_number, exp$plate_sample_number)), , drop = FALSE]
+  } else got
+  same <- function(field) {
+    field %in% names(ord) && identical(as.character(ord[[field]]), as.character(exp[[field]]))
+  }
+  checks <- list(
+    list(sprintf("exactly %d corrected sample-class rows", nrow(exp)),
+         nrow(ord) == nrow(exp)),
+    list("the corrected set is exactly N53 N60 N67 N81 N88 N95",
+         "plate_sample_number" %in% names(ord) &&
+           setequal(as.character(ord$plate_sample_number), exp$plate_sample_number)),
+    list("every corrected measurement is Left hemisphere",
+         "hemisphere" %in% names(ord) && all(as.character(ord$hemisphere) == "Left")),
+    list("the corrected animals are exactly C46 and C47",
+         "AnimalID" %in% names(ord) &&
+           setequal(as.character(ord$AnimalID), c("C46", "C47"))),
+    list("plate positions match the correction record", same("plate_position")),
+    list("original sample classes match the contract", same("original_sample_class")),
+    list("analysis sample classes match the contract", same("analysis_sample_class")),
+    list("every correction follows the neuropil->mcherry->neuron->neuropil cycle",
+         all(c("original_sample_class", "analysis_sample_class") %in% names(ord)) &&
+           identical(unname(cyc[as.character(ord$original_sample_class)]),
+                     as.character(ord$analysis_sample_class))),
+    list("no corrected row leaves the class unchanged",
+         all(c("original_sample_class", "analysis_sample_class") %in% names(ord)) &&
+           all(as.character(ord$original_sample_class) !=
+                 as.character(ord$analysis_sample_class))),
+    list("correction status is confirmed_intentional_switch_correction",
+         "correction_status" %in% names(ord) &&
+           all(as.character(ord$correction_status) ==
+                 RELEASE_SAMPLE_CLASS_CORRECTION$status)),
+    list("no corrected row claims a quantitative change",
+         "quantitative_values_changed" %in% names(ord) &&
+           all(toupper(as.character(ord$quantitative_values_changed)) == "FALSE"))
+  )
+  do.call(rbind, lapply(checks, function(ch) {
+    data.frame(check = ch[[1]], pass = isTRUE(ch[[2]]),
+               stringsAsFactors = FALSE, check.names = FALSE)
+  }))
+}
+
+# --------------------------------------------------------------------------------------
+# old journal package crosswalk
+# --------------------------------------------------------------------------------------
+#
+# The four files of the original journal submission do not exist under their submitted
+# names anywhere in the project tree. The crosswalk from them to this package is therefore
+# established by evidence, and the STRENGTH of that evidence is reported rather than
+# glossed:
+#
+#   DIRECT_VERIFICATION             the submitted file was read here, byte-for-byte
+#   DIMENSIONS_AND_CONTENT_LINEAGE  matched by shape plus identifier containment
+#   ANALYSIS_GENERATION             matched by which analysis generation produced it
+#
+# The original ZIP has been inspected separately (outside this coding environment). That
+# inspection is reported as what it is -- an external verification -- and is deliberately
+# NOT laundered into a claim that this build read those bytes. If the package is later
+# mounted somewhere reachable, point PROTEOMICS_RELEASE_OLD_PACKAGE_ROOT at it and the
+# crosswalk upgrades itself to DIRECT_VERIFICATION with real hashes. No local copy is
+# fabricated in the meantime.
+
+RELEASE_CROSSWALK_METHODS <- c(
+  "DIRECT_VERIFICATION",
+  "DIMENSIONS_AND_CONTENT_LINEAGE",
+  "ANALYSIS_GENERATION"
+)
+
+#' Directory holding the extracted original submission package, if it is reachable.
+release_old_package_root <- function() {
+  release_option_or_env("proteomics.release_old_package_root",
+                        "PROTEOMICS_RELEASE_OLD_PACKAGE_ROOT", "")
+}
+
+#' Facts about the original submission established outside this environment.
+#'
+#' These are the properties the external inspection recorded. They are used to describe the
+#' submitted files and to CHECK a locally supplied package if one ever appears -- not as a
+#' substitute for having read it here.
+RELEASE_OLD_PACKAGE_FILES <- list(
+  list(name = "processed_protein_group_matrix_raw.txt",
+       n_protein_rows = 5747L, n_measurement_columns = 96L, n_annotation_columns = 7L,
+       nature = "processed protein-level data, NOT native raw MS data",
+       replacement = paste("processed_data/protein_feature_annotation.tsv.gz (annotation)",
+                           "and processed_data/protein_abundance_measurement_level.tsv.gz"),
+       superseded = "Partly. Retained as the search-output layer in the lineage."),
+  list(name = "processed_protein_group_matrix_filtered_umap_adjusted.xlsx",
+       n_protein_rows = 5349L, n_measurement_columns = 96L, n_annotation_columns = NA_integer_,
+       nature = "historical measurement/hemisphere-level representation",
+       replacement = "processed_data/protein_abundance_measurement_level.tsv.gz",
+       superseded = paste("No, but demoted: it is no longer the matrix inference is",
+                          "drawn from.")),
+  list(name = "GSEA_ORA_all_results.xlsx",
+       n_protein_rows = NA_integer_, n_measurement_columns = NA_integer_,
+       n_annotation_columns = NA_integer_,
+       nature = paste("superseded hemisphere-level analysis generation; did not contain the",
+                      "current complete 12-primary-contrast design"),
+       replacement = paste("enrichment/*.tsv.gz and",
+                           "editor_source_data/Proteomics_Source_Data_Animal_Level.xlsx"),
+       superseded = "Yes, entirely."),
+  list(name = "README.txt",
+       n_protein_rows = NA_integer_, n_measurement_columns = NA_integer_,
+       n_annotation_columns = NA_integer_,
+       nature = "group codes only",
+       replacement = "README_DATA.md, metadata/data_dictionary.tsv, this changelog",
+       superseded = "Yes.")
+)
+
+#' Statement to publish when the original package is not reachable from this environment.
+RELEASE_OLD_PACKAGE_EXTERNAL_STATEMENT <- paste(
+  "Original submission package directly inspected separately; local project-tree crosswalk",
+  "remains based on dimensions/content lineage.")
+
+#' Resolve how the old-package crosswalk was established, for this build.
+#'
+#' Returns the method, whether the package was reachable here, and the per-file evidence.
+#' When the package IS reachable each named file is hashed, so the upgrade to
+#' DIRECT_VERIFICATION is backed by bytes this build actually read.
+release_old_package_crosswalk <- function(root = release_old_package_root()) {
+  root <- trimws(as.character(root))
+  reachable <- nzchar(root) && dir.exists(root)
+  if (!reachable) {
+    return(list(
+      method = "DIMENSIONS_AND_CONTENT_LINEAGE",
+      locally_reachable = FALSE,
+      root = if (nzchar(root)) root else NA_character_,
+      statement = RELEASE_OLD_PACKAGE_EXTERNAL_STATEMENT,
+      files = data.frame(
+        file = vapply(RELEASE_OLD_PACKAGE_FILES, function(f) f$name, character(1)),
+        found_locally = FALSE,
+        sha256 = NA_character_,
+        crosswalk_method = c("DIMENSIONS_AND_CONTENT_LINEAGE",
+                             "DIMENSIONS_AND_CONTENT_LINEAGE",
+                             "ANALYSIS_GENERATION", "ANALYSIS_GENERATION"),
+        stringsAsFactors = FALSE, check.names = FALSE)))
+  }
+  found <- vapply(RELEASE_OLD_PACKAGE_FILES, function(f) {
+    file.exists(file.path(root, f$name))
+  }, logical(1))
+  hashes <- vapply(seq_along(RELEASE_OLD_PACKAGE_FILES), function(i) {
+    if (!found[[i]]) return(NA_character_)
+    release_sha256(file.path(root, RELEASE_OLD_PACKAGE_FILES[[i]]$name))
+  }, character(1))
+  list(
+    method = if (all(found)) "DIRECT_VERIFICATION" else "DIMENSIONS_AND_CONTENT_LINEAGE",
+    locally_reachable = TRUE,
+    root = root,
+    statement = if (all(found)) {
+      paste0("Original submission package read from ", root,
+             " and verified file by file against this release.")
+    } else {
+      paste0("Original submission package partially reachable at ", root, ": ",
+             sum(found), " of ", length(found), " files present. ",
+             RELEASE_OLD_PACKAGE_EXTERNAL_STATEMENT)
+    },
+    files = data.frame(
+      file = vapply(RELEASE_OLD_PACKAGE_FILES, function(f) f$name, character(1)),
+      found_locally = found,
+      sha256 = hashes,
+      crosswalk_method = ifelse(found, "DIRECT_VERIFICATION",
+                                "DIMENSIONS_AND_CONTENT_LINEAGE"),
+      stringsAsFactors = FALSE, check.names = FALSE))
+}
+
+# --------------------------------------------------------------------------------------
+# effect-size semantics
+# --------------------------------------------------------------------------------------
+#
+# The analysis matrix is standardised separately for each protein across the
+# measurement-level dataset, so the coefficient ProTigy stores as `logFC` (and the canonical
+# split tables carry as `log2fc`) is NOT a log2 fold change. It is a difference on the
+# standardised abundance scale.
+#
+# Two things this vocabulary deliberately does NOT say:
+#
+#   * not "standardised mean difference" unqualified -- that term invites a Cohen's d
+#     reading, i.e. division by a pooled WITHIN-GROUP SD. The scaling here is a per-protein
+#     SD taken across the whole measurement dataset before any grouping, which is a
+#     different quantity from a pooled within-group SD.
+#   * not "z-scored" -- see release_standardization_evidence(). The released matrix is
+#     serialised to 2 decimals, no row is exactly mean 0 / sd 1, and the producing operation
+#     is UNRESOLVED in the lineage. "Standardised" is what the numbers support.
+
+RELEASE_EFFECT_SIZE <- list(
+  public_field = "effect_size_sd_units",
+  public_term = "standardized abundance difference (SD units)",
+  public_term_alt = "difference in standardized protein abundance",
+  source_field = "logFC",
+  source_field_detail = "logFC (ProTigy) / log2fc (canonical split tables)",
+  units = "per-protein standard deviation of the standardised abundance scale",
+
+  definition = paste(
+    "Difference of group means (numerator minus denominator) on the protein-standardised",
+    "abundance scale -- a standardized abundance difference expressed in SD units of that",
+    "scale. It is NOT a log2 fold change, despite being stored as `logFC` by ProTigy and",
+    "`log2fc` in the canonical split tables. Positive means higher in the numerator",
+    "condition. A value of 2 means two standard deviations on the standardised scale, not",
+    "a four-fold change."),
+
+  methods_sentence = paste(
+    "Protein abundances in the analysis matrix were standardized separately for each",
+    "protein across the measurement-level dataset. Consequently, the coefficient stored by",
+    "the historical analysis software as `logFC` represents the difference in standardized",
+    "protein abundance between groups, expressed on that standardized scale, rather than a",
+    "log2 fold change."),
+
+  sensitivity_public_label = "effect-size-ranked sensitivity analysis",
+  sensitivity_public_detail = paste(
+    "GSEA ranked by the standardised-abundance effect size instead of the moderated t.",
+    "Sensitivity analysis only; the canonical ranking statistic is the moderated t."),
+
+  # Filenames and internal column VALUES that legitimately keep the historical token.
+  # Renaming these would break provenance against the canonical run, so they stay.
+  retained_internal_tokens = c("log2fc", "logFC", "GSEA_log2FC_sensitivity",
+                               "GSEA_GO_BP_log2fc_sensitivity",
+                               "GSEA_KEGG_log2fc_sensitivity",
+                               "ORA_GO_BP_top_abs_log2fc", "top_absolute_log2fc")
+)
+
+#' Phrases that would assert a fold-change reading of the effect size.
+RELEASE_FOLD_CHANGE_CLAIMS <- c(
+  "log2 fold change", "log2 fold-change", "log2-fold change", "log2-fold-change",
+  "log 2 fold change", "log2 ratio", "fold change", "fold-change"
+)
+
+#' Tokens that make a fold-change mention a citation rather than a claim.
+#'
+#' A public document MUST be able to say "this is not a log2 fold change" and "the source
+#' column is named logFC". What it must not do is describe the published values AS log2
+#' fold changes. Telling those apart needs the surrounding words, so a mention is accepted
+#' only when its line also carries an explicit negation or provenance marker. `ewce` is
+#' exempt because EWCE's own bootstrap statistic genuinely IS a fold change and is
+#' published under that name.
+RELEASE_FOLD_CHANGE_EXEMPT_MARKERS <- c(
+  "not a", "not the", "is not", "are not", "was not", "were not", "never",
+  "rather than", "instead of", "despite", "no longer", "misleading", "mislabel",
+  "incorrect", "incorrectly", "historical", "historically", "legacy", "superseded",
+  "pre-correction",
+  "source column", "source field", "stored as", "stored by", "named", "called",
+  "do not", "does not", "cannot", "would assert", "not supported", "ewce"
+)
+
+#' Lines that describe published effect sizes as fold changes with no negation in sight.
+#'
+#' Returns a data frame of offending lines; empty means the text is clean.
+release_fold_change_mislabels <- function(lines,
+                                          claims = RELEASE_FOLD_CHANGE_CLAIMS,
+                                          exempt = RELEASE_FOLD_CHANGE_EXEMPT_MARKERS) {
+  lines <- as.character(lines)
+  empty <- data.frame(line = integer(0), term = character(0), text = character(0),
+                      stringsAsFactors = FALSE, check.names = FALSE)
+  if (!length(lines)) return(empty)
+  low <- tolower(lines)
+  hits <- list()
+  for (i in seq_along(lines)) {
+    matched <- claims[vapply(claims, function(cl) grepl(cl, low[[i]], fixed = TRUE),
+                             logical(1))]
+    if (!length(matched)) next
+    if (any(vapply(exempt, function(mk) grepl(mk, low[[i]], fixed = TRUE), logical(1)))) next
+    hits[[length(hits) + 1L]] <- data.frame(
+      line = i, term = matched[[1]], text = trimws(lines[[i]]),
+      stringsAsFactors = FALSE, check.names = FALSE)
+  }
+  if (!length(hits)) return(empty)
+  do.call(rbind, hits)
+}
+
+#' Measure the per-protein standardisation of a matrix, without naming the operation.
+#'
+#' Reports what the numbers show (row means, both SD conventions) and whether an EXACT
+#' z-score can be claimed. For this dataset it cannot: the released values carry 2 decimals,
+#' so the residual deviations are serialisation rounding, and the producing step is
+#' UNRESOLVED in the lineage. Callers read `exact_zscore` to choose wording rather than
+#' asserting "z-scored" and hoping.
+release_standardization_evidence <- function(mat, tol_exact = 1e-9) {
+  row_mean <- rowMeans(mat)
+  row_sd_n1 <- apply(mat, 1L, stats::sd)
+  row_sd_n <- sqrt(rowMeans((mat - row_mean)^2))
+  list(
+    n_proteins = nrow(mat),
+    n_columns = ncol(mat),
+    max_abs_row_mean = max(abs(row_mean)),
+    max_abs_row_sd_minus_1 = max(abs(row_sd_n1 - 1)),
+    max_abs_row_sd_pop_minus_1 = max(abs(row_sd_n - 1)),
+    median_row_sd = stats::median(row_sd_n1),
+    approximately_standardized = max(abs(row_mean)) < 1e-2 &&
+      max(abs(row_sd_n1 - 1)) < 5e-2,
+    exact_zscore = max(abs(row_mean)) < tol_exact &&
+      max(abs(row_sd_n1 - 1)) < tol_exact
+  )
+}
+
+# --------------------------------------------------------------------------------------
 # design invariants
 # --------------------------------------------------------------------------------------
 

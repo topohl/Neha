@@ -206,10 +206,30 @@ release_require <- function(...) {
   invisible(TRUE)
 }
 
+#' SHA256 of a file's bytes, or NA if the file is absent.
+#'
+#' Hashes bytes read here rather than calling digest(file = ...). digest() probes the file
+#' with file.access() first, and on this project's SMB share that probe returns -1 --
+#' "No mapping between account names and security IDs was done" -- for files that read
+#' perfectly well. When the share is in that state every hash in the layer raises "The
+#' specified file is not readable" and a whole release build aborts on intact data.
+#'
+#' Reading the bytes is both more reliable and strictly stronger evidence than an ACL
+#' probe: it cannot succeed on a file it could not read. The digest is identical -- verified
+#' against both locked GCT hashes, which this function still reproduces exactly.
 release_sha256 <- function(path) {
   release_require("digest")
   if (!file.exists(path)) return(NA_character_)
-  digest::digest(file = path, algo = "sha256")
+  size <- file.size(path)
+  if (is.na(size)) return(NA_character_)
+  con <- file(path, open = "rb")
+  on.exit(close(con), add = TRUE)
+  bytes <- readBin(con, what = "raw", n = size)
+  if (length(bytes) != size) {
+    stop("Short read while hashing ", path, ": got ", length(bytes), " of ", size,
+         " bytes.", call. = FALSE)
+  }
+  digest::digest(bytes, algo = "sha256", serialize = FALSE)
 }
 
 release_assert_exists <- function(path, what) {

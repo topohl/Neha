@@ -23,6 +23,7 @@
 #                                               the real gene_symbol and protein_description
 #                                               come from processed_data/protein_feature_annotation
 #   split `log2fc`      -> effect_size_sd_units  (NOT a log2 fold change -- see below)
+#                                               standardized abundance difference, SD units
 #   split `t`           -> moderated_t
 #   split `aveExpr`     -> average_standardized_abundance
 #   split `pval`        -> P.Value
@@ -98,21 +99,24 @@ SPLIT_NUMERIC <- c(log2fc = "effect_size_sd_units", aveExpr = "average_standardi
                    B = "B_log_odds", logpval = "neg_log10_P_value",
                    sign.logP = "signed_neg_log10_P_value")
 
-# The abundance matrix these statistics were computed on is per-protein standardised:
-# every protein has mean 0 and standard deviation 1 across the 96 acquisitions (verified
-# empirically, and corroborated by AveExpr being ~0 for every protein). A difference of
-# group means on that scale is a STANDARDISED MEAN DIFFERENCE in units of per-protein SD,
-# not a log2 ratio. The canonical column is nevertheless named `log2fc` (ProTigy `logFC`),
-# so publishing it under that name would assert a fold-change reading the data do not
-# support. It is renamed here and the source name is recorded alongside.
-EFFECT_SIZE_DEFINITION <- paste(
-  "Difference of group means (numerator minus denominator) on a per-protein standardised",
-  "scale. The input matrix is z-scored per protein across acquisitions (mean 0, sd 1), so",
-  "this is a standardised mean difference in units of per-protein standard deviation. It",
-  "is NOT a log2 fold change, despite being named logFC by ProTigy and log2fc in the",
-  "canonical split tables.")
-EFFECT_SIZE_SOURCE_COLUMN <- "log2fc (canonical split tables) / logFC (ProTigy)"
-EFFECT_SIZE_UNITS <- "per-protein standard deviation"
+# The abundance matrix these statistics were computed on is standardised separately for
+# each protein across the measurement-level dataset: row means are approximately 0 and row
+# SDs approximately 1 (measured in stage 03, and corroborated by limma's AveExpr sitting at
+# ~0 for every protein). A difference of group means on that scale is a STANDARDIZED
+# ABUNDANCE DIFFERENCE expressed in SD units of that scale, not a log2 ratio. The canonical
+# column is nevertheless named `log2fc` (ProTigy `logFC`), so publishing it under that name
+# would assert a fold-change reading the data do not support. It is renamed here and the
+# source name is recorded alongside, so provenance is not lost either.
+#
+# The wording comes from RELEASE_EFFECT_SIZE in R/release_validation.R rather than being
+# written out again here: four builders and the validator all describe this quantity, and a
+# local copy is how they drift apart. Note it is NOT called a "standardised mean difference"
+# unqualified -- that phrasing invites a Cohen's d reading, i.e. scaling by a pooled
+# WITHIN-GROUP SD, which is a different quantity from the across-dataset per-protein SD
+# actually used here.
+EFFECT_SIZE_DEFINITION <- RELEASE_EFFECT_SIZE$definition
+EFFECT_SIZE_SOURCE_COLUMN <- RELEASE_EFFECT_SIZE$source_field_detail
+EFFECT_SIZE_UNITS <- RELEASE_EFFECT_SIZE$units
 
 blocks <- vector("list", nrow(contrasts))
 verify <- vector("list", nrow(contrasts))
@@ -180,6 +184,9 @@ for (i in seq_len(nrow(contrasts))) {
   # README_DATA.md instead.
   block$effect_size_units <- EFFECT_SIZE_UNITS
   block$effect_size_source_column <- EFFECT_SIZE_SOURCE_COLUMN
+  # Bare source token as well as the prose form, so provenance is machine-readable without
+  # parsing a sentence. The exported effect value is this field, copied, with no transform.
+  block$source_statistic_field <- RELEASE_EFFECT_SIZE$source_field
   block$significant_fdr_0_05 <- significant
 
   # Mapped-only counts are carried alongside the full-set counts because the manuscript
@@ -287,6 +294,7 @@ summary_tbl <- do.call(rbind, lapply(seq_along(verify), function(i) {
     effect_size_units = EFFECT_SIZE_UNITS,
     effect_size_definition = EFFECT_SIZE_DEFINITION,
     effect_size_source_column = EFFECT_SIZE_SOURCE_COLUMN,
+    source_statistic_field = RELEASE_EFFECT_SIZE$source_field,
     canonical_source_path = v$path,
     canonical_source_sha256 = v$sha256,
     stringsAsFactors = FALSE, check.names = FALSE)
