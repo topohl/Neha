@@ -96,6 +96,26 @@ expect("design", "raw acquisition filenames unique and complete",
        !anyDuplicated(sm$raw_file_basename) && all(nzchar(sm$raw_file_basename)) &&
          all(grepl("[.]d$", sm$raw_file_basename)))
 
+experimenter_path <- rel("metadata", "experimenter_metadata.tsv")
+protocol_path <- rel("metadata", "sample_preparation_protocol.tsv")
+experimenter_metadata <- read_release(experimenter_path, na.strings = character(0),
+                                      colClasses = "character")
+sample_preparation_protocol <- read_release(protocol_path, na.strings = character(0),
+                                            colClasses = "character")
+source_experimenter <- release_read_experimenter_metadata(REPO_ROOT)
+source_protocol <- release_read_sample_preparation_protocol(REPO_ROOT)
+expect("metadata provenance", "released experimenter metadata equals the checked-in source",
+       identical(experimenter_metadata, source_experimenter),
+       paste(nrow(experimenter_metadata), "records"))
+expect("metadata provenance", "released sample-preparation protocol equals the checked-in source",
+       identical(sample_preparation_protocol, source_protocol),
+       paste(nrow(sample_preparation_protocol), "ordered steps"))
+expect("metadata provenance", "sample-preparation protocol is the 2024-11-28 version",
+       identical(unique(sample_preparation_protocol$protocol_version_date), "2024-11-28"))
+expect("metadata provenance", "the unrelated rat experiment is an explicit scope exclusion",
+       any(experimenter_metadata$metadata_id == "excluded_rat_viral_insertion_experiment" &
+             experimenter_metadata$status == "NOT_APPLICABLE"))
+
 # Sample-class correction. The contract is NOT that every measurement carries its original
 # class -- six do not, deliberately -- and it is NOT that the difference is an open question.
 # The forensic audit resolved it as an intentional correction, so what is checked here is
@@ -664,6 +684,7 @@ record("pride", "missing required SDRF fields", if (n_req == 0L) "PASS" else "SK
 # populated from the analysis-time class and the correction has to be described as resolved.
 sdrf_v <- read_release(rel("pride", "sdrf.tsv"))
 class_col <- "factor value[sample class]"
+cols_named <- function(df, field) df[, which(names(df) == field), drop = FALSE]
 expect("pride", "the SDRF sample-class factor is populated for every acquisition",
        class_col %in% names(sdrf_v) &&
          all(nzchar(sdrf_v[[class_col]])) &&
@@ -674,6 +695,70 @@ expect("pride", "the SDRF sample-class factor is the validated analysis-time cla
 expect("pride", "sample class is not recorded as missing SDRF metadata",
        !any(fs$status == "MISSING_REQUIRED_METADATA" &
               grepl("sample class", fs$sdrf_field, fixed = TRUE)))
+
+expect("pride", "SDRF technology type is explicit",
+       all(sdrf_v[["technology type"]] == "proteomic profiling by mass spectrometry"))
+expect("pride", "CeM is represented by the supported parent anatomy term",
+       all(sdrf_v[["characteristics[organism part]"]] ==
+             release_metadata_value(experimenter_metadata, "organism_part", TRUE)))
+expect("pride", "marker-defined LCM classes do not claim unsupported cell ontology terms",
+       all(sdrf_v[["characteristics[cell type]"]] == "not applicable"))
+expected_sampling <- stats::setNames(
+  paste0(release_metadata_value(experimenter_metadata, "organism_part"), ": ",
+         experimenter_metadata$sdrf_value[
+           experimenter_metadata$category == "sample_class_definition"]),
+  experimenter_metadata$sample_class[
+    experimenter_metadata$category == "sample_class_definition"])
+expect("pride", "sampling site preserves each marker-defined LCM category",
+       all(sdrf_v[["characteristics[sampling site]"]] ==
+             unname(expected_sampling[sdrf_v[[class_col]]])))
+expect("pride", "mouse strain is C57BL/6J and no rat metadata enters the SDRF",
+       all(sdrf_v[["characteristics[strain or breed]"]] == "C57BL/6J") &&
+         !any(grepl("Sprague|Dawley|Rattus|rat viral", as.matrix(sdrf_v), ignore.case = TRUE)))
+expect("pride", "AnimalID-level sex is not invented",
+       all(sdrf_v[["characteristics[sex]"]] == "not available"))
+expect("pride", "age at experiment start is not relabelled as age at tissue collection",
+       all(sdrf_v[["characteristics[age]"]] == "not available") &&
+         !any(grepl("7-10", sdrf_v[["characteristics[age]"]], fixed = TRUE)))
+expect("pride", "label-free proteomics is encoded with the SDRF term",
+       all(sdrf_v[["comment[label]"]] == "label free sample"))
+cleavage <- cols_named(sdrf_v, "comment[cleavage agent details]")
+expect("pride", "Lys-C and trypsin are two ordered cleavage-agent columns",
+       ncol(cleavage) == 2L &&
+         all(cleavage[[1]] == "NT=Lys-C;AC=MS:1001309") &&
+         all(cleavage[[2]] == "NT=Trypsin;AC=MS:1001251"))
+expect("pride", "TCEP and CAA preparation reagents are encoded without inventing search modifications",
+       all(sdrf_v[["comment[reduction reagent]"]] ==
+             release_metadata_value(experimenter_metadata, "reduction_reagent", TRUE)) &&
+         all(sdrf_v[["comment[alkylation reagent]"]] ==
+               release_metadata_value(experimenter_metadata, "alkylation_reagent", TRUE)) &&
+         all(sdrf_v[["comment[modification parameters]"]] == "not available"))
+for (unknown_field in c("comment[instrument]", "comment[proteomics data acquisition method]",
+                        "comment[precursor mass tolerance]", "comment[fragment mass tolerance]")) {
+  expect("pride", paste(unknown_field, "remains explicitly unresolved"),
+         all(sdrf_v[[unknown_field]] == "not available"))
+}
+repeated_headers <- unique(names(sdrf_v)[duplicated(names(sdrf_v))])
+expect("pride", "repeated SDRF headers are limited to the verified enzymes and templates",
+       setequal(repeated_headers,
+                c("comment[cleavage agent details]", "comment[sdrf template]")) &&
+         sum(names(sdrf_v) == "comment[cleavage agent details]") == 2L &&
+         sum(names(sdrf_v) == "comment[sdrf template]") == 2L)
+protocol_txt <- paste(readLines(rel("pride", "SAMPLE_PREPARATION_PROTOCOL.md"), warn = FALSE),
+                      collapse = " ")
+expect("pride", "the full sample-preparation protocol is published",
+       all(vapply(c("5% DDM", "5 mM TCEP", "20 mM CAA", "0.1 M TEAB",
+                    "95 degrees C", "4 ng Lys-C per sample", "6 ng trypsin per sample",
+                    "TFA to 1%", "SpeedVac", "Evotip", "4.2 uL A buffer"),
+                  function(x) grepl(x, protocol_txt, fixed = TRUE), logical(1))))
+expect("pride", "remaining required SDRF gaps are exact and evidence-backed",
+       setequal(fs$sdrf_field[fs$status == "MISSING_REQUIRED_METADATA" &
+                                fs$sdrf_field %in% names(sdrf_v)],
+                c("characteristics[developmental stage]", "comment[instrument]",
+                  "comment[proteomics data acquisition method]")))
+expect("pride", "externally held raw acquisition directories remain a separate blocker",
+       any(fs$sdrf_field == "raw acquisition FILES (not an SDRF column)" &
+             fs$status == "MISSING_REQUIRED_METADATA"))
 pride_txt <- paste(c(readLines(rel("pride", "README_PRIDE.md"), warn = FALSE),
                      readLines(rel("pride", "SDRF_MISSING_METADATA.md"), warn = FALSE)),
                    collapse = " ")

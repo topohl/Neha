@@ -294,7 +294,11 @@ now **resolved in the reporting layer** — no scientific value changed for eith
   internal canonical columns and filenames keep the historical token so provenance holds.
 
 See [`07_publication_release/README.md`](07_publication_release/README.md). The PRIDE
-deposition remains `PRIDE_METADATA_INCOMPLETE` for genuinely absent acquisition metadata.
+deposition remains `PRIDE_METADATA_INCOMPLETE` for genuinely absent instrument,
+acquisition-mode and developmental-stage metadata. Source-controlled experimenter records
+now resolve CeM origin, C57BL/6J cohort provenance, marker-defined LCM classes, label-free
+proteomics and the 2024-11-28 Lys-C/trypsin sample-preparation protocol without assigning
+unknown sex or age-at-collection values to individual samples.
 
 ### Out-of-scope code
 

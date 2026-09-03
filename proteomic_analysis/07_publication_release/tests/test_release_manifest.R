@@ -104,6 +104,8 @@ expect(!any(bad_sums), "every SHA256SUMS entry validates")
 cat("\n=== the expected package structure is present ===\n")
 for (f in c("README_DATA.md", "metadata/sample_metadata.tsv",
             "metadata/animal_level_sample_metadata.tsv",
+            "metadata/experimenter_metadata.tsv",
+            "metadata/sample_preparation_protocol.tsv",
             "metadata/primary_contrast_manifest.tsv",
             "metadata/secondary_analysis_manifest.tsv", "metadata/data_dictionary.tsv",
             "processed_data/protein_abundance_measurement_level.tsv.gz",
@@ -117,6 +119,7 @@ for (f in c("README_DATA.md", "metadata/sample_metadata.tsv",
             "editor_source_data/REVISION_PROTEOMICS_DATA_CHANGELOG.md",
             "editor_source_data/figure_source_map.tsv",
             "pride/sdrf.tsv", "pride/SDRF_MISSING_METADATA.md", "pride/README_PRIDE.md",
+            "pride/SAMPLE_PREPARATION_PROTOCOL.md",
             "provenance/data_lineage.tsv", "provenance/software_versions.tsv",
             "provenance/analysis_parameters.tsv",
             "provenance/sessionInfo_release.txt",
@@ -153,7 +156,12 @@ if (!file.exists(sdrf_path) || !file.exists(fs_path)) {
   sdrf <- rd(sdrf_path); fs <- rd(fs_path)
   expect(nrow(sdrf) == RELEASE_DESIGN_INVARIANTS$n_measurement_records,
          "SDRF has one row per acquisition")
-  expect(!anyDuplicated(names(sdrf)), "SDRF has no duplicate column names")
+  duplicate_headers <- unique(names(sdrf)[duplicated(names(sdrf))])
+  expect(setequal(duplicate_headers,
+                  c("comment[cleavage agent details]", "comment[sdrf template]")) &&
+           sum(names(sdrf) == "comment[cleavage agent details]") == 2L &&
+           sum(names(sdrf) == "comment[sdrf template]") == 2L,
+         "repeated SDRF headers are exactly the two enzymes and two templates")
   expect(all(nzchar(names(sdrf))), "SDRF has no unnamed columns")
   expect(!anyDuplicated(sdrf[["comment[data file]"]]),
          "SDRF data file names are unique")

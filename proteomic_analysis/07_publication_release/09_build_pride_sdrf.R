@@ -8,13 +8,14 @@
 #   pride/SDRF_MISSING_METADATA.md     what is missing, why, and what would supply it
 #   pride/README_PRIDE.md              which files are suitable for PRIDE and which are not
 #
-# RULE: no acquisition metadata is invented. Where a value cannot be proven from a file in
-# the project, the SDRF cell carries the SDRF-sanctioned string "not available" and the
-# field is recorded as missing, with the specific document that would supply it.
+# RULE: no acquisition metadata is invented. Project-derived and experimenter-supplied
+# facts are read from hashed, source-controlled records. Where a value remains unknown, the
+# SDRF cell carries the SDRF-sanctioned string "not available" and the field is recorded as
+# missing, with the specific document that would supply it.
 #
-# Fields deliberately NOT guessed: instrument model, digestion enzyme, DIA acquisition
-# method, search-software version, labelling chemistry, database-search parameters,
-# organism part, animal sex, animal age.
+# Fields deliberately NOT guessed: instrument model, acquisition mode, search-software
+# version, search/quantification modifications and mass tolerances, AnimalID-level sex,
+# age at tissue collection, developmental stage.
 #
 # One field needs its reasoning stated rather than hidden. comment[fraction identifier] is
 # mandatory in SDRF and is set to 1. That encodes the observed one-run-per-biological-sample
@@ -47,7 +48,33 @@ rel <- function(...) release_path(..., create_dir = FALSE)
 sample_metadata <- release_read_tsv_plain(rel("metadata", "sample_metadata.tsv"))
 field_provenance <- release_read_tsv_plain(rel("metadata", "metadata_field_provenance.tsv"))
 sample_class_corrections <- release_read_tsv_plain(rel("metadata", "sample_class_corrections.tsv"))
+experimenter_metadata <- release_read_tsv_plain(rel("metadata", "experimenter_metadata.tsv"))
+sample_preparation_protocol <- release_read_tsv_plain(
+  rel("metadata", "sample_preparation_protocol.tsv"))
 n_class_corrected <- nrow(sample_class_corrections)
+
+# Re-read and validate the checked-in sources too. This makes a manually edited release copy
+# insufficient: the generated release must agree with the canonical source-controlled record.
+source_experimenter_metadata <- release_read_experimenter_metadata(REPO_ROOT)
+source_sample_preparation_protocol <- release_read_sample_preparation_protocol(REPO_ROOT)
+if (!identical(experimenter_metadata, source_experimenter_metadata) ||
+    !identical(sample_preparation_protocol, source_sample_preparation_protocol)) {
+  stop("Released experimenter metadata/protocol differs from the checked-in source.",
+       call. = FALSE)
+}
+
+mv <- function(id, standardized = FALSE) {
+  release_metadata_value(experimenter_metadata, id, standardized = standardized)
+}
+class_metadata <- experimenter_metadata[
+  experimenter_metadata$category == "sample_class_definition", , drop = FALSE]
+sampling_site_by_class <- stats::setNames(
+  paste0(mv("organism_part"), ": ", class_metadata$sdrf_value),
+  class_metadata$sample_class)
+if (!setequal(names(sampling_site_by_class), unique(sample_metadata$sample_class))) {
+  stop("Experimenter sample-class definitions do not cover the release sample classes.",
+       call. = FALSE)
+}
 
 if (nrow(sample_metadata) != RELEASE_DESIGN_INVARIANTS$n_measurement_records) {
   stop("Sample metadata does not hold 96 measurement records.", call. = FALSE)
@@ -99,34 +126,43 @@ if (max(biological_replicate) != RELEASE_DESIGN_INVARIANTS$n_animals_per_stratum
 
 sdrf <- data.frame(
   `source name` = paste(sm$AnimalID, sm$sample_class, tolower(sm$hemisphere), sep = "_"),
-  `characteristics[organism]` = "Mus musculus",
-  `characteristics[strain]` = NOT_AVAILABLE,
-  `characteristics[organism part]` = NOT_AVAILABLE,
-  `characteristics[cell type]` = NOT_AVAILABLE,
-  `characteristics[disease]` = NOT_APPLICABLE,
+  `characteristics[organism]` = mv("organism", standardized = TRUE),
+  `characteristics[organism part]` = mv("organism_part", standardized = TRUE),
+  `characteristics[cell type]` = NOT_APPLICABLE,
+  `characteristics[disease]` = "normal",
+  `characteristics[strain or breed]` = mv("strain_or_breed", standardized = TRUE),
+  `characteristics[developmental stage]` = NOT_AVAILABLE,
   `characteristics[sex]` = NOT_AVAILABLE,
   `characteristics[age]` = NOT_AVAILABLE,
   `characteristics[individual]` = sm$AnimalID,
   `characteristics[biological replicate]` = biological_replicate,
-  `characteristics[sampling site]` = sm$sample_class,
+  `characteristics[sampling site]` = unname(sampling_site_by_class[sm$sample_class]),
   `characteristics[anatomical side]` = sm$hemisphere,
   `characteristics[collection plate]` = sm$collection_plate,
   `assay name` = paste0("run ", as.integer(sm$injection_index)),
+  `technology type` = "proteomic profiling by mass spectrometry",
+  `comment[technical replicate]` = 1L,
   `comment[data file]` = sm$raw_file_basename,
   `comment[file uri]` = NOT_AVAILABLE,
-  `comment[technical replicate]` = 1L,
   `comment[fraction identifier]` = 1L,
-  `comment[label]` = NOT_AVAILABLE,
+  `comment[label]` = mv("labeling_strategy", standardized = TRUE),
   `comment[instrument]` = NOT_AVAILABLE,
-  `comment[cleavage agent details]` = NOT_AVAILABLE,
+  `comment[cleavage agent details]` = mv("cleavage_agent_lys_c", standardized = TRUE),
+  `comment[cleavage agent details]` = mv("cleavage_agent_trypsin", standardized = TRUE),
+  `comment[reduction reagent]` = mv("reduction_reagent", standardized = TRUE),
+  `comment[alkylation reagent]` = mv("alkylation_reagent", standardized = TRUE),
   `comment[modification parameters]` = NOT_AVAILABLE,
   `comment[precursor mass tolerance]` = NOT_AVAILABLE,
   `comment[fragment mass tolerance]` = NOT_AVAILABLE,
   `comment[proteomics data acquisition method]` = NOT_AVAILABLE,
   `comment[collision energy]` = NOT_AVAILABLE,
   `comment[dissociation method]` = NOT_AVAILABLE,
-  `comment[MS2 analyzer type]` = NOT_AVAILABLE,
+  `comment[ms2 mass analyzer]` = NOT_AVAILABLE,
   `comment[acquisition date]` = sm$acquisition_date,
+  `comment[sdrf version]` = "v1.1.0",
+  `comment[sdrf template]` = "NT=ms-proteomics;VV=v1.1.0",
+  `comment[sdrf template]` = "NT=vertebrates;VV=v1.1.0",
+  `comment[sdrf annotation tool]` = "manual curation",
   `comment[original acquisition run name]` = sm$sample_id,
   `comment[instrument alias in run name]` = sm$instrument_alias_token,
   `comment[lc and method token in run name]` = sm$lc_and_method_token,
@@ -144,6 +180,15 @@ if (anyDuplicated(sdrf[["comment[data file]"]])) {
 }
 if (anyDuplicated(sdrf[["source name"]])) {
   stop("SDRF source name is not unique.", call. = FALSE)
+}
+duplicated_headers <- unique(names(sdrf)[duplicated(names(sdrf))])
+expected_repeated_headers <- c("comment[cleavage agent details]", "comment[sdrf template]")
+if (!setequal(duplicated_headers, expected_repeated_headers) ||
+    any(vapply(expected_repeated_headers,
+               function(header) sum(names(sdrf) == header) != 2L,
+               logical(1)))) {
+  stop("Repeated SDRF headers must be exactly two cleavage agents and two templates.",
+       call. = FALSE)
 }
 release_log("  SDRF: ", nrow(sdrf), " rows x ", ncol(sdrf), " columns")
 
@@ -167,38 +212,45 @@ field_status <- rbind(
   fs("characteristics[organism]", "required", "READY", "Mus musculus", NA_character_,
      "MOUSE_10090_idmapping.dat; organism_id = 10090 in the mapping stage; org.Mm.eg.db",
      "no", "NCBI taxid 10090"),
-  fs("characteristics[strain]", "optional", "MISSING_OPTIONAL_METADATA", NOT_AVAILABLE,
-     "no strain field exists in any project metadata file",
-     "animal-facility records / manuscript methods", "no", NA_character_),
-  fs("characteristics[organism part]", "required", "MISSING_REQUIRED_METADATA", NOT_AVAILABLE,
-     "no dissected-region field or statement exists anywhere in the analysis tree",
-     "manuscript methods / experimenter", "yes",
-     paste("The EWCE cell-type reference is l1_amygdala.loom. That records a choice of",
-           "reference, NOT the dissected tissue, and is not sufficient evidence.",
-           "Deliberately not guessed.")),
-  fs("characteristics[cell type]", "required", "MISSING_REQUIRED_METADATA", NOT_AVAILABLE,
-     "the four sample classes are dissected/labelled fractions, not ontology cell types",
-     "manuscript methods; then map each fraction to a Cell Ontology term", "yes",
-     paste("The fraction label is carried in characteristics[sampling site] and",
-           "factor value[sample class] so the information is not lost. `neuropil` in",
-           "particular is a tissue compartment and not a cell type.")),
-  fs("characteristics[disease]", "required", "READY", NOT_APPLICABLE,
+  fs("characteristics[organism part]", "required", "READY",
+     mv("organism_part", standardized = TRUE), NA_character_,
+     "source-controlled experimenter metadata", "no",
+     paste("Experimenter term: central medial amygdala (CeM). The SDRF uses the supported",
+           "parent UBERON term and does not invent a more specific ontology accession.")),
+  fs("characteristics[cell type]", "recommended", "READY", NOT_APPLICABLE,
+     NA_character_, "SDRF-Proteomics reserved-word semantics plus experimenter class definitions",
+     "no",
+     paste("The four outputs are marker-defined laser-capture microdissected material, not",
+           "four discrete ontology cell types. Their exact definitions are carried in",
+           "characteristics[sampling site] and factor value[sample class]. Neuropil is",
+           "explicitly a mixed/enriched non-nuclear compartment.")),
+  fs("characteristics[disease]", "required", "READY", "normal",
      NA_character_, "experimental design (behavioural/chemogenetic, no disease model)",
      "no", NA_character_),
-  fs("characteristics[sex]", "optional", "MISSING_OPTIONAL_METADATA", NOT_AVAILABLE,
-     "sample_info.xlsx and sample_annotation.xlsx have no sex column",
+  fs("characteristics[strain or breed]", "recommended", "READY",
+     mv("strain_or_breed", standardized = TRUE), NA_character_,
+     "source-controlled experimenter metadata", "no", NA_character_),
+  fs("characteristics[developmental stage]", "required", "MISSING_REQUIRED_METADATA",
+     NOT_AVAILABLE, "no developmental-stage term is established by the supplied metadata",
+     "experiment timeline / animal records", "yes",
+     paste("The 7-10 week range is age at experiment start, not a recorded developmental",
+           "stage or age at tissue collection; deliberately not converted.")),
+  fs("characteristics[sex]", "recommended", "MISSING_OPTIONAL_METADATA", NOT_AVAILABLE,
+     "reliable AnimalID-level sex assignments are not available",
      "animal-facility records", "no", NA_character_),
   fs("characteristics[age]", "optional", "MISSING_OPTIONAL_METADATA", NOT_AVAILABLE,
-     "sample_info.xlsx and sample_annotation.xlsx have no age column",
-     "animal-facility records", "no", NA_character_),
+     "age at tissue collection is not established",
+     "experiment timeline / animal-facility records", "no",
+     "The verified cohort range is 7-10 weeks at experiment start; it is not substituted here."),
   fs("characteristics[individual]", "optional", "READY", "AnimalID (12 animals)",
      NA_character_, "validated sample metadata", "no", NA_character_),
   fs("characteristics[biological replicate]", "required", "READY", "1..3 within stratum",
      NA_character_, "derived from the validated animal-level design", "no",
      "3 animals per sample_class x condition"),
   fs("characteristics[sampling site]", "optional", "READY",
-     "mcherry / neuropil / cfos / neuron", NA_character_, "validated sample metadata",
-     "no", "the dissected/labelled fraction"),
+     "CeM plus marker-defined LCM category", NA_character_,
+     "validated sample class joined to source-controlled experimenter definitions",
+     "no", "Human-readable marker definition; the canonical class token remains the factor value."),
   fs("characteristics[anatomical side]", "optional", "READY", "Left / Right", NA_character_,
      "explicit _left/_right labels in sample_annotation.xlsx", "no",
      "non-standard characteristic; retained because hemisphere is a real design variable"),
@@ -209,6 +261,9 @@ field_status <- rbind(
            "acquisition or instrument batch.")),
   fs("assay name", "required", "READY", "run 1 .. run 96", NA_character_,
      "injection index parsed from the acquisition run name", "no", NA_character_),
+  fs("technology type", "required", "READY",
+     "proteomic profiling by mass spectrometry", NA_character_,
+     "SDRF-Proteomics ms-proteomics template", "no", NA_character_),
   fs("comment[data file]", "required", "READY", "<run>.d", NA_character_,
      "sample_annotation.xlsx Name column; basename minus .d equals the sample id for all 96",
      "no",
@@ -225,35 +280,37 @@ field_status <- rbind(
            "SDRF means by fraction 1. It is NOT a statement about a fractionation",
            "protocol, and no fractionation protocol is documented. Confirm with the",
            "acquisition facility before submission.")),
-  fs("comment[label]", "required", "MISSING_REQUIRED_METADATA", NOT_AVAILABLE,
-     "no labelling chemistry is recorded in any project file",
-     "acquisition facility / sample-preparation protocol", "yes",
-     paste("The 1:1 sample-to-run mapping is inconsistent with isobaric multiplexing, but",
-           "that is an argument from file counts, not a record of the chemistry used.",
-           "Deliberately not guessed. If label-free, the SDRF value is",
-           "'label free sample'.")),
+  fs("comment[label]", "required", "READY", mv("labeling_strategy", standardized = TRUE),
+     NA_character_, "source-controlled experimenter metadata", "no",
+     "Verified as label-free; not inferred from the 1:1 sample-to-run mapping."),
   fs("comment[instrument]", "required", "MISSING_REQUIRED_METADATA", NOT_AVAILABLE,
      "no instrument model string exists anywhere in the project tree",
      "acquisition facility; instrument method file; or the .d acquisition metadata", "yes",
      paste("The run name contains the local instrument alias 'Olive', which is not a model.",
            "The acquisition format is `.d`, a vendor-specific acquisition directory format",
            "(Bruker). Neither identifies a model. Must be an ontology term from PSI-MS.")),
-  fs("comment[cleavage agent details]", "required", "MISSING_REQUIRED_METADATA", NOT_AVAILABLE,
-     "no digestion protocol is recorded in any project file",
-     "sample-preparation protocol / manuscript methods", "yes",
-     paste("A TRYP_PIG (porcine trypsin) entry appears among the identified protein groups,",
-           "but standard contaminant databases include trypsin regardless of the enzyme",
-           "actually used, so this is NOT evidence. Deliberately not guessed.")),
-  fs("comment[modification parameters]", "required", "MISSING_REQUIRED_METADATA", NOT_AVAILABLE,
+  fs("comment[cleavage agent details]", "required", "READY",
+     paste(mv("cleavage_agent_lys_c", standardized = TRUE),
+           mv("cleavage_agent_trypsin", standardized = TRUE), sep = " | "),
+     NA_character_, "source-controlled 2024-11-28 sample-preparation protocol", "no",
+     "Two repeated SDRF columns preserve the sequential Lys-C and trypsin digestion."),
+  fs("comment[reduction reagent]", "optional", "READY",
+     mv("reduction_reagent", standardized = TRUE), NA_character_,
+     "source-controlled 2024-11-28 sample-preparation protocol", "no", NA_character_),
+  fs("comment[alkylation reagent]", "optional", "READY",
+     mv("alkylation_reagent", standardized = TRUE), NA_character_,
+     "source-controlled 2024-11-28 sample-preparation protocol", "no",
+     "CAA use is a preparation fact, not evidence of a fixed search modification."),
+  fs("comment[modification parameters]", "recommended", "MISSING_OPTIONAL_METADATA", NOT_AVAILABLE,
      "no search-parameter record (run log, config or report) exists in the project tree",
      paste("acquisition facility: the original search/quantification software run log or",
-           "configuration (e.g. DIA-NN report.log.txt, if DIA-NN was used)"), "yes",
-     NA_character_),
-  fs("comment[precursor mass tolerance]", "optional", "MISSING_OPTIONAL_METADATA", NOT_AVAILABLE,
+           "configuration (e.g. DIA-NN report.log.txt, if DIA-NN was used)"), "no",
+     "Deliberately not inferred from CAA or TCEP use."),
+  fs("comment[precursor mass tolerance]", "recommended", "MISSING_OPTIONAL_METADATA", NOT_AVAILABLE,
      "no search-parameter record exists in the project tree",
      "acquisition facility: original search/quantification software run log or configuration",
      "no", NA_character_),
-  fs("comment[fragment mass tolerance]", "optional", "MISSING_OPTIONAL_METADATA", NOT_AVAILABLE,
+  fs("comment[fragment mass tolerance]", "recommended", "MISSING_OPTIONAL_METADATA", NOT_AVAILABLE,
      "no search-parameter record exists in the project tree",
      "acquisition facility: original search/quantification software run log or configuration",
      "no", NA_character_),
@@ -270,7 +327,7 @@ field_status <- rbind(
   fs("comment[dissociation method]", "optional", "MISSING_OPTIONAL_METADATA", NOT_AVAILABLE,
      "no instrument method record exists in the project tree",
      "acquisition facility; instrument method file", "no", NA_character_),
-  fs("comment[MS2 analyzer type]", "optional", "MISSING_OPTIONAL_METADATA", NOT_AVAILABLE,
+  fs("comment[ms2 mass analyzer]", "optional", "MISSING_OPTIONAL_METADATA", NOT_AVAILABLE,
      "no instrument method record exists in the project tree",
      "acquisition facility; instrument method file", "no", NA_character_),
   fs("comment[acquisition date]", "optional", "READY", "2024-12-17", NA_character_,
@@ -289,6 +346,13 @@ field_status <- rbind(
      "token in every acquisition run name", "no",
      paste("non-standard comment; preserved verbatim and deliberately NOT decoded into an",
            "LC system, gradient or throughput claim")),
+  fs("comment[sdrf version]", "recommended", "READY", "v1.1.0", NA_character_,
+     "pinned release metadata contract", "no", NA_character_),
+  fs("comment[sdrf template]", "optional", "READY",
+     "NT=ms-proteomics;VV=v1.1.0 / NT=vertebrates;VV=v1.1.0", NA_character_,
+     "pinned release metadata contract", "no", NA_character_),
+  fs("comment[sdrf annotation tool]", "optional", "READY", "manual curation",
+     NA_character_, "source-controlled release generator", "no", NA_character_),
   fs("factor value[pairing]", "required", "READY", "paired / unpaired", NA_character_,
      "validated condition coding", "no", NA_character_),
   fs("factor value[treatment]", "required", "READY", "cno / veh", NA_character_,
@@ -320,10 +384,10 @@ field_status <- rbind(
 stopifnot(all(field_status$status %in% c(release_sdrf_field_statuses)))
 
 sdrf_columns <- names(sdrf)
-covered <- intersect(sdrf_columns, field_status$sdrf_field)
-if (length(covered) != length(sdrf_columns)) {
+covered <- sdrf_columns %in% field_status$sdrf_field
+if (!all(covered)) {
   stop("SDRF column(s) without a recorded status: ",
-       paste(setdiff(sdrf_columns, field_status$sdrf_field), collapse = ", "), call. = FALSE)
+       paste(unique(sdrf_columns[!covered]), collapse = ", "), call. = FALSE)
 }
 
 n_missing_required <- sum(field_status$status == "MISSING_REQUIRED_METADATA" &
@@ -360,6 +424,22 @@ missing_md <- c(
   paste0("- Raw acquisition files located on disk: **", raw_files_present, "** (",
          raw_present_count, " of 96)"),
   "",
+  "## Newly established experimenter metadata",
+  "",
+  paste0("- Tissue: **", mv("organism_part"), "**; marker-defined material was obtained by **",
+         mv("collection_method"), "**."),
+  paste0("- Animals: **", mv("strain_or_breed"), " mice** from **",
+         mv("animal_supplier"), ", ", mv("animal_supplier_location"), "**."),
+  paste0("- Cohort sex: **", mv("cohort_sex_composition"),
+         "**. AnimalID-level sex remains unavailable and is not imputed."),
+  paste0("- Age: **", mv("age_at_experiment_start"),
+         " at experiment start**. Age at tissue collection remains unavailable."),
+  paste0("- Quantification: **", mv("labeling_strategy"), "**."),
+  paste0("- Digestion: **", mv("cleavage_agent_lys_c"), "**, then **",
+         mv("cleavage_agent_trypsin"), "**; both are encoded as repeated cleavage-agent columns."),
+  "- Full protocol: `metadata/sample_preparation_protocol.tsv` and",
+  "  `pride/SAMPLE_PREPARATION_PROTOCOL.md` (version 2024-11-28).",
+  "",
   "None of the values below were inferred. Where a plausible inference existed it is",
   "written out and explicitly rejected, so a later reader can see what was considered.",
   "",
@@ -378,10 +458,11 @@ missing_md <- c(
   "",
   "The original search/quantification software run log or configuration (e.g. DIA-NN",
   "`report.log.txt`, if DIA-NN was used) plus the instrument method for the 2024-12-17",
-  "acquisition would supply, in one go: the search-software identity and version, the",
-  "digestion enzyme, the modification parameters, the mass tolerances, the acquisition",
-  "method, and the instrument model. Those six fields are the bulk of what is blocking a",
-  "complete SDRF.",
+  "acquisition would supply most acquisition/search gaps in one go: the search-software",
+  "identity and version, search modification parameters, mass tolerances, acquisition",
+  "method and instrument model. Developmental stage or age at tissue collection requires",
+  "the experiment timeline or animal records instead. Digestion and labelling are already",
+  "resolved from the source-controlled experimenter records.",
   "",
   "## Explicitly rejected inferences",
   "",
@@ -392,7 +473,9 @@ missing_md <- c(
   md_row(c("instrument vendor/model from the `.d` acquisition format",
            "the format identifies a vendor family, not a model; SDRF requires a specific instrument term")),
   md_row(c("digestion enzyme = trypsin from the `TRYP_PIG` protein group",
-           "standard contaminant databases contain porcine trypsin regardless of the enzyme used")),
+           paste("standard contaminant databases contain porcine trypsin regardless of the",
+                 "enzyme used; the released Lys-C/trypsin values instead come from the",
+                 "experimenter-supplied protocol"))),
   md_row(c("acquisition method = DIA from the retained `pg.matrix` naming convention",
            paste("the historical naming convention does not identify the upstream",
                  "search/quantification software, let alone the acquisition mode used on",
@@ -400,9 +483,11 @@ missing_md <- c(
   md_row(c("LC system / gradient / throughput from `FCo_Evo2_80SPDzoom_5cmRapid`",
            "an operator method label; decoding it would be reading an acquisition protocol out of a filename")),
   md_row(c("organism part = amygdala from the `l1_amygdala.loom` EWCE reference",
-           "the single-cell reference is an analysis choice; it does not record what tissue was dissected")),
+           paste("the single-cell reference is an analysis choice; the released CeM value",
+                 "instead comes from experimenter metadata"))),
   md_row(c("labelling = label free from the 1:1 sample-to-run mapping",
-           "argues against isobaric multiplexing but is not a record of the chemistry used")),
+           paste("argues against isobaric multiplexing but is not a record of the chemistry",
+                 "used; label-free status is now independently experimenter-verified"))),
   "",
   "## Sample class: RESOLVED, and deliberately not listed above",
   "",
@@ -444,6 +529,16 @@ missing_md <- c(
            "`sample_annotation.xlsx` `Name` column; basename minus `.d` equals the sample id for all 96, asserted at build time")),
   md_row(c("`characteristics[organism]`", "Mus musculus",
            "`MOUSE_10090_idmapping.dat`; `organism_id = 10090` in the mapping stage; `org.Mm.eg.db`; `_MOUSE` entry names")),
+  md_row(c("`characteristics[organism part]`", mv("organism_part", standardized = TRUE),
+           paste0("checked-in experimenter metadata; exact term retained as `", mv("organism_part"), "`"))),
+  md_row(c("`characteristics[cell type]`", "`not applicable`",
+           "marker-defined LCM materials are represented in sampling site/sample class, without unsupported Cell Ontology assignments")),
+  md_row(c("`characteristics[strain or breed]`", mv("strain_or_breed"),
+           "checked-in experimenter metadata")),
+  md_row(c("`comment[label]`", mv("labeling_strategy", standardized = TRUE),
+           "checked-in experimenter metadata")),
+  md_row(c("`comment[cleavage agent details]`", "Lys-C and trypsin",
+           "checked-in 2024-11-28 sample-preparation protocol")),
   md_row(c("`comment[acquisition date]`", "2024-12-17",
            "date token present in all 96 acquisition run names")),
   md_row(c("`characteristics[individual]`", "12 AnimalIDs",
@@ -513,6 +608,28 @@ readme_pride <- c(
   md_row(c("7", "Enrichment / EWCE", "GSEA, ORA, EWCE", "yes")),
   md_row(c("8", "Figure source data", "15 panels", "yes")),
   "",
+  "## Verified study and preparation metadata",
+  "",
+  paste0("All proteomics material came from **", mv("organism_part"), "** and was obtained by **",
+         mv("collection_method"), "**. The SDRF uses `", mv("organism_part", standardized = TRUE),
+         "` for the normalized organism part and retains the marker-defined LCM category in",
+         " `characteristics[sampling site]` / `factor value[sample class]`."),
+  "",
+  paste0("Animals were **", mv("strain_or_breed"), " mice** from **",
+         mv("animal_supplier"), ", ", mv("animal_supplier_location"), "**, aged **",
+         mv("age_at_experiment_start"), " at experiment start**. The cohort contained **",
+         mv("cohort_sex_composition"), "**. Reliable AnimalID-level sex and age at tissue",
+         " collection are not available, so the corresponding per-sample SDRF fields remain",
+         " `not available`."),
+  "",
+  paste0("Proteomics was **", mv("labeling_strategy"), "**. The verified digestion used **",
+         mv("cleavage_agent_lys_c"), "**, followed by **", mv("cleavage_agent_trypsin"),
+         "**. The complete versioned protocol is in `SAMPLE_PREPARATION_PROTOCOL.md` and",
+         " `metadata/sample_preparation_protocol.tsv`."),
+  "",
+  paste("The unrelated Sprague-Dawley rat viral-insertion experiment is explicitly outside",
+        "this dataset and contributes no SDRF value."),
+  "",
   "## Sample-class metadata is resolved",
   "",
   paste0("For ", n_class_corrected, " of the 96 acquisitions the sample class was corrected",
@@ -526,17 +643,16 @@ readme_pride <- c(
   "",
   "## Before submitting",
   "",
-  "1. Retrieve the 96 `.d` acquisition directories from the facility instrument store.",
+  "1. Retrieve the 96 `.d` acquisition directories from the external holder.",
   paste("2. Obtain the original search/quantification software run log or configuration",
         "(e.g. DIA-NN `report.log.txt`, if DIA-NN was used) and the instrument method for",
         "the 2024-12-17 acquisition;"),
   "   they supply most of the missing SDRF fields in one document.",
   paste0("3. Populate the ", n_missing_required, " SDRF-required fields listed in ",
          "`SDRF_MISSING_METADATA.md`."),
-  "4. Confirm the dissected brain region and add it as `characteristics[organism part]`,",
-  "   and map each of the four sample classes to a Cell Ontology term for",
-  "   `characteristics[cell type]`.",
-  "5. Re-run `10_validate_release.R` and confirm the status advances.",
+  "4. Recover AnimalID-level sex and the experiment timeline if they are to be supplied as",
+  "   per-sample sex and age-at-collection metadata; do not infer them from cohort summaries.",
+  "5. Re-run `13_validate_release.R` and confirm the status advances.",
   "",
   "## Status vocabulary",
   "",
@@ -548,11 +664,41 @@ readme_pride <- c(
   md_row(c("`PRIDE_INPUTS_INCOMPLETE`", "the raw acquisition files are not even identified")),
   "",
   paste0("This deposition is `", pride_status, "`: the acquisition filenames are fully ",
-         "identified, but ", n_missing_required, " SDRF-required fields cannot be ",
-         "populated from any file in the project."),
+         "identified, but ", n_missing_required, " SDRF-required fields remain unresolved."),
   ""
 )
 release_write_lines(readme_pride, release_path("pride", "README_PRIDE.md"))
+
+protocol_md <- c(
+  "# Sample-preparation protocol",
+  "",
+  paste0("**Protocol version date: ", unique(sample_preparation_protocol$protocol_version_date),
+         "**"),
+  "",
+  "Source: source-controlled experimenter-supplied protocol. The generated table",
+  "`metadata/sample_preparation_protocol.tsv` preserves the same ordered steps and evidence",
+  "fields in machine-readable form.",
+  "",
+  "| step | operation | details | temperature | duration | notes |",
+  "|---:|---|---|---|---|---|",
+  vapply(seq_len(nrow(sample_preparation_protocol)), function(i) {
+    r <- sample_preparation_protocol[i, , drop = FALSE]
+    md_row(c(r$step_order, r$step_name, r$details, r$temperature, r$duration,
+             ifelse(nzchar(r$notes), r$notes, "")))
+  }, character(1)),
+  "",
+  "## Interpretation boundaries",
+  "",
+  "- The TFA stop and SpeedVac entry is preserved as an alternative recorded option; the",
+  "  available metadata do not assign one option to each individual sample.",
+  "- CAA and TCEP are sample-preparation reagents. They do **not** establish the fixed or",
+  "  variable modification settings used during database search/quantification.",
+  "- The exact composition of A buffer is not supplied and is not inferred.",
+  "- Instrument model, acquisition mode, search modifications and mass tolerances remain",
+  "  unresolved; see `SDRF_MISSING_METADATA.md`.",
+  ""
+)
+release_write_lines(protocol_md, release_path("pride", "SAMPLE_PREPARATION_PROTOCOL.md"))
 
 # --------------------------------------------------------------------------------------
 # write
@@ -560,22 +706,35 @@ release_write_lines(readme_pride, release_path("pride", "README_PRIDE.md"))
 
 sm_path <- rel("metadata", "sample_metadata.tsv")
 sa_path <- file.path(PROJECT_ROOT, "sample_annotation.xlsx")
+em_source <- release_experimenter_metadata_source_path(REPO_ROOT)
+protocol_source <- release_sample_preparation_source_path(REPO_ROOT)
 
 w1 <- release_write_table(sdrf, release_path("pride", "sdrf.tsv"))
 release_register("pride/sdrf.tsv", "SDRF-Proteomics sample and data relationship file",
-                 c(sm_path, sa_path), c(NA_character_, release_sha256(sa_path)), STAGE, "tsv")
+                 c(sm_path, sa_path, em_source, protocol_source),
+                 c(NA_character_, release_sha256(sa_path), release_sha256(em_source),
+                   release_sha256(protocol_source)), STAGE, "tsv")
 
 w2 <- release_write_table(field_status, release_path("pride", "sdrf_field_status.tsv"))
 release_register("pride/sdrf_field_status.tsv",
                  "per-SDRF-field readiness: READY / MISSING_REQUIRED / MISSING_OPTIONAL",
-                 sm_path, NA_character_, STAGE, "tsv")
+                 c(sm_path, em_source, protocol_source),
+                 c(NA_character_, release_sha256(em_source),
+                   release_sha256(protocol_source)), STAGE, "tsv")
 
 release_register("pride/SDRF_MISSING_METADATA.md",
                  "SDRF fields that could not be established, and what would supply them",
-                 sm_path, NA_character_, STAGE, "md")
+                 c(sm_path, em_source, protocol_source),
+                 c(NA_character_, release_sha256(em_source), release_sha256(protocol_source)),
+                 STAGE, "md")
 release_register("pride/README_PRIDE.md",
                  "which artefacts are suitable for PRIDE and which are not",
-                 sm_path, NA_character_, STAGE, "md")
+                 c(sm_path, em_source, protocol_source),
+                 c(NA_character_, release_sha256(em_source), release_sha256(protocol_source)),
+                 STAGE, "md")
+release_register("pride/SAMPLE_PREPARATION_PROTOCOL.md",
+                 "human-readable 2024-11-28 sample-preparation protocol and boundaries",
+                 protocol_source, release_sha256(protocol_source), STAGE, "md")
 
 status_tbl <- data.frame(
   key = c("pride_status", "raw_files_identified", "raw_files_located",
@@ -589,9 +748,12 @@ status_tbl <- data.frame(
   stringsAsFactors = FALSE, check.names = FALSE)
 release_write_table(status_tbl, release_path("pride", "pride_readiness.tsv"))
 release_register("pride/pride_readiness.tsv", "machine-readable PRIDE readiness verdict",
-                 sm_path, NA_character_, STAGE, "tsv")
+                 c(sm_path, em_source, protocol_source),
+                 c(NA_character_, release_sha256(em_source), release_sha256(protocol_source)),
+                 STAGE, "tsv")
 
 release_log("  wrote sdrf.tsv (", w1$rows, "x", w1$cols, ")")
 release_log("  wrote sdrf_field_status.tsv (", w2$rows, "x", w2$cols, ")")
 release_log("  wrote SDRF_MISSING_METADATA.md, README_PRIDE.md, pride_readiness.tsv")
+release_log("  wrote SAMPLE_PREPARATION_PROTOCOL.md")
 release_log("stage 09 complete")

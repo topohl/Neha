@@ -53,6 +53,8 @@ animal_metadata <- read_release(rel("metadata", "animal_level_sample_metadata.ts
 primary_contrasts <- read_release(rel("metadata", "primary_contrast_manifest.tsv"))
 secondary <- read_release(rel("metadata", "secondary_analysis_manifest.tsv"))
 field_provenance <- read_release(rel("metadata", "metadata_field_provenance.tsv"))
+experimenter_metadata_wb <- read_release(rel("metadata", "experimenter_metadata.tsv"))
+mv_wb <- function(id) release_metadata_value(experimenter_metadata_wb, id)
 differential <- read_release(rel("differential_analysis", "primary_differential_proteins.tsv.gz"))
 diff_summary <- read_release(rel("differential_analysis", "primary_differential_summary.tsv"))
 gsea_go <- read_release(rel("enrichment", "primary_GSEA_GO_BP.tsv.gz"))
@@ -224,11 +226,14 @@ readme <- rbind(
     "annotation in the full release); AnimalID + sample_class (Animal_Level_Metadata <->",
     "Sample_Metadata via animal_level_sample_id)."),
     stringsAsFactors = FALSE, check.names = FALSE),
-  data.frame(item = "15. UNKNOWN METADATA IS MARKED UNKNOWN", statement = paste(
-    "Instrument model, digestion enzyme, DIA acquisition method, search-software version,",
-    "labelling, fractionation, animal sex and animal age are NOT recorded anywhere in the",
-    "project and have deliberately been left blank rather than inferred. See the",
-    "Metadata_Field_Status sheet and pride/SDRF_MISSING_METADATA.md."),
+  data.frame(item = "15. VERIFIED AND UNKNOWN METADATA ARE DISTINGUISHED", statement = paste(
+    "Source-controlled experimenter records establish", mv_wb("organism_part"),
+    "material,", mv_wb("strain_or_breed"), "mice,", mv_wb("labeling_strategy"),
+    "and sequential Lys-C plus trypsin digestion. Instrument model, acquisition mode,",
+    "search settings, AnimalID-level sex, developmental stage and age at tissue collection",
+    "remain unavailable and have not been inferred. See the Metadata_Field_Status sheet,",
+    "metadata/experimenter_metadata.tsv, metadata/sample_preparation_protocol.tsv and",
+    "pride/SDRF_MISSING_METADATA.md."),
     stringsAsFactors = FALSE, check.names = FALSE),
   data.frame(item = "16. THE EFFECT SIZE IS NOT A LOG2 FOLD CHANGE", statement = paste(
     "The abundance matrix is standardised separately for each protein, so the coefficient",

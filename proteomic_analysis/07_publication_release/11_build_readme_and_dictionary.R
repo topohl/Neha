@@ -73,6 +73,24 @@ pride_readiness <- read.delim(rel("pride", "pride_readiness.tsv"), sep = "\t", q
                               stringsAsFactors = FALSE, check.names = FALSE)
 pride_status <- pride_readiness$value[pride_readiness$key == "pride_status"]
 n_required_missing <- pride_readiness$value[pride_readiness$key == "n_sdrf_required_missing"]
+experimenter_metadata <- read.delim(rel("metadata", "experimenter_metadata.tsv"), sep = "\t",
+                                    quote = "", stringsAsFactors = FALSE,
+                                    check.names = FALSE, na.strings = character(0))
+sample_preparation_protocol <- read.delim(
+  rel("metadata", "sample_preparation_protocol.tsv"), sep = "\t", quote = "",
+  stringsAsFactors = FALSE, check.names = FALSE, na.strings = character(0))
+mv <- function(id, standardized = FALSE) {
+  release_metadata_value(experimenter_metadata, id, standardized = standardized)
+}
+class_metadata <- experimenter_metadata[
+  experimenter_metadata$category == "sample_class_definition", , drop = FALSE]
+class_metadata <- class_metadata[order(as.integer(class_metadata$sort_order)), , drop = FALSE]
+class_markdown <- vapply(seq_len(nrow(class_metadata)), function(i) {
+  historical <- switch(class_metadata$sample_class[i], mcherry = "mCherryN",
+                       neuropil = "bg / Background", cfos = "cFosN", neuron = "neuron")
+  paste0("| `", class_metadata$sample_class[i], "` | `", historical, "` | ",
+         class_metadata$value[i], " |")
+}, character(1))
 
 # --------------------------------------------------------------------------------------
 # column descriptions
@@ -86,11 +104,11 @@ DESCRIPTIONS <- c(
   raw_file_original_path = "Verbatim acquisition-machine path recorded at search time, e.g. D:\\Proteomics\\Fabian\\Tobias\\<run>.d.",
   raw_file_extension = "Acquisition file extension. `.d` is a vendor-specific acquisition directory format. It identifies a vendor family, not an instrument model.",
   AnimalID = "Animal identifier. 12 animals: C11 C12 C14 C25 C26 C27 C33f C34f C45f C46 C47 C510.",
-  hemisphere = "Left or Right. The anatomical side the fraction was taken from.",
+  hemisphere = "Left or Right. The anatomical side from which the marker-defined LCM material was obtained.",
   hemisphere_evidence_source = "How hemisphere was established. `explicit_evidence` = the _left/_right suffix on the annotation label, cross-checked against the numeric ReplicateGroup.",
   historical_hemisphere_label = "Legacy annotation label carrying the explicit side, e.g. cFosN_left.",
   legacy_replicate_group = "Legacy numeric hemisphere encoding: 1 = Left, 2 = Right. Retained for traceability.",
-  sample_class = "Dissected/labelled fraction: mcherry, neuropil, cfos or neuron. THIS IS THE ANALYSIS-TIME ASSIGNMENT -- the class the locked GCTs and every validated statistic were computed on. For 6 of the 96 measurements it differs from the pre-correction assignment, which is retained in original_sample_class; see metadata/sample_class_corrections.tsv.",
+  sample_class = "Marker-defined LCM class: mcherry, neuropil, cfos or neuron. THIS IS THE ANALYSIS-TIME ASSIGNMENT -- the class the locked GCTs and every validated statistic were computed on. For 6 of the 96 measurements it differs from the pre-correction assignment, which is retained in original_sample_class; see metadata/sample_class_corrections.tsv.",
   sample_class_historical_alias = "Historical filename alias. `neuropil` was written `bg` (from background) in older filenames; it is a tissue compartment, not a negative control or a blank.",
   sample_class_historical_group_label = "Legacy group label from the annotation workbook, verbatim: cFosN, Background, mCherryN, Neuron.",
   original_sample_class = "PRE-CORRECTION sample class, normalised to the canonical vocabulary from the sample_annotation.xlsx group_label. Independently reproduced for all 96 measurements by the autosampler plate layout, and for the 6 corrected measurements by the retained UMAP correction table. Retained so the original identity is never lost.",
@@ -361,6 +379,7 @@ DESCRIPTIONS <- c(
 TABLES <- c(
   "metadata/sample_metadata.tsv", "metadata/animal_level_sample_metadata.tsv",
   "metadata/metadata_field_provenance.tsv", "metadata/sample_class_corrections.tsv",
+  "metadata/experimenter_metadata.tsv", "metadata/sample_preparation_protocol.tsv",
   "metadata/primary_contrast_manifest.tsv", "metadata/secondary_analysis_manifest.tsv",
   "processed_data/protein_abundance_measurement_level.tsv.gz",
   "processed_data/protein_abundance_animal_level.tsv.gz",
@@ -415,6 +434,32 @@ sdrf_description <- function(cn) {
 # audit's columns away from the names the audit spec asks for, the collision is resolved
 # here, per table.
 TABLE_COLUMN_OVERRIDES <- list(
+  "metadata/experimenter_metadata.tsv" = c(
+    metadata_id = "Stable identifier used by release builders to retrieve one experimenter-supplied fact.",
+    category = "Fact category: scope, biological source, sample-class definition, animal cohort, proteomics method, unresolved deposition metadata, raw-data availability or scope exclusion.",
+    sample_class = "Canonical sample-class token when the row defines one of the four marker-defined LCM classes; otherwise blank.",
+    sort_order = "Display or protocol order where order is meaningful; otherwise blank.",
+    value = "Experimenter-supplied value preserved in human-readable form.",
+    sdrf_value = "Standards-oriented SDRF representation when the fact belongs in the SDRF; blank for cohort-only or scope-only facts.",
+    status = "Metadata status under the release vocabulary: verified, recoverable/unknown, or not applicable.",
+    applies_to = "Scope to which the fact applies; distinguishes study/cohort facts from per-sample metadata.",
+    evidence_source = "Provenance class for the fact, here experimenter-supplied metadata or protocol.",
+    evidence_date = "Date the experimenter-supplied fact was recorded in the source-controlled release contract.",
+    notes = "Interpretation boundary, exclusion or non-inference rule attached to the fact."
+  ),
+  "metadata/sample_preparation_protocol.tsv" = c(
+    protocol_id = "Stable identifier for the sample-preparation protocol.",
+    protocol_version_date = "Date of the experimenter-supplied protocol version.",
+    step_order = "One-based order of the preparation step.",
+    step_name = "Short operation name for the preparation step.",
+    details = "Reagents, amounts, concentrations or action exactly as supplied.",
+    temperature = "Temperature recorded for the step, or not applicable.",
+    duration = "Duration recorded for the step; `overnight` is preserved verbatim and unavailable exact durations are not invented.",
+    status = "Metadata status for the protocol step; all seven supplied steps are KNOWN_VERIFIED.",
+    evidence_source = "Provenance class for the step: experimenter-supplied protocol.",
+    evidence_date = "Date the protocol was entered into the source-controlled release contract.",
+    notes = "Interpretation boundary or unresolved detail for the step."
+  ),
   "editor_source_data/EFFECT_SIZE_TERMINOLOGY_AUDIT.tsv" = c(
     file = "File or released artefact the occurrence is in.",
     location = "Where in that file: a named constant, section, column or line number.",
@@ -490,7 +535,8 @@ mch <- diff_summary[diff_summary$canonical_comparison ==
 R <- c(
 "# Associative Memory Proteomics -- publication data package",
 "",
-"Animal-level proteomics of four dissected fractions from a chemogenetic associative-memory",
+paste0("Animal-level proteomics of four marker-defined laser-capture microdissection classes from ",
+       mv("organism_part"), " in a chemogenetic associative-memory"),
 "experiment. This package contains the processed data, the differential and enrichment",
 "results, the manuscript figure source data, and the metadata needed to interpret and",
 "redeposit them.",
@@ -504,14 +550,23 @@ R <- c(
 "",
 "## 1. Experimental design",
 "",
-"12 mice. From each animal, four fractions were collected from each hemisphere:",
+paste0("12 ", mv("strain_or_breed"), " mice from ", mv("animal_supplier"), ", ",
+       mv("animal_supplier_location"), ". All proteomics material came from ",
+       mv("organism_part"), " and was obtained by ", mv("collection_method"), "."),
+"",
+paste0("Animals were ", mv("age_at_experiment_start"), " at experiment start. The cohort contained ",
+       mv("cohort_sex_composition"), ". Reliable AnimalID-level sex and age at tissue collection ",
+       "are unavailable and are not inferred."),
+"",
+"From each animal, four marker-defined classes were collected from each hemisphere:",
 "",
 "| Sample class | Historical alias | What it is |",
 "|---|---|---|",
-"| `mcherry` | `mCherryN` | mCherry-labelled fraction |",
-"| `neuropil` | `bg` / `Background` | neuropil compartment -- **not** a blank, negative control or background subtraction |",
-"| `cfos` | `cFosN` | cFos-labelled fraction |",
-"| `neuron` | `neuron` | neuronal fraction |",
+class_markdown,
+"",
+"These are sampling classes, not four Cell Ontology cell types. The SDRF therefore uses",
+"`characteristics[cell type] = not applicable`, while `characteristics[sampling site]` and",
+"`factor value[sample class]` preserve the marker-defined LCM category.",
 "",
 "Each animal is in exactly one of four conditions:",
 "",
@@ -809,13 +864,18 @@ paste0("Current status: **`", pride_status, "`**."),
 "",
 paste0("`pride/sdrf.tsv` follows SDRF-Proteomics conventions as far as the verified metadata",
        " allow. ", n_required_missing, " SDRF-required fields could not be populated from",
-       " any file in the project and carry `not available`; each is itemised in",
+       " the project or experimenter records and carry `not available`; each is itemised in",
        " `pride/SDRF_MISSING_METADATA.md` with the document that would supply it."),
 "",
-"No acquisition metadata was inferred. Instrument model, digestion enzyme, DIA acquisition",
-"method, search-software version, labelling chemistry, database-search parameters, the",
-"dissected brain region, animal sex and animal age are all recorded as missing rather than",
-"guessed.",
+paste0("Experimenter metadata resolves ", mv("organism_part"), ", ", mv("strain_or_breed"),
+       ", ", mv("labeling_strategy"), " and sequential Lys-C plus trypsin digestion. The full",
+       " 2024-11-28 protocol is preserved in `metadata/sample_preparation_protocol.tsv` and",
+       " `pride/SAMPLE_PREPARATION_PROTOCOL.md`."),
+"",
+"No unresolved acquisition/search metadata was inferred. Instrument model, acquisition mode,",
+"search-software version, modification parameters, mass tolerances, developmental stage,",
+"AnimalID-level sex and age at tissue collection remain explicitly unavailable. CAA/TCEP",
+"use is not converted into search modification settings.",
 "",
 "## 18. Package layout",
 "",

@@ -11,7 +11,7 @@
 # reimplemented, because a divergent normalisation is exactly how a protected root gets
 # missed (see the comment block at the top of that file).
 
-RELEASE_LAYER_VERSION <- "1.0.0"
+RELEASE_LAYER_VERSION <- "1.1.0"
 
 # --------------------------------------------------------------------------------------
 # repository / helper discovery
@@ -319,9 +319,11 @@ release_read_gct <- function(path, what = basename(path)) {
 #' column. Replaced with a single space rather than dropped, so field content stays
 #' readable.
 release_sanitize_tsv <- function(df) {
-  for (nm in names(df)) {
-    if (is.character(df[[nm]]) || is.factor(df[[nm]])) {
-      df[[nm]] <- gsub("[\t\r\n]+", " ", as.character(df[[nm]]))
+  # Index columns by position so SDRF's standards-sanctioned repeated headers
+  # (for example, multiple cleavage agents) are each sanitized independently.
+  for (i in seq_along(df)) {
+    if (is.character(df[[i]]) || is.factor(df[[i]])) {
+      df[[i]] <- gsub("[\t\r\n]+", " ", as.character(df[[i]]))
     }
   }
   df
@@ -333,14 +335,15 @@ release_sanitize_tsv <- function(df) {
 #' contract the release tests assert against the canonical CSVs. 17 significant digits
 #' round-trips an IEEE double.
 release_format_numeric <- function(df) {
-  for (nm in names(df)) {
-    if (is.numeric(df[[nm]]) && !is.integer(df[[nm]])) {
-      df[[nm]] <- ifelse(is.na(df[[nm]]), NA_character_,
-                         vapply(df[[nm]], function(x) format(x, digits = 17, trim = TRUE),
+  # Use positional indexing for the same repeated-header reason as above.
+  for (i in seq_along(df)) {
+    if (is.numeric(df[[i]]) && !is.integer(df[[i]])) {
+      df[[i]] <- ifelse(is.na(df[[i]]), NA_character_,
+                         vapply(df[[i]], function(x) format(x, digits = 17, trim = TRUE),
                                 character(1)))
-    } else if (is.logical(df[[nm]])) {
-      df[[nm]] <- ifelse(is.na(df[[nm]]), NA_character_,
-                         ifelse(df[[nm]], "TRUE", "FALSE"))
+    } else if (is.logical(df[[i]])) {
+      df[[i]] <- ifelse(is.na(df[[i]]), NA_character_,
+                         ifelse(df[[i]], "TRUE", "FALSE"))
     }
   }
   df
@@ -367,6 +370,28 @@ release_write_lines <- function(lines, path) {
   on.exit(close(con), add = TRUE)
   writeLines(enc2utf8(as.character(lines)), con, useBytes = TRUE)
   invisible(path)
+}
+
+# Stage 13 is deliberately run after the 12-stage build and then reissues the manifest.
+# On a later in-place rebuild, its two reports would otherwise survive the registry reset
+# and make Stage 12 (correctly) reject them as unregistered stale files. Remove only these
+# exact generated paths; every other unexpected file must continue to fail the manifest.
+RELEASE_VALIDATION_REPORT_RELPATHS <- c(
+  "provenance/validation_results.tsv",
+  "provenance/VALIDATION_REPORT.md"
+)
+
+release_clear_previous_validation_reports <- function(output_root = release_output_root()) {
+  root <- release_validate_output_root(output_root)
+  targets <- file.path(root, RELEASE_VALIDATION_REPORT_RELPATHS)
+  existing <- targets[file.exists(targets)]
+  if (length(existing)) unlink(existing, recursive = FALSE, force = FALSE)
+  remaining <- targets[file.exists(targets)]
+  if (length(remaining)) {
+    stop("Could not remove previous generated validation report(s): ",
+         paste(remaining, collapse = "; "), call. = FALSE)
+  }
+  invisible(existing)
 }
 
 # --------------------------------------------------------------------------------------

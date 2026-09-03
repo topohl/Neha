@@ -59,7 +59,8 @@ if (!file.exists(release_locked_artefact_path("animal_level_input_gct", DATA_ROO
 }
 
 cat("\n=== the lineage covers the whole chain ===\n")
-required <- c("A02_acquisition_raw", "A03_search_quantification",
+required <- c("A00_experimenter_metadata", "A00_sample_preparation_protocol",
+              "A02_acquisition_raw", "A03_search_quantification",
               "A04_protein_group_matrix_prefilter", "A07_processed_matrix",
               "A08_animal_level_matrix", "A09_protigy_statistics",
               "A10_split_differential_tables", "A11_uniprot_mapping_reference",
@@ -75,6 +76,14 @@ expect(all(nzchar(lineage$processing_stage)),
 expect(all(nzchar(lineage$analysis_unit)), "every artefact records its analysis unit")
 expect(all(lineage$canonical %in% c("yes", "no")),
        "every artefact is marked canonical or not")
+em_path <- release_experimenter_metadata_source_path(repo_root)
+protocol_path <- release_sample_preparation_source_path(repo_root)
+expect(any(lineage$artifact_id == "A00_experimenter_metadata" &
+             lineage$sha256 == release_sha256(em_path)),
+       "experimenter metadata is represented by its checked-in source hash")
+expect(any(lineage$artifact_id == "A00_sample_preparation_protocol" &
+             lineage$sha256 == release_sha256(protocol_path)),
+       "sample-preparation protocol is represented by its checked-in source hash")
 
 cat("\n=== unproven edges are UNRESOLVED, not invented ===\n")
 combined <- paste(lineage$processing_stage, lineage$notes)

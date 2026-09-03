@@ -32,6 +32,119 @@ release_assert_metadata_status <- function(status) {
   invisible(TRUE)
 }
 
+# --------------------------------------------------------------------------------------
+# source-controlled experimenter metadata
+# --------------------------------------------------------------------------------------
+
+RELEASE_EXPERIMENTER_METADATA_COLUMNS <- c(
+  "metadata_id", "category", "sample_class", "sort_order", "value", "sdrf_value",
+  "status", "applies_to", "evidence_source", "evidence_date", "notes"
+)
+
+RELEASE_EXPERIMENTER_METADATA_REQUIRED_IDS <- c(
+  "dataset_scope", "organism", "organism_part", "collection_method",
+  "sample_class_cfos", "sample_class_mcherry", "sample_class_neuron",
+  "sample_class_neuropil", "strain_or_breed", "animal_supplier",
+  "animal_supplier_location", "cohort_sex_composition", "animalid_sex_assignments",
+  "age_at_experiment_start", "age_at_tissue_collection", "labeling_strategy",
+  "reduction_reagent", "alkylation_reagent", "cleavage_agent_lys_c",
+  "cleavage_agent_trypsin", "instrument_model", "acquisition_mode",
+  "search_modification_parameters", "precursor_mass_tolerance",
+  "fragment_mass_tolerance", "raw_acquisition_directories",
+  "excluded_rat_viral_insertion_experiment"
+)
+
+RELEASE_SAMPLE_PREPARATION_COLUMNS <- c(
+  "protocol_id", "protocol_version_date", "step_order", "step_name", "details",
+  "temperature", "duration", "status", "evidence_source", "evidence_date", "notes"
+)
+
+release_experimenter_metadata_source_path <- function(repo_root = release_repo_root()) {
+  file.path(repo_root, "07_publication_release", "metadata", "experimenter_metadata.tsv")
+}
+
+release_sample_preparation_source_path <- function(repo_root = release_repo_root()) {
+  file.path(repo_root, "07_publication_release", "metadata",
+            "sample_preparation_protocol.tsv")
+}
+
+release_read_checked_tsv <- function(path, required_columns, what) {
+  if (!file.exists(path)) stop(what, " is missing: ", path, call. = FALSE)
+  out <- utils::read.delim(path, sep = "\t", quote = "", stringsAsFactors = FALSE,
+                           check.names = FALSE, na.strings = character(0),
+                           colClasses = "character")
+  missing_columns <- setdiff(required_columns, names(out))
+  if (length(missing_columns)) {
+    stop(what, " lacks required column(s): ", paste(missing_columns, collapse = ", "),
+         call. = FALSE)
+  }
+  out
+}
+
+release_read_experimenter_metadata <- function(repo_root = release_repo_root()) {
+  path <- release_experimenter_metadata_source_path(repo_root)
+  out <- release_read_checked_tsv(path, RELEASE_EXPERIMENTER_METADATA_COLUMNS,
+                                  "Experimenter metadata record")
+  if (any(!nzchar(out$metadata_id)) || anyDuplicated(out$metadata_id)) {
+    stop("Experimenter metadata_id values must be non-empty and unique.", call. = FALSE)
+  }
+  missing_ids <- setdiff(RELEASE_EXPERIMENTER_METADATA_REQUIRED_IDS, out$metadata_id)
+  extra_ids <- setdiff(out$metadata_id, RELEASE_EXPERIMENTER_METADATA_REQUIRED_IDS)
+  if (length(missing_ids) || length(extra_ids)) {
+    stop("Experimenter metadata ID contract mismatch. Missing: ",
+         paste(missing_ids, collapse = ", "), "; unexpected: ",
+         paste(extra_ids, collapse = ", "), call. = FALSE)
+  }
+  release_assert_metadata_status(out$status)
+  classes <- out[out$category == "sample_class_definition", , drop = FALSE]
+  if (!setequal(classes$sample_class, c("cfos", "mcherry", "neuron", "neuropil")) ||
+      any(!nzchar(classes$sdrf_value)) || anyNA(suppressWarnings(as.integer(classes$sort_order)))) {
+    stop("Experimenter metadata must define exactly the four marker-defined sample classes.",
+         call. = FALSE)
+  }
+  excluded <- out[out$metadata_id == "excluded_rat_viral_insertion_experiment", , drop = FALSE]
+  if (nrow(excluded) != 1L || excluded$status != "NOT_APPLICABLE" ||
+      !grepl("Sprague-Dawley rat", excluded$value, fixed = TRUE)) {
+    stop("The unrelated rat-experiment scope exclusion is absent or malformed.",
+         call. = FALSE)
+  }
+  out
+}
+
+release_read_sample_preparation_protocol <- function(repo_root = release_repo_root()) {
+  path <- release_sample_preparation_source_path(repo_root)
+  out <- release_read_checked_tsv(path, RELEASE_SAMPLE_PREPARATION_COLUMNS,
+                                  "Sample-preparation protocol record")
+  ord <- suppressWarnings(as.integer(out$step_order))
+  if (nrow(out) != 7L || anyNA(ord) || !identical(ord, seq_len(7L)) ||
+      length(unique(out$protocol_id)) != 1L ||
+      !identical(unique(out$protocol_version_date), "2024-11-28") ||
+      any(out$status != "KNOWN_VERIFIED")) {
+    stop("Sample-preparation protocol must contain the seven ordered, verified 2024-11-28 steps.",
+         call. = FALSE)
+  }
+  out
+}
+
+release_metadata_row <- function(metadata, metadata_id) {
+  hit <- metadata[metadata$metadata_id == metadata_id, , drop = FALSE]
+  if (nrow(hit) != 1L) {
+    stop("Expected exactly one experimenter metadata row for ", metadata_id, ".",
+         call. = FALSE)
+  }
+  hit
+}
+
+release_metadata_value <- function(metadata, metadata_id, standardized = FALSE) {
+  hit <- release_metadata_row(metadata, metadata_id)
+  value <- if (isTRUE(standardized) && nzchar(hit$sdrf_value[[1]])) {
+    hit$sdrf_value[[1]]
+  } else {
+    hit$value[[1]]
+  }
+  as.character(value)
+}
+
 #' Per-field SDRF readiness, distinguishing required from optional.
 release_sdrf_field_statuses <- c(
   "READY",

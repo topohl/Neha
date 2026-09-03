@@ -42,6 +42,10 @@ EWCE_ROOT <- file.path(DATA_ROOT, "03_output", "ewce",
 PCA_ROOT <- file.path(DATA_ROOT, "03_output", "pca",
                       "pca_plots_animal_level_validation_20260825_rerun")
 REVISION_ROOT <- file.path(DATA_ROOT, "03_output", "reviewer_revision_animal_level_20260827")
+experimenter_source <- release_experimenter_metadata_source_path(REPO_ROOT)
+protocol_source <- release_sample_preparation_source_path(REPO_ROOT)
+experimenter_metadata <- release_read_experimenter_metadata(REPO_ROOT)
+sample_preparation_protocol <- release_read_sample_preparation_protocol(REPO_ROOT)
 
 hash_or <- function(path, fallback = NA_character_) {
   if (!is.na(path) && nzchar(path) && file.exists(path) && !dir.exists(path)) {
@@ -180,12 +184,31 @@ p_perseus <- file.path(PROJECT_ROOT,
                        "pg.matrix_filtered_70percent-onegroup_imputed_ANOVA_z-scored.txt")
 
 lineage <- rbind(
+  lin("A00_experimenter_metadata", "study / cohort / sample-class metadata",
+      experimenter_source, NA_character_,
+      "experimenter-supplied facts codified in a source-controlled release contract",
+      "manual curation", "n/a", "study / cohort / sample class",
+      hash_or(experimenter_source), "yes",
+      paste("Defines CeM origin, marker-defined LCM classes, mouse strain/source, cohort-only",
+            "sex and age-at-start facts, label-free status, explicit unknowns and the",
+            "unrelated rat-experiment exclusion. No AnimalID-level sex was invented.")),
+  lin("A00_sample_preparation_protocol", "sample-preparation protocol",
+      protocol_source, "A00_experimenter_metadata",
+      "experimenter-supplied protocol version 2024-11-28 codified as seven ordered steps",
+      "manual curation", "n/a", "proteomics sample",
+      hash_or(protocol_source), "yes",
+      paste("Records 5% DDM / 5 mM TCEP / 20 mM CAA / 0.1 M TEAB lysis, 95 degrees C",
+            "for 1 hour, sequential Lys-C and trypsin digestion, TFA stop or recorded",
+            "SpeedVac option, Evotip cleanup and 4.2 uL A-buffer resuspension. CAA/TCEP",
+            "do not establish search modification parameters.")),
   lin("A01_biological_samples", "biological material",
-      "96 dissected fractions (12 animals x 4 sample classes x 2 hemispheres)",
+      "96 marker-defined LCM samples (12 animals x 4 sample classes x 2 hemispheres)",
       NA_character_, "dissection and sample preparation", UNKNOWN, UNKNOWN,
       "hemisphere sample", NA_character_, "yes",
-      paste("Dissected brain region is not recorded anywhere in the analysis tree.",
-            "Digestion enzyme, labelling and fractionation are likewise unrecorded:",
+      paste("Experimenter metadata establishes central medial amygdala (CeM), four",
+            "marker-defined laser-capture microdissection classes, label-free proteomics",
+            "and the versioned sample-preparation protocol. Instrument model, acquisition",
+            "mode, search settings, AnimalID-level sex and age at tissue collection remain",
             UNRESOLVED)),
   lin("A02_acquisition_raw", "native acquisition data",
       "96 `.d` acquisition directories, e.g. Olive_20241217_..._8782.d",
@@ -361,7 +384,8 @@ lineage <- rbind(
             "Producing step is", UNRESOLVED, "-- not hashed here; the copied panel source",
             "data in editor_source_data/ carries its hash.")),
   lin("A17_publication_release", "publication / deposition package",
-      "this release", paste("A05_sample_annotation;A06_sample_info;A04_protein_group_matrix_prefilter;",
+      "this release", paste("A00_experimenter_metadata;A00_sample_preparation_protocol;",
+                            "A05_sample_annotation;A06_sample_info;A04_protein_group_matrix_prefilter;",
                             "A07_processed_matrix;A08_animal_level_matrix;A10_split_differential_tables;",
                             "A12_mapped_differential_tables;A13_enrichment;A14_ewce;A16_figure_panels",
                             sep = ""),
@@ -791,9 +815,10 @@ release_write_lines(si, release_path("provenance", "sessionInfo_release.txt"))
 w1 <- release_write_table(lineage, release_path("provenance", "data_lineage.tsv"))
 release_register("provenance/data_lineage.tsv",
                  "acquisition to publication lineage; unproven edges marked UNRESOLVED",
-                 c(p_pg_raw, p_processed, p_animal_gct, p_stat_gct),
-                 c(hash_or(p_pg_raw), processed_sha, hash_or(p_animal_gct),
-                   hash_or(p_stat_gct)), STAGE, "tsv")
+                 c(experimenter_source, protocol_source, p_pg_raw, p_processed,
+                   p_animal_gct, p_stat_gct),
+                 c(hash_or(experimenter_source), hash_or(protocol_source), hash_or(p_pg_raw),
+                   processed_sha, hash_or(p_animal_gct), hash_or(p_stat_gct)), STAGE, "tsv")
 
 w2 <- release_write_table(software_versions,
                           release_path("provenance", "software_versions.tsv"))

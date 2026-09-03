@@ -36,7 +36,8 @@ root that is validated against the protected canonical roots before anything is 
 | Revision changelog for editors | `07_publication_release/08_build_editor_changelog.R` | `editor_source_data/REVISION_PROTEOMICS_DATA_CHANGELOG.md` |
 | Figure source data and panel provenance | `07_publication_release/06_build_figure_source_data.R` | `editor_source_data/figure_source_map.tsv`, `editor_source_data/figure_source_data/` |
 | PRIDE metadata | `07_publication_release/09_build_pride_sdrf.R` | `pride/README_PRIDE.md`, `pride/pride_readiness.tsv` |
-| SDRF | `07_publication_release/09_build_pride_sdrf.R` | `pride/sdrf.tsv`, `pride/sdrf_field_status.tsv`, `pride/SDRF_MISSING_METADATA.md` |
+| Canonical experimenter metadata | `07_publication_release/metadata/*.tsv`, `07_publication_release/01_build_sample_metadata.R` | `metadata/experimenter_metadata.tsv`, `metadata/sample_preparation_protocol.tsv` |
+| SDRF and preparation protocol | `07_publication_release/09_build_pride_sdrf.R` | `pride/sdrf.tsv`, `pride/sdrf_field_status.tsv`, `pride/SDRF_MISSING_METADATA.md`, `pride/SAMPLE_PREPARATION_PROTOCOL.md` |
 | Data lineage | `07_publication_release/10_build_provenance.R` | `provenance/data_lineage.tsv`, `provenance/UPSTREAM_PREPROCESSING_GAP.md` |
 | Exact software and database versions | `07_publication_release/10_build_provenance.R` | `provenance/software_versions.tsv`, `provenance/analysis_parameters.tsv`, `provenance/sessionInfo_release.txt` |
 | Release SHA manifest | `07_publication_release/12_build_release_manifest.R` | `provenance/release_manifest.tsv`, `provenance/SHA256SUMS.txt` |

@@ -66,7 +66,7 @@ holds `sample_annotation.xlsx`, `pg.matrix_raw.txt` and `protein_count.xlsx`.
 
 | Stage | Produces | Mission phase |
 |---|---|---|
-| `01_build_sample_metadata.R` | `metadata/sample_metadata.tsv` (96), `animal_level_sample_metadata.tsv` (48), `metadata_field_provenance.tsv`, `sample_class_corrections.tsv` (6) | 3 |
+| `01_build_sample_metadata.R` | `metadata/sample_metadata.tsv` (96), `animal_level_sample_metadata.tsv` (48), `metadata_field_provenance.tsv`, `sample_class_corrections.tsv` (6), checked-in experimenter metadata and protocol records | 3 |
 | `02_build_contrast_manifest.R` | `metadata/primary_contrast_manifest.tsv` (12), `secondary_analysis_manifest.tsv` | 4 |
 | `03_build_processed_data_exports.R` | `processed_data/` abundance matrices and feature annotation | 5 |
 | `04_build_differential_results.R` | `differential_analysis/` long-format statistics and summary | 6 |
@@ -74,7 +74,7 @@ holds `sample_annotation.xlsx`, `pg.matrix_raw.txt` and `protein_count.xlsx`.
 | `06_build_figure_source_data.R` | `editor_source_data/figure_source_map.tsv` and the copied panel data | 16 |
 | `07_build_editor_source_workbook.R` | `editor_source_data/Proteomics_Source_Data_Animal_Level.xlsx` | 8 |
 | `08_build_editor_changelog.R` | `editor_source_data/REVISION_PROTEOMICS_DATA_CHANGELOG.md`, `EFFECT_SIZE_TERMINOLOGY_AUDIT.tsv`, `MANUSCRIPT_TERMINOLOGY_ACTIONS.md` | 9 |
-| `09_build_pride_sdrf.R` | `pride/sdrf.tsv`, field status, missing-metadata and deposition notes | 10, 19 |
+| `09_build_pride_sdrf.R` | `pride/sdrf.tsv`, field status, sample-preparation protocol, missing-metadata and deposition notes | 10, 19 |
 | `10_build_provenance.R` | `provenance/` lineage, upstream gap, versions, parameters, sessionInfo | 11, 12, 13 |
 | `11_build_readme_and_dictionary.R` | `README_DATA.md`, `metadata/data_dictionary.tsv` | 15 |
 | `12_build_release_manifest.R` | `provenance/release_manifest.tsv`, `SHA256SUMS.txt` | 14 |
@@ -118,9 +118,11 @@ legitimately empty — with no FDR-significant proteins there is no ORA query li
 against the count the canonical run recorded, so an absent block cannot be read as a missing
 file.
 
-**Nothing is guessed.** Instrument model, digestion enzyme, DIA acquisition method,
-search-software version, labelling chemistry, search parameters, organism part, animal sex
-and age are all absent from the project and are published as missing.
+**Nothing is guessed.** The checked-in records under `07_publication_release/metadata/`
+establish CeM material, marker-defined laser-capture microdissection classes, the mouse
+cohort, label-free proteomics and the 2024-11-28 Lys-C/trypsin preparation protocol.
+Instrument model, acquisition mode, search-software version, search parameters,
+AnimalID-level sex, developmental stage and age at tissue collection remain missing.
 `pride/SDRF_MISSING_METADATA.md` also writes out the inferences that were *considered and
 rejected*, so a later reader can see the reasoning rather than re-derive it.
 
@@ -158,6 +160,7 @@ Rscript 07_publication_release/tests/test_release_lineage.R
 Rscript 07_publication_release/tests/test_release_manifest.R
 Rscript 07_publication_release/tests/test_release_sample_class_correction.R
 Rscript 07_publication_release/tests/test_release_effect_size_semantics.R
+Rscript 07_publication_release/tests/test_release_pride_experimenter_metadata.R
 ```
 
 All but the first skip cleanly when no built release is reachable, so they are safe in CI.
@@ -221,8 +224,10 @@ the detector as a defect.
 ## Open item carried by the package
 
 The PRIDE deposition is `PRIDE_METADATA_INCOMPLETE`, and that is not a formatting problem.
-Instrument model, digestion enzyme, DIA acquisition method, search-software version,
-labelling chemistry, modification parameters, organism part and cell type are absent from
-the project and are published as missing; the 96 `.d` acquisition files are identified by
-name but not held here. `pride/SDRF_MISSING_METADATA.md` is the authority for what is
-missing and what would supply it. The sample-class correction is **not** among these items.
+Instrument model, acquisition mode and developmental stage remain required-but-unresolved;
+search-software version, modification parameters, mass tolerances, AnimalID-level sex and
+age at tissue collection also remain unknown. The 96 `.d` acquisition files are identified
+by name but externally held. `pride/SDRF_MISSING_METADATA.md` is the authority for what is
+missing and what would supply it. CeM, strain, marker-defined LCM classes, label-free status,
+Lys-C/trypsin digestion and the sample-preparation protocol are resolved; the sample-class
+correction is **not** an open item.

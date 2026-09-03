@@ -64,6 +64,13 @@ paths <- list(
 )
 for (nm in names(paths)) release_assert_exists(paths[[nm]], nm)
 
+experimenter_source <- release_experimenter_metadata_source_path(REPO_ROOT)
+protocol_source <- release_sample_preparation_source_path(REPO_ROOT)
+experimenter_metadata <- release_read_experimenter_metadata(REPO_ROOT)
+sample_preparation_protocol <- release_read_sample_preparation_protocol(REPO_ROOT)
+release_log("  experimenter metadata: ", nrow(experimenter_metadata),
+            " records; protocol: ", nrow(sample_preparation_protocol), " ordered steps")
+
 assignment <- release_read_csv(paths$source_assignment)
 plate <- release_read_csv(paths$plate_provenance)
 design48 <- release_read_csv(paths$design_identifiability)
@@ -522,7 +529,9 @@ field_provenance <- rbind(
       paste0("Historical alias `bg` == neuropil. This column is the ANALYSIS-TIME class, ",
              "i.e. the class the locked GCTs and every validated statistic were computed ",
              "on. The pre-correction assignment is retained for all 96 measurements in ",
-             "`original_sample_class`; neither label is discarded.")),
+             "`original_sample_class`; neither label is discarded. Marker definitions and ",
+             "laser-capture microdissection provenance are in the checked-in experimenter ",
+             "metadata record.")),
   fld("original_sample_class", "KNOWN_VERIFIED", paths$sample_annotation,
       paste0("sample_annotation.xlsx group_label normalised to the canonical vocabulary, ",
              "independently reproduced for all 96 measurements by the autosampler ",
@@ -566,20 +575,49 @@ field_provenance <- rbind(
       "token `FCo_Evo2_80SPDzoom_5cmRapid_Tobias` in every acquisition run name",
       paste("Preserved verbatim and deliberately NOT decoded. It is an operator method",
             "label; the acquisition method itself is not documented.")),
-  fld("sex", "MISSING_RECOVERABLE", "NONE",
-      "sample_info.xlsx and sample_annotation.xlsx have no sex column",
-      "Needed from: animal-facility records."),
-  fld("age", "MISSING_RECOVERABLE", "NONE",
-      "sample_info.xlsx and sample_annotation.xlsx have no age column",
-      "Needed from: animal-facility records."),
+  fld("strain or breed", "KNOWN_VERIFIED", experimenter_source,
+      release_metadata_value(experimenter_metadata, "strain_or_breed"),
+      "Cohort-level metadata; applies to all 12 animals."),
+  fld("animal supplier", "KNOWN_VERIFIED", experimenter_source,
+      paste(release_metadata_value(experimenter_metadata, "animal_supplier"),
+            release_metadata_value(experimenter_metadata, "animal_supplier_location"),
+            sep = ", "),
+      "Cohort-level provenance; not an AnimalID-level field."),
+  fld("sex", "MISSING_RECOVERABLE", experimenter_source,
+      release_metadata_value(experimenter_metadata, "cohort_sex_composition"),
+      paste("The cohort contained both sexes, but reliable AnimalID-level sex assignments",
+            "are unavailable. The SDRF therefore retains `not available` per sample.")),
+  fld("age at experiment start", "KNOWN_VERIFIED", experimenter_source,
+      release_metadata_value(experimenter_metadata, "age_at_experiment_start"),
+      "Cohort-level range at experiment start; not an age-at-collection value."),
+  fld("age at tissue collection", "MISSING_RECOVERABLE", experimenter_source,
+      release_metadata_value(experimenter_metadata, "age_at_tissue_collection"),
+      paste("No established timeline supports conversion from age at experiment start.",
+            "The SDRF age field therefore remains `not available`.")),
   fld("organism", "KNOWN_VERIFIED", file.path(DATA_ROOT, "01_input", "references",
                                               "MOUSE_10090_idmapping.dat"),
       "mapping reference is MOUSE_10090_idmapping.dat; 02_id_mapping queries organism_id = 10090; org.Mm.eg.db used throughout; protein entry names end in _MOUSE",
       "Mus musculus, NCBI taxid 10090."),
-  fld("organism part / brain region", "MISSING_RECOVERABLE", "NONE",
-      "no dissected-region field or statement exists in the analysis tree",
-      paste("The EWCE cell-type reference is l1_amygdala.loom, which records a reference",
-            "choice, not the dissected tissue. Needed from: the manuscript methods.")),
+  fld("organism part / brain region", "KNOWN_VERIFIED", experimenter_source,
+      release_metadata_value(experimenter_metadata, "organism_part"),
+      paste("Experimenter-supplied CeM provenance. The SDRF uses the supported parent",
+            "UBERON term while retaining the exact CeM description in this record.")),
+  fld("sample collection method", "KNOWN_VERIFIED", experimenter_source,
+      release_metadata_value(experimenter_metadata, "collection_method"),
+      "Applies to all four marker-defined sample classes."),
+  fld("proteomics labelling", "KNOWN_VERIFIED", experimenter_source,
+      release_metadata_value(experimenter_metadata, "labeling_strategy"),
+      "Verified as experimenter metadata; not inferred from run counts."),
+  fld("sample preparation", "KNOWN_VERIFIED", protocol_source,
+      "seven ordered steps; protocol version 2024-11-28",
+      paste("Full lysis, heating, Lys-C and trypsin digestion, stop/SpeedVac option,",
+            "Evotip cleanup and peptide-resuspension record is released verbatim.")),
+  fld("search modification parameters", "MISSING_RECOVERABLE", experimenter_source,
+      release_metadata_value(experimenter_metadata, "search_modification_parameters"),
+      "CAA/TCEP use is not treated as evidence of search modification settings."),
+  fld("proteomics acquisition mode", "MISSING_RECOVERABLE", experimenter_source,
+      release_metadata_value(experimenter_metadata, "acquisition_mode"),
+      "Needed from the instrument method or acquisition record."),
   fld("technical_replicate", "NOT_APPLICABLE", paths$source_assignment,
       "each acquisition run is one biological hemisphere sample; no run was injected twice",
       "Left/Right are anatomical subsamples of one animal, not technical replicates.")
@@ -608,7 +646,9 @@ w3 <- release_write_table(field_provenance,
                           release_path("metadata", "metadata_field_provenance.tsv"))
 release_register("metadata/metadata_field_provenance.tsv",
                  "per-field metadata status: verified / needs standardisation / missing",
-                 canonical_sources, canonical_hashes, STAGE, "tsv")
+                 c(canonical_sources, experimenter_source, protocol_source),
+                 c(canonical_hashes, release_sha256(experimenter_source),
+                   release_sha256(protocol_source)), STAGE, "tsv")
 
 w4 <- release_write_table(sample_class_corrections,
                           release_path("metadata", "sample_class_corrections.tsv"))
@@ -622,8 +662,23 @@ release_register("metadata/sample_class_corrections.tsv",
                    correction_ref$observed_sha256),
                  STAGE, "tsv")
 
+w5 <- release_write_table(experimenter_metadata,
+                          release_path("metadata", "experimenter_metadata.tsv"))
+release_register("metadata/experimenter_metadata.tsv",
+                 paste("source-controlled experimenter facts, scope exclusions and",
+                       "explicitly unresolved deposition metadata"),
+                 experimenter_source, release_sha256(experimenter_source), STAGE, "tsv")
+
+w6 <- release_write_table(sample_preparation_protocol,
+                          release_path("metadata", "sample_preparation_protocol.tsv"))
+release_register("metadata/sample_preparation_protocol.tsv",
+                 "source-controlled 2024-11-28 sample-preparation protocol",
+                 protocol_source, release_sha256(protocol_source), STAGE, "tsv")
+
 release_log("  wrote sample_metadata.tsv (", w1$rows, "x", w1$cols, ")")
 release_log("  wrote animal_level_sample_metadata.tsv (", w2$rows, "x", w2$cols, ")")
 release_log("  wrote metadata_field_provenance.tsv (", w3$rows, "x", w3$cols, ")")
 release_log("  wrote sample_class_corrections.tsv (", w4$rows, "x", w4$cols, ")")
+release_log("  wrote experimenter_metadata.tsv (", w5$rows, "x", w5$cols, ")")
+release_log("  wrote sample_preparation_protocol.tsv (", w6$rows, "x", w6$cols, ")")
 release_log("stage 01 complete")

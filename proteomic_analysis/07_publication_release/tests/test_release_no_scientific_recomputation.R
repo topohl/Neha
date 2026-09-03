@@ -113,17 +113,20 @@ expect(accepted_scratch, "accepts a scratch root")
 
 cat("\n=== writing to the shared drive requires an explicit opt-in ===\n")
 
-shared_root <- file.path(data_root, "03_output", "publication_release")
+# Use a fresh synthetic data root. The canonical publication release may already exist,
+# and its existence must not make this write-guard fixture stateful or destructive.
+guard_data_root <- tempfile("amp_release_shared_guard_")
+shared_root <- file.path(guard_data_root, "03_output", "publication_release")
 saved <- Sys.getenv("PROTEOMICS_RELEASE_ALLOW_SHARED_DRIVE", unset = NA)
 Sys.unsetenv("PROTEOMICS_RELEASE_ALLOW_SHARED_DRIVE")
-blocked <- inherits(tryCatch(release_prepare_output_root(shared_root, data_root),
+blocked <- inherits(tryCatch(release_prepare_output_root(shared_root, guard_data_root),
                              error = function(e) e), "error")
 expect(blocked, "a shared-drive release root is refused without PROTEOMICS_RELEASE_ALLOW_SHARED_DRIVE")
 expect(!dir.exists(shared_root),
        "the refused shared-drive root was not even created as an empty directory")
 
 Sys.setenv(PROTEOMICS_RELEASE_ALLOW_SHARED_DRIVE = "true")
-opted_in <- !inherits(tryCatch(release_assert_shared_drive_opt_in(shared_root, data_root),
+opted_in <- !inherits(tryCatch(release_assert_shared_drive_opt_in(shared_root, guard_data_root),
                                error = function(e) e), "error")
 expect(opted_in, "the opt-in permits a deliberate shared-drive release")
 if (is.na(saved)) {
@@ -138,9 +141,25 @@ scratch_ok <- !inherits(tryCatch(release_prepare_output_root(scratch_dir, data_r
 expect(scratch_ok, "a scratch root needs no opt-in")
 unlink(scratch_dir, recursive = TRUE)
 
-expect(release_is_shared_drive_root(shared_root, data_root) &&
-         !release_is_shared_drive_root(tempdir(), data_root),
+expect(release_is_shared_drive_root(shared_root, guard_data_root) &&
+         !release_is_shared_drive_root(tempdir(), guard_data_root),
        "shared-drive detection distinguishes the data root from scratch")
+
+cat("\n=== in-place rebuild clears only prior generated validation reports ===\n")
+
+rebuild_root <- tempfile("amp_release_rebuild_guard_")
+dir.create(file.path(rebuild_root, "provenance"), recursive = TRUE)
+validation_targets <- file.path(rebuild_root, RELEASE_VALIDATION_REPORT_RELPATHS)
+writeLines("old validation", validation_targets[[1]])
+writeLines("old validation", validation_targets[[2]])
+unrelated <- file.path(rebuild_root, "provenance", "must_remain.txt")
+writeLines("unrelated", unrelated)
+cleared <- release_clear_previous_validation_reports(rebuild_root)
+expect(length(cleared) == 2L && !any(file.exists(validation_targets)),
+       "the two Stage 13 reports are cleared before an in-place rebuild")
+expect(file.exists(unrelated),
+       "an unrelated release file is not removed by validation-report cleanup")
+unlink(rebuild_root, recursive = TRUE)
 
 cat("\n=== RESULT ===\n")
 if (failures > 0L) {

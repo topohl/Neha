@@ -1,0 +1,8 @@
+protocol_id	protocol_version_date	step_order	step_name	details	temperature	duration	status	evidence_source	evidence_date	notes
+sample_preparation_2024_11_28	2024-11-28	1	lysis	5% DDM, 5 mM TCEP, 20 mM CAA, 0.1 M TEAB	not applicable	not available	KNOWN_VERIFIED	experimenter-supplied protocol	2026-09-03	Reagent concentrations are preserved exactly as supplied.
+sample_preparation_2024_11_28	2024-11-28	2	heat treatment	95 degrees C	95 degrees C	1 hour	KNOWN_VERIFIED	experimenter-supplied protocol	2026-09-03	
+sample_preparation_2024_11_28	2024-11-28	3	Lys-C digestion	4 ng Lys-C per sample	37 degrees C	2 hours	KNOWN_VERIFIED	experimenter-supplied protocol	2026-09-03	Encoded as one of two cleavage-agent columns in the SDRF.
+sample_preparation_2024_11_28	2024-11-28	4	trypsin digestion	6 ng trypsin per sample	37 degrees C	overnight	KNOWN_VERIFIED	experimenter-supplied protocol	2026-09-03	Encoded as one of two cleavage-agent columns in the SDRF.
+sample_preparation_2024_11_28	2024-11-28	5	digestion stop	TFA to 1%, alternatively recorded SpeedVac option	not applicable	not available	KNOWN_VERIFIED	experimenter-supplied protocol	2026-09-03	The record does not establish which alternative was used for each individual sample.
+sample_preparation_2024_11_28	2024-11-28	6	cleanup	Evotip cleanup	not applicable	not available	KNOWN_VERIFIED	experimenter-supplied protocol	2026-09-03	
+sample_preparation_2024_11_28	2024-11-28	7	peptide resuspension	resuspend peptides in 4.2 uL A buffer	not applicable	not available	KNOWN_VERIFIED	experimenter-supplied protocol	2026-09-03	The composition of A buffer was not supplied and is not inferred.

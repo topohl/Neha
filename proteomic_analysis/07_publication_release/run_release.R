@@ -34,6 +34,11 @@ source(file.path(LAYER, "R", "release_validation.R"))
 
 OUT_ROOT <- release_prepare_output_root()
 
+# A validated in-place release contains Stage 13's reports. They are regenerated only after
+# this 12-stage build, so clear those exact generated files before resetting the registry;
+# otherwise Stage 12 would correctly reject them as stale, unregistered carry-overs.
+cleared_validation_reports <- release_clear_previous_validation_reports(OUT_ROOT)
+
 cat("\n")
 cat("================================================================\n")
 cat(" Associative Memory Proteomics -- publication release build\n")
@@ -44,6 +49,10 @@ cat("data root    : ", release_data_root(), "\n", sep = "")
 cat("project root : ", release_project_root(), "\n", sep = "")
 cat("release root : ", OUT_ROOT, "\n", sep = "")
 cat("started      : ", release_timestamp_utc(), "\n", sep = "")
+if (length(cleared_validation_reports)) {
+  cat("cleared      : previous Stage 13 validation reports (",
+      length(cleared_validation_reports), ")\n", sep = "")
+}
 
 locked <- release_verify_locked_artefacts()
 cat("\nlocked artefacts:\n")

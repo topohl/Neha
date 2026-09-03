@@ -194,7 +194,7 @@ secondary <- rbind(
       "3 animals, 4 compartments each",
       file.path(REVISION_ROOT, "full_regenerated", "cross_compartment", "SuppE_secondary_paired"),
       "06_manuscript_figure_revision/18_suppE_secondary_paired_model.R",
-      paste("Shows that the dissected fractions have biologically coherent relative",
+      paste("Shows that the marker-defined LCM classes have biologically coherent relative",
             "identities. NOT a treatment effect and NOT one of the 12 primary contrasts."),
       paste("Both arms of every comparison come from the SAME three animals (100% animal",
             "overlap), so an unpaired two-sample test would be invalid. n = 3 animals and",
