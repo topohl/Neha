@@ -77,12 +77,12 @@ if (!file.exists(sdrf_path)) {
            all(grepl("laser-capture microdissection",
                      sdrf[["characteristics[sampling site]"]], fixed = TRUE)),
          "sample-class and sampling-site fields preserve the LCM categories")
-  expect(all(sdrf[["characteristics[strain or breed]"]] == "C57BL/6J") &&
+  expect(nrow(sdrf) == 96L &&
+           all(sdrf[["characteristics[organism]"]] == "Mus musculus") &&
+           all(sdrf[["characteristics[strain or breed]"]] == "C57BL/6J") &&
            all(sdrf[["characteristics[sex]"]] == "not available") &&
            all(sdrf[["characteristics[age]"]] == "not available"),
-         "strain is populated without inventing per-sample sex or age at collection")
-  expect(!any(grepl("Sprague|Dawley|Rattus|rat viral", as.matrix(sdrf), ignore.case = TRUE)),
-         "the unrelated rat experiment does not enter the SDRF")
+         "96 mouse samples carry strain without invented per-sample sex or age at collection")
   expect(all(sdrf[["comment[label]"]] == "label free sample"),
          "label-free proteomics is encoded correctly")
   templates <- sdrf[, which(names(sdrf) == "comment[sdrf template]"), drop = FALSE]

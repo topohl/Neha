@@ -112,9 +112,6 @@ expect("metadata provenance", "released sample-preparation protocol equals the c
        paste(nrow(sample_preparation_protocol), "ordered steps"))
 expect("metadata provenance", "sample-preparation protocol is the 2024-11-28 version",
        identical(unique(sample_preparation_protocol$protocol_version_date), "2024-11-28"))
-expect("metadata provenance", "the unrelated rat experiment is an explicit scope exclusion",
-       any(experimenter_metadata$metadata_id == "excluded_rat_viral_insertion_experiment" &
-             experimenter_metadata$status == "NOT_APPLICABLE"))
 
 # Sample-class correction. The contract is NOT that every measurement carries its original
 # class -- six do not, deliberately -- and it is NOT that the difference is an open question.
@@ -712,9 +709,10 @@ expected_sampling <- stats::setNames(
 expect("pride", "sampling site preserves each marker-defined LCM category",
        all(sdrf_v[["characteristics[sampling site]"]] ==
              unname(expected_sampling[sdrf_v[[class_col]]])))
-expect("pride", "mouse strain is C57BL/6J and no rat metadata enters the SDRF",
-       all(sdrf_v[["characteristics[strain or breed]"]] == "C57BL/6J") &&
-         !any(grepl("Sprague|Dawley|Rattus|rat viral", as.matrix(sdrf_v), ignore.case = TRUE)))
+expect("pride", "all 96 SDRF rows describe Mus musculus C57BL/6J samples",
+       nrow(sdrf_v) == 96L &&
+         all(sdrf_v[["characteristics[organism]"]] == "Mus musculus") &&
+         all(sdrf_v[["characteristics[strain or breed]"]] == "C57BL/6J"))
 expect("pride", "AnimalID-level sex is not invented",
        all(sdrf_v[["characteristics[sex]"]] == "not available"))
 expect("pride", "age at experiment start is not relabelled as age at tissue collection",

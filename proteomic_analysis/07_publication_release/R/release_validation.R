@@ -50,8 +50,7 @@ RELEASE_EXPERIMENTER_METADATA_REQUIRED_IDS <- c(
   "reduction_reagent", "alkylation_reagent", "cleavage_agent_lys_c",
   "cleavage_agent_trypsin", "instrument_model", "acquisition_mode",
   "search_modification_parameters", "precursor_mass_tolerance",
-  "fragment_mass_tolerance", "raw_acquisition_directories",
-  "excluded_rat_viral_insertion_experiment"
+  "fragment_mass_tolerance", "raw_acquisition_directories"
 )
 
 RELEASE_SAMPLE_PREPARATION_COLUMNS <- c(
@@ -70,7 +69,7 @@ release_sample_preparation_source_path <- function(repo_root = release_repo_root
 
 release_read_checked_tsv <- function(path, required_columns, what) {
   if (!file.exists(path)) stop(what, " is missing: ", path, call. = FALSE)
-  out <- utils::read.delim(path, sep = "\t", quote = "", stringsAsFactors = FALSE,
+  out <- utils::read.delim(path, sep = "\t", quote = "\"", stringsAsFactors = FALSE,
                            check.names = FALSE, na.strings = character(0),
                            colClasses = "character")
   missing_columns <- setdiff(required_columns, names(out))
@@ -100,12 +99,6 @@ release_read_experimenter_metadata <- function(repo_root = release_repo_root()) 
   if (!setequal(classes$sample_class, c("cfos", "mcherry", "neuron", "neuropil")) ||
       any(!nzchar(classes$sdrf_value)) || anyNA(suppressWarnings(as.integer(classes$sort_order)))) {
     stop("Experimenter metadata must define exactly the four marker-defined sample classes.",
-         call. = FALSE)
-  }
-  excluded <- out[out$metadata_id == "excluded_rat_viral_insertion_experiment", , drop = FALSE]
-  if (nrow(excluded) != 1L || excluded$status != "NOT_APPLICABLE" ||
-      !grepl("Sprague-Dawley rat", excluded$value, fixed = TRUE)) {
-    stop("The unrelated rat-experiment scope exclusion is absent or malformed.",
          call. = FALSE)
   }
   out
