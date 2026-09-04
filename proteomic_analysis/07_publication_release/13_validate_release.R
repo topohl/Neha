@@ -654,32 +654,47 @@ cat("\n=== PRIDE readiness (reported, not a scientific pass/fail) ===\n")
 pr <- read_release(rel("pride", "pride_readiness.tsv"))
 pride_status <- pr$value[pr$key == "pride_status"]
 fs <- read_release(rel("pride", "sdrf_field_status.tsv"))
-n_req <- sum(fs$status == "MISSING_REQUIRED_METADATA")
+sdrf_v <- read_release(rel("pride", "sdrf.tsv"))
+
+# sdrf_field_status.tsv carries two kinds of required gap, and adding them together behind
+# the words "SDRF fields" would be a lie about the SDRF: actual SDRF columns that cannot be
+# populated, and the raw acquisition files, which are required for deposition but are not a
+# column of the SDRF at all. Counted separately; both still gate PRIDE_READY.
+fs_is_sdrf_column <- fs$sdrf_field %in% names(sdrf_v)
+fs_missing_req <- fs$status == "MISSING_REQUIRED_METADATA"
+n_req_sdrf <- sum(fs_missing_req & fs_is_sdrf_column)
+n_req_raw <- sum(fs_missing_req & !fs_is_sdrf_column)
+n_req_total <- n_req_sdrf + n_req_raw
 n_opt <- sum(fs$status == "MISSING_OPTIONAL_METADATA")
 n_ready <- sum(fs$status == "READY")
 
 expect("pride", "PRIDE status is one of the four sanctioned values",
        pride_status %in% release_pride_statuses, pride_status)
 expect("pride", "SDRF exists with one row per acquisition",
-       nrow(read_release(rel("pride", "sdrf.tsv"))) == inv$n_measurement_records)
+       nrow(sdrf_v) == inv$n_measurement_records)
 expect("pride", "every SDRF field has a recorded status", all(nzchar(fs$status)))
 expect("pride", "no required field is silently blank",
        all(fs$status[fs$sdrf_requirement == "required" &
                        fs$value_or_reason == "not available"] ==
              "MISSING_REQUIRED_METADATA"))
 record("pride", "SDRF field readiness", "PASS",
-       paste0(n_ready, " READY, ", n_req, " MISSING_REQUIRED, ", n_opt, " MISSING_OPTIONAL"))
+       paste0(n_ready, " READY, ", n_req_sdrf, " MISSING_REQUIRED, ", n_opt,
+              " MISSING_OPTIONAL (SDRF columns only)"))
 expect("pride", "deposition is not overstated as PRIDE_READY",
-       !(pride_status == "PRIDE_READY" && n_req > 0L))
-record("pride", "missing required SDRF fields", if (n_req == 0L) "PASS" else "SKIP",
-       if (n_req == 0L) "none" else
-         paste(fs$sdrf_field[fs$status == "MISSING_REQUIRED_METADATA"], collapse = "; "))
+       !(pride_status == "PRIDE_READY" && n_req_total > 0L))
+record("pride", "missing required SDRF fields", if (n_req_sdrf == 0L) "PASS" else "SKIP",
+       if (n_req_sdrf == 0L) "none" else
+         paste(fs$sdrf_field[fs_missing_req & fs_is_sdrf_column], collapse = "; "))
+record("pride", "raw acquisition files are a separate required deposition blocker",
+       if (n_req_raw == 0L) "PASS" else "SKIP",
+       if (n_req_raw == 0L) "none outstanding" else
+         paste0(n_req_raw, " non-SDRF required deposition input(s) outstanding: ",
+                paste(fs$sdrf_field[fs_missing_req & !fs_is_sdrf_column], collapse = "; ")))
 
 # The sample-class correction must NOT be carried as a PRIDE gap. It used to be the reason
 # for one of the two SKIPs; it is resolved, so the SDRF factor is populated and the
 # deposition documents say so. This is a PASS, and a real one: the factor has to be
 # populated from the analysis-time class and the correction has to be described as resolved.
-sdrf_v <- read_release(rel("pride", "sdrf.tsv"))
 class_col <- "factor value[sample class]"
 cols_named <- function(df, field) df[, which(names(df) == field), drop = FALSE]
 expect("pride", "the SDRF sample-class factor is populated for every acquisition",
@@ -772,10 +787,13 @@ record("pride", "sample-class correction is resolved, not a deposition blocker",
 # ...and the genuinely missing acquisition metadata must STAY missing. Nothing above may be
 # read as closing that gap. Reported as SKIP because it is unresolved, which is the truth.
 expect("pride", "the acquisition-metadata gap is still reported as incomplete",
-       pride_status == "PRIDE_METADATA_INCOMPLETE" || n_req == 0L,
+       pride_status == "PRIDE_METADATA_INCOMPLETE" || n_req_sdrf == 0L,
        pride_status)
-expect("pride", "PRIDE readiness is not claimed while required fields are missing",
-       !(pride_status %in% c("PRIDE_READY", "PRIDE_READY_PENDING_RAW_UPLOAD") && n_req > 0L))
+expect("pride", "PRIDE readiness is not claimed while required SDRF fields are missing",
+       !(pride_status %in% c("PRIDE_READY", "PRIDE_READY_PENDING_RAW_UPLOAD") &&
+           n_req_sdrf > 0L))
+expect("pride", "PRIDE_READY is not claimed while the raw acquisition files are missing",
+       !(pride_status == "PRIDE_READY" && n_req_raw > 0L))
 
 # --------------------------------------------------------------------------------------
 # summarise
@@ -799,8 +817,11 @@ report <- c(
   "",
   paste0("**Release validation: ", n_pass, " PASS, ", n_fail, " FAIL, ", n_skip, " SKIP**"),
   paste0("**PRIDE readiness: `", pride_status, "`** (",
-         n_ready, " SDRF fields READY, ", n_req, " MISSING_REQUIRED, ", n_opt,
+         n_ready, " SDRF fields READY, ", n_req_sdrf, " MISSING_REQUIRED, ", n_opt,
          " MISSING_OPTIONAL)"),
+  paste0("Raw acquisition files/directories are a required deposition input but not an SDRF",
+         " column, so they are counted separately: ", n_req_raw,
+         " outstanding required deposition blocker(s) of that kind."),
   "",
   "A PRIDE field that is genuinely unavailable does not fail the scientific release. It",
   "does prevent the deposition being reported as `PRIDE_READY`.",

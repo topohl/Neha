@@ -665,7 +665,7 @@ release_register("metadata/sample_class_corrections.tsv",
 w5 <- release_write_table(experimenter_metadata,
                           release_path("metadata", "experimenter_metadata.tsv"))
 release_register("metadata/experimenter_metadata.tsv",
-                 paste("source-controlled experimenter facts, scope exclusions and",
+                 paste("source-controlled experimenter facts, study scope and",
                        "explicitly unresolved deposition metadata"),
                  experimenter_source, release_sha256(experimenter_source), STAGE, "tsv")
 
