@@ -62,6 +62,39 @@ The shared drive is otherwise **read-only** to this layer, including
 `S:/Lab_Member/Tobi/Experiments/Collabs/Neha/` one level above `clusterProfiler/`, which
 holds `sample_annotation.xlsx`, `pg.matrix_raw.txt` and `protein_count.xlsx`.
 
+## Two namings, on purpose
+
+Every table ships twice, for two different readers.
+
+| Artefact | Naming | Who it is for |
+|---|---|---|
+| `*.tsv`, `*.tsv.gz` | machine (`adj.P.Val`, `canonical_comparison`, `mcherry`) | scripts, and the contracts and data dictionary that key off these names |
+| `Proteomics_Source_Data_Animal_Level.xlsx` | display (`Adjusted P value (BH)`, `Comparison`, `mCherry`) | an editor or reviewer opening the file |
+
+`R/release_presentation.R` holds the mapping and nothing else — no data, no statistics. It
+also carries three conventions that are what make the workbook read as a supplementary
+table set rather than a database dump:
+
+- a column whose value is identical on every row is a property of the table, not a variable
+  in it, so it is hoisted into the sheet caption. On the 64,188-row differential sheet that
+  removes five columns of pure repetition; every one of them is still in the `.tsv`, and the
+  inventory records what was hoisted in `table_level_constants`;
+- columns are ordered scientifically — what the row identifies, then the result, then
+  supporting quantities, then provenance — rather than in insertion order;
+- number formats are chosen per column from the values actually present, so a P-value
+  column reaching 1e-30 renders in scientific notation and one spanning 0.05–1 renders as a
+  decimal.
+
+Supplementary-table numbers (S1…S16) are **assigned** in `RELEASE_SHEET_META`, not derived
+from sheet order, so inserting a sheet cannot silently renumber a table an editor has
+already cited. Display headers carry the same hygiene contract as machine names: no
+duplicates, nothing blank, and no snake_case leaking onto a published header.
+
+Prose and markdown tables use the display vocabulary too — "cFos: paired-CNO vs
+paired-VEH", not `cfos_paired_cno_over_cfos_paired_veh`. Data cells keep the controlled
+vocabulary, because that is what joins the tables; `README_DATA.md` documents both side by
+side.
+
 ## Stages
 
 | Stage | Produces | Mission phase |
@@ -165,6 +198,12 @@ Rscript 07_publication_release/tests/test_release_pride_experimenter_metadata.R
 
 All but the first skip cleanly when no built release is reachable, so they are safe in CI.
 Point them at a build with `PROTEOMICS_RELEASE_OUTPUT_ROOT`.
+
+`../run_pipeline_check.ps1` discovers both `tests/` and `07_publication_release/tests/`, so
+these run as part of the smoke test at every tier. With no override set they validate
+whatever release is at the default root — which is the deployed one, so a FAIL there can
+mean the deployment is behind the repository rather than that anything is wrong with the
+code. The message says which.
 
 ## Two reporting corrections carried by the package
 

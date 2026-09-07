@@ -514,6 +514,38 @@ hygiene <- release_check_workbook_hygiene(sheet_cols)
 expect("workbook", "no duplicate or unnamed workbook columns", length(hygiene) == 0L,
        if (length(hygiene)) paste(head(hygiene, 2), collapse = "; ") else
          paste(nrow(wb_inv), "sheets"))
+
+# The workbook carries display headers; the machine names above are what the contracts and
+# the data dictionary key off. A duplicate or blank among the DISPLAY headers is just as
+# much a defect -- it is the naming a reader actually sees -- so both are checked.
+#
+# Guarded rather than assumed present, because this validator is routinely pointed at an
+# already-deployed release: one built before the display-header contract has no such
+# column, and the missing column would otherwise reach strsplit() and abort the whole
+# validation with a type error instead of reporting the actual problem.
+if (!all(c("display_columns", "title", "supplementary_table") %in% names(wb_inv))) {
+  expect("workbook", "workbook inventory carries the display-header contract", FALSE,
+         "inventory predates it; rebuild the release with stage 07")
+} else {
+  display_cols <- stats::setNames(
+    lapply(strsplit(as.character(wb_inv$display_columns), ";", fixed = TRUE), identity),
+    wb_inv$sheet)
+  hygiene_display <- release_check_workbook_hygiene(display_cols)
+  expect("workbook", "no duplicate or unnamed workbook DISPLAY headers",
+         length(hygiene_display) == 0L,
+         if (length(hygiene_display)) paste(head(hygiene_display, 2), collapse = "; ") else
+           "display headers unique and named on every sheet")
+  expect("workbook", "every sheet has as many display headers as machine columns",
+         all(lengths(display_cols) == lengths(sheet_cols)) &&
+           all(lengths(display_cols) == as.integer(wb_inv$n_columns)))
+  expect("workbook", "no display header leaks a snake_case machine name",
+         !any(grepl("_", unlist(display_cols, use.names = FALSE), fixed = TRUE)),
+         paste(length(unlist(display_cols, use.names = FALSE)), "headers checked"))
+  expect("workbook", "every data sheet has an assigned supplementary-table number",
+         all(nzchar(wb_inv$supplementary_table[wb_inv$sheet != "README"])) &&
+           !anyDuplicated(wb_inv$supplementary_table[nzchar(wb_inv$supplementary_table)]))
+  expect("workbook", "every sheet has a title", all(nzchar(wb_inv$title)))
+}
 expect("workbook", "required sheets present",
        all(c("README", "Sample_Metadata", "Animal_Level_Metadata", "Primary_Contrasts",
              "Differential_Proteins", "GSEA_GO_BP", "GSEA_KEGG", "ORA_GO_BP", "EWCE",

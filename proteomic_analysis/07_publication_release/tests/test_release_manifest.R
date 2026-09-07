@@ -138,6 +138,33 @@ if (!file.exists(inv_path)) {
   expect(length(problems) == 0L,
          sprintf("no duplicate or unnamed workbook columns across %d sheets%s", nrow(wb),
                  if (length(problems)) paste0(" -- ", problems[[1]]) else ""))
+
+  # The reader sees the display headers, so they carry the same hygiene contract as the
+  # machine names, and must not leak a snake_case name onto a published header.
+  #
+  # Guarded rather than assumed present: a release built before the display-header contract
+  # has no such column, and this test is routinely pointed at whatever release is at the
+  # default root. Without the guard the missing column reaches strsplit() and the test dies
+  # with a type error instead of saying what is actually wrong.
+  if (!all(c("display_columns", "title", "supplementary_table") %in% names(wb))) {
+    expect(FALSE, paste("workbook inventory predates the display-header contract",
+                        "(no display_columns/title/supplementary_table);",
+                        "rebuild the release with stage 07"))
+  } else {
+    display_cols <- stats::setNames(strsplit(as.character(wb$display_columns), ";",
+                                             fixed = TRUE), wb$sheet)
+    problems_display <- release_check_workbook_hygiene(display_cols)
+    expect(length(problems_display) == 0L,
+           sprintf("no duplicate or unnamed DISPLAY headers%s",
+                   if (length(problems_display)) paste0(" -- ", problems_display[[1]]) else ""))
+    expect(all(lengths(display_cols) == lengths(sheet_cols)),
+           "each sheet has one display header per machine column")
+    expect(!any(grepl("_", unlist(display_cols, use.names = FALSE), fixed = TRUE)),
+           "no display header leaks a snake_case machine name")
+    expect(all(nzchar(wb$title)) &&
+             all(nzchar(wb$supplementary_table[wb$sheet != "README"])),
+           "every sheet has a title and every data sheet a supplementary-table number")
+  }
   expect(all(c("README", "Sample_Metadata", "Animal_Level_Metadata", "Primary_Contrasts",
                "Differential_Proteins", "GSEA_GO_BP", "GSEA_KEGG", "ORA_GO_BP", "EWCE",
                "Secondary_Analyses", "Figure_Source_Map", "Software_Versions") %in%

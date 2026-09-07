@@ -19,6 +19,13 @@
 # column alone would add tens of megabytes to a file an editor has to open. The row counts
 # are unchanged, n_core_enrichment_genes is retained, and the README says so explicitly --
 # nothing is silently dropped.
+#
+# PRESENTATION. This workbook is the human-facing artefact, so it carries display headers,
+# a Contents sheet with assigned supplementary-table numbers, per-sheet captions, frozen
+# header rows, filters, column widths and per-column number formats. The machine naming
+# lives in the .tsv siblings and is what the contracts and the data dictionary key off;
+# see R/release_presentation.R for the mapping between the two. Columns whose value is
+# identical on every row are hoisted into the caption rather than repeated down the sheet.
 
 suppressWarnings({
   args <- commandArgs(trailingOnly = FALSE)
@@ -30,13 +37,16 @@ REPO_ROOT <- release_repo_root()
 release_source_project_helpers(REPO_ROOT)
 source(file.path(REPO_ROOT, "07_publication_release", "R", "release_validation.R"))
 source(file.path(REPO_ROOT, "07_publication_release", "R", "release_software_versions.R"))
-release_require("digest", "writexl")
+source(file.path(REPO_ROOT, "07_publication_release", "R", "release_presentation.R"))
+release_require("digest", "openxlsx")
 
 DATA_ROOT <- release_data_root()
 OUT_ROOT <- release_prepare_output_root()
 STAGE <- "07_publication_release/07_build_editor_source_workbook.R"
 
 release_banner("stage 07 -- editor source-data workbook")
+
+inv <- RELEASE_DESIGN_INVARIANTS
 
 rel <- function(...) release_path(..., create_dir = FALSE)
 read_release <- function(path) {
@@ -245,6 +255,7 @@ sheets <- list(
   Software_Versions = sw
 )
 
+
 # Sheet-name length limit is 31 characters; check rather than truncate silently.
 too_long <- names(sheets)[nchar(names(sheets)) > 31L]
 if (length(too_long)) {
@@ -252,14 +263,58 @@ if (length(too_long)) {
        paste(too_long, collapse = ", "), call. = FALSE)
 }
 
-hygiene <- release_check_workbook_hygiene(lapply(sheets, names))
+# Every sheet needs a caption; a sheet added without one would publish untitled.
+missing_meta <- setdiff(names(sheets), names(RELEASE_SHEET_META))
+if (length(missing_meta)) {
+  stop("Sheet(s) with no caption in RELEASE_SHEET_META: ",
+       paste(missing_meta, collapse = ", "), call. = FALSE)
+}
+
+# --------------------------------------------------------------------------------------
+# presentation: column order, hoisted constants, display headers
+# --------------------------------------------------------------------------------------
+# Columns a reader filters or joins on stay even when constant on the current data, so the
+# sheet keeps working when the data changes. Everything else that never varies is hoisted
+# into the caption instead of repeating down 64,188 rows.
+
+KEEP_WHEN_CONSTANT <- c("sample_class", "condition", "canonical_comparison",
+                        "canonical_contrast", "contrast_family", "numerator_condition",
+                        "denominator_condition", "analysis_unit", "primary_or_secondary",
+                        "analysis_role", "ontology", "analysis", "query_list",
+                        "panel_label", "figure", "panel", "component", "field",
+                        "parameter", "item", "AnimalID", "sample_id", "term_id",
+                        "gene_symbol", "uniprot_accession", "protein_group_id")
+
+presented <- list()
+for (nm in names(sheets)) {
+  d <- release_order_columns(sheets[[nm]], nm)
+  const <- release_sheet_constants(d, keep = KEEP_WHEN_CONSTANT)
+  if (length(const$constants)) d <- d[, setdiff(names(d), const$constants), drop = FALSE]
+  presented[[nm]] <- list(data = d, constants = const)
+}
+
+# Hygiene runs on BOTH namings. The machine names carry the joinability and the
+# gene_symbol/uniprot_accession contract; the display names are what a reader sees, and a
+# duplicate or blank among them would be just as much a defect.
+machine_cols <- lapply(presented, function(p) names(p$data))
+display_cols <- lapply(presented, function(p) release_display_labels(names(p$data)))
+hygiene <- c(release_check_workbook_hygiene(machine_cols),
+             release_check_workbook_hygiene(display_cols))
 if (length(hygiene)) {
   stop("Workbook hygiene violations:\n", paste("  -", hygiene, collapse = "\n"), call. = FALSE)
 }
 
+# The label map must cover every published column, so it cannot silently rot into
+# snake_case leaking onto a reader-facing header.
+unlabelled <- release_unlabelled_columns(unlist(machine_cols, use.names = FALSE))
+if (length(unlabelled)) {
+  stop("Column(s) with no display label in RELEASE_COLUMN_LABELS: ",
+       paste(unlabelled, collapse = ", "), call. = FALSE)
+}
+
 # No published gene_symbol column may contain UniProt identifiers.
-for (nm in names(sheets)) {
-  d <- sheets[[nm]]
+for (nm in names(presented)) {
+  d <- presented[[nm]]$data
   if ("gene_symbol" %in% names(d) &&
       release_column_is_misleading_gene_symbol(d$gene_symbol)) {
     stop("Sheet ", nm, " has a gene_symbol column holding UniProt identifiers.",
@@ -269,8 +324,8 @@ for (nm in names(sheets)) {
 
 EXCEL_MAX_ROWS <- 1048575L
 EXCEL_MAX_CELL <- 32767L
-for (nm in names(sheets)) {
-  d <- sheets[[nm]]
+for (nm in names(presented)) {
+  d <- presented[[nm]]$data
   if (nrow(d) > EXCEL_MAX_ROWS) {
     stop("Sheet ", nm, " has ", nrow(d), " rows, beyond the Excel limit.", call. = FALSE)
   }
@@ -283,15 +338,150 @@ for (nm in names(sheets)) {
       }
     }
   }
-  release_log("    ", format(nm, width = 26), format(nrow(d), width = 7), " rows x ",
-              ncol(d), " cols")
+}
+
+# --------------------------------------------------------------------------------------
+# build the workbook
+# --------------------------------------------------------------------------------------
+
+INK <- "#1F3864"      # header fill
+INK_LIGHT <- "#EDF1F8"  # banded / caption fill
+RULE <- "#B4C6E7"
+
+style_header <- openxlsx::createStyle(
+  textDecoration = "bold", fgFill = INK, fontColour = "#FFFFFF",
+  halign = "left", valign = "bottom", wrapText = TRUE,
+  border = "bottom", borderColour = INK, borderStyle = "medium")
+style_title <- openxlsx::createStyle(textDecoration = "bold", fontSize = 13,
+                                     fontColour = INK)
+style_caption <- openxlsx::createStyle(fontSize = 10, fontColour = "#333333",
+                                       wrapText = TRUE, valign = "top")
+style_note <- openxlsx::createStyle(fontSize = 10, fontColour = "#555555",
+                                    textDecoration = "italic",
+                                    wrapText = TRUE, valign = "top")
+style_text <- openxlsx::createStyle(valign = "top")
+style_wrap <- openxlsx::createStyle(wrapText = TRUE, valign = "top")
+
+WRAP_ABOVE <- 60L   # free-text columns wider than this get wrapText
+
+wb <- openxlsx::createWorkbook()
+openxlsx::modifyBaseFont(wb, fontSize = 10, fontName = "Calibri")
+
+# ---- Contents sheet -------------------------------------------------------------------
+# Assigned table numbers, not positional ones, so inserting a sheet cannot renumber a
+# table an editor has already cited.
+contents <- do.call(rbind, lapply(names(presented), function(nm) {
+  meta <- RELEASE_SHEET_META[[nm]]
+  cst <- presented[[nm]]$constants
+  data.frame(
+    Table = ifelse(is.na(meta$number), "--", meta$number),
+    Sheet = nm,
+    Title = meta$title,
+    Rows = nrow(presented[[nm]]$data),
+    Columns = ncol(presented[[nm]]$data),
+    Description = meta$caption,
+    `Applies to the whole table` = if (length(cst$constants)) {
+      paste(paste0(release_display_labels(cst$constants), ": ", cst$values),
+            collapse = "; ")
+    } else "",
+    check.names = FALSE, stringsAsFactors = FALSE)
+}))
+
+openxlsx::addWorksheet(wb, "Contents", gridLines = FALSE, tabColour = INK)
+openxlsx::writeData(wb, "Contents", "Proteomics source data", startRow = 1, startCol = 1)
+openxlsx::addStyle(wb, "Contents", style_title, rows = 1, cols = 1)
+openxlsx::writeData(
+  wb, "Contents",
+  paste0("Associative memory proteomics. Animal-level analysis: ",
+         inv$n_animals, " animals, ", inv$n_animal_level_units,
+         " animal x sample-class units, n = ", inv$n_animals_per_stratum,
+         " per condition per sample class, ", inv$n_primary_contrasts,
+         " primary contrasts. The animal is the independent experimental unit."),
+  startRow = 2, startCol = 1)
+openxlsx::addStyle(wb, "Contents", style_caption, rows = 2, cols = 1)
+openxlsx::writeData(
+  wb, "Contents",
+  paste0("Read the README sheet before any table. Effect sizes are standardized abundance ",
+         "differences in SD units, not log2 fold changes. Generated ",
+         release_timestamp_utc(), "."),
+  startRow = 3, startCol = 1)
+openxlsx::addStyle(wb, "Contents", style_note, rows = 3, cols = 1)
+openxlsx::writeData(wb, "Contents", contents, startRow = 5, headerStyle = style_header)
+openxlsx::addStyle(wb, "Contents", style_wrap,
+                   rows = 6:(5 + nrow(contents)), cols = c(3, 6, 7), gridExpand = TRUE)
+openxlsx::setColWidths(wb, "Contents",
+                       cols = 1:7, widths = c(7, 26, 44, 9, 9, 62, 46))
+openxlsx::freezePane(wb, "Contents", firstActiveRow = 6)
+
+# ---- data sheets ----------------------------------------------------------------------
+# Layout per sheet: title (row 1), caption (row 2), table-level constants (row 3 when
+# present), header row, data. The header row is frozen, so the header stays visible while
+# scrolling 64,188 rows.
+for (nm in names(presented)) {
+  d <- presented[[nm]]$data
+  cst <- presented[[nm]]$constants
+  meta <- RELEASE_SHEET_META[[nm]]
+  headers <- release_display_labels(names(d))
+
+  openxlsx::addWorksheet(wb, nm, gridLines = FALSE)
+
+  title_text <- if (is.na(meta$number)) meta$title else
+    paste0("Supplementary Table ", meta$number, ". ", meta$title)
+  openxlsx::writeData(wb, nm, title_text, startRow = 1, startCol = 1)
+  openxlsx::addStyle(wb, nm, style_title, rows = 1, cols = 1)
+  openxlsx::writeData(wb, nm, meta$caption, startRow = 2, startCol = 1)
+  openxlsx::addStyle(wb, nm, style_caption, rows = 2, cols = 1)
+
+  header_row <- 3L
+  if (length(cst$constants)) {
+    openxlsx::writeData(
+      wb, nm,
+      paste0("Applies to every row: ",
+             paste(paste0(release_display_labels(cst$constants), " = ", cst$values),
+                   collapse = "; "), "."),
+      startRow = 3, startCol = 1)
+    openxlsx::addStyle(wb, nm, style_note, rows = 3, cols = 1)
+    header_row <- 4L
+  }
+
+  names(d) <- headers
+  openxlsx::writeData(wb, nm, d, startRow = header_row, headerStyle = style_header,
+                      withFilter = nrow(d) > 1L)
+  openxlsx::setRowHeights(wb, nm, rows = header_row, heights = 30)
+  openxlsx::freezePane(wb, nm, firstActiveRow = header_row + 1L)
+
+  widths <- integer(ncol(d))
+  for (j in seq_along(d)) {
+    src <- presented[[nm]]$data[[j]]
+    widths[[j]] <- release_column_width(src, headers[[j]])
+    fmt <- release_numfmt_for(src, names(presented[[nm]]$data)[[j]])
+    if (!is.na(fmt)) {
+      openxlsx::addStyle(wb, nm, openxlsx::createStyle(numFmt = fmt, valign = "top"),
+                         rows = (header_row + 1L):(header_row + nrow(d)), cols = j,
+                         gridExpand = TRUE)
+    } else if (widths[[j]] >= WRAP_ABOVE) {
+      openxlsx::addStyle(wb, nm, style_wrap,
+                         rows = (header_row + 1L):(header_row + nrow(d)), cols = j,
+                         gridExpand = TRUE)
+    } else {
+      openxlsx::addStyle(wb, nm, style_text,
+                         rows = (header_row + 1L):(header_row + nrow(d)), cols = j,
+                         gridExpand = TRUE)
+    }
+  }
+  openxlsx::setColWidths(wb, nm, cols = seq_along(d), widths = widths)
+
+  release_log("    ", format(nm, width = 26),
+              format(nrow(d), width = 7), " rows x ", format(ncol(d), width = 2), " cols",
+              if (length(cst$constants))
+                paste0("  (", length(cst$constants), " constant col(s) hoisted)") else "")
 }
 
 xlsx_path <- release_path("editor_source_data", "Proteomics_Source_Data_Animal_Level.xlsx")
-writexl::write_xlsx(sheets, path = xlsx_path, col_names = TRUE, format_headers = TRUE)
+openxlsx::saveWorkbook(wb, xlsx_path, overwrite = TRUE)
 size_mb <- round(file.info(xlsx_path)$size / 1024 / 1024, 1)
-release_log("  wrote Proteomics_Source_Data_Animal_Level.xlsx (", length(sheets),
-            " sheets, ", size_mb, " MB)")
+release_log("  wrote Proteomics_Source_Data_Animal_Level.xlsx (", length(presented) + 1L,
+            " sheets incl. Contents, ", size_mb, " MB)")
 
 release_register("editor_source_data/Proteomics_Source_Data_Animal_Level.xlsx",
                  "editor-facing source-data workbook, one table per sheet",
@@ -305,19 +495,35 @@ release_register("editor_source_data/Proteomics_Source_Data_Animal_Level.xlsx",
                    release_sha256(ewce_session_path)),
                  STAGE, "xlsx")
 
-# The workbook sheet inventory, so a validator can check it without opening Excel.
+# The workbook sheet inventory, so a validator can check it without opening Excel. Both
+# namings are recorded: `columns` is the machine naming the contracts key off, and
+# `display_columns` is what the reader sees.
 inventory <- data.frame(
-  sheet = names(sheets),
-  n_rows = vapply(sheets, nrow, integer(1)),
-  n_columns = vapply(sheets, ncol, integer(1)),
-  columns = vapply(sheets, function(d) paste(names(d), collapse = ";"), character(1)),
+  sheet = names(presented),
+  supplementary_table = vapply(names(presented), function(nm) {
+    n <- RELEASE_SHEET_META[[nm]]$number
+    ifelse(is.na(n), "", n)
+  }, character(1)),
+  title = vapply(names(presented), function(nm) RELEASE_SHEET_META[[nm]]$title,
+                 character(1)),
+  n_rows = vapply(presented, function(p) nrow(p$data), integer(1)),
+  n_columns = vapply(presented, function(p) ncol(p$data), integer(1)),
+  columns = vapply(presented, function(p) paste(names(p$data), collapse = ";"),
+                   character(1)),
+  display_columns = vapply(presented, function(p) {
+    paste(release_display_labels(names(p$data)), collapse = ";")
+  }, character(1)),
+  table_level_constants = vapply(presented, function(p) {
+    if (!length(p$constants$constants)) return("")
+    paste(paste0(p$constants$constants, "=", p$constants$values), collapse = ";")
+  }, character(1)),
   stringsAsFactors = FALSE, check.names = FALSE
 )
 rownames(inventory) <- NULL
 w <- release_write_table(inventory,
                          release_path("editor_source_data", "workbook_sheet_inventory.tsv"))
 release_register("editor_source_data/workbook_sheet_inventory.tsv",
-                 "sheet-by-sheet row/column inventory of the editor workbook",
+                 "sheet-by-sheet inventory of the editor workbook: machine and display columns",
                  "editor_source_data/Proteomics_Source_Data_Animal_Level.xlsx",
                  NA_character_, STAGE, "tsv")
 release_log("  wrote workbook_sheet_inventory.tsv (", w$rows, "x", w$cols, ")")

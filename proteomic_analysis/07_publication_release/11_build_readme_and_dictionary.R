@@ -24,6 +24,7 @@ source(file.path(here, "R", "release_utils.R"))
 REPO_ROOT <- release_repo_root()
 release_source_project_helpers(REPO_ROOT)
 source(file.path(REPO_ROOT, "07_publication_release", "R", "release_validation.R"))
+source(file.path(REPO_ROOT, "07_publication_release", "R", "release_presentation.R"))
 release_require("digest")
 
 DATA_ROOT <- release_data_root()
@@ -82,11 +83,16 @@ mv <- function(id, standardized = FALSE) {
 class_metadata <- experimenter_metadata[
   experimenter_metadata$category == "sample_class_definition", , drop = FALSE]
 class_metadata <- class_metadata[order(as.integer(class_metadata$sort_order)), , drop = FALSE]
+# The display name is carried alongside the data value so a reader can connect the
+# controlled vocabulary in the tables (`mcherry`) to the name used in prose, figures and
+# the workbook captions ("mCherry"). Without that column the two namings look like an
+# inconsistency rather than a deliberate split.
 class_markdown <- vapply(seq_len(nrow(class_metadata)), function(i) {
   historical <- switch(class_metadata$sample_class[i], mcherry = "mCherryN",
                        neuropil = "bg / Background", cfos = "cFosN", neuron = "neuron")
-  paste0("| `", class_metadata$sample_class[i], "` | `", historical, "` | ",
-         class_metadata$value[i], " |")
+  paste0("| `", class_metadata$sample_class[i], "` | ",
+         release_sample_class_display(class_metadata$sample_class[i]), " | `", historical,
+         "` | ", class_metadata$value[i], " |")
 }, character(1))
 
 # --------------------------------------------------------------------------------------
@@ -328,9 +334,24 @@ DESCRIPTIONS <- c(
   interpretation_note = "What a reader must know to read this panel correctly.",
   # workbook
   sheet = "Workbook sheet name.",
+  supplementary_table = paste("Assigned supplementary-table number for the sheet (S1, S2,",
+                              "...). Assigned, not positional, so inserting a sheet cannot",
+                              "renumber a table that has already been cited. Blank for the",
+                              "README sheet."),
+  title = "Sheet title as printed in the workbook and listed on the Contents sheet.",
   n_rows = "Rows on the sheet.",
   n_columns = "Columns on the sheet.",
-  columns = "Semicolon-separated column names on the sheet.",
+  columns = paste("Semicolon-separated MACHINE column names on the sheet -- the naming the",
+                  "tests and this dictionary key off, matching the .tsv siblings."),
+  display_columns = paste("Semicolon-separated DISPLAY headers actually printed on the",
+                          "sheet, in the same order as `columns`. The workbook is the",
+                          "reader-facing artefact and carries these; the .tsv files carry",
+                          "the machine names."),
+  table_level_constants = paste("Columns whose value was identical on every row and were",
+                                "therefore hoisted out of the sheet into its caption, as",
+                                "`name=value` pairs. They are properties of the table",
+                                "rather than variables in it; all of them remain present in",
+                                "the corresponding .tsv."),
   # SDRF
   sdrf_field = "SDRF-Proteomics column, or a non-column deposition requirement.",
   sdrf_requirement = "Whether the field is required or optional for an SDRF submission.",
@@ -557,8 +578,8 @@ paste0("Animals were ", mv("age_at_experiment_start"), " at experiment start. Th
 "",
 "From each animal, four marker-defined classes were collected from each hemisphere:",
 "",
-"| Sample class | Historical alias | What it is |",
-"|---|---|---|",
+"| Sample class (data value) | Display name | Historical alias | What it is |",
+"|---|---|---|---|",
 class_markdown,
 "",
 "These are sampling classes, not four Cell Ontology cell types. The SDRF therefore uses",

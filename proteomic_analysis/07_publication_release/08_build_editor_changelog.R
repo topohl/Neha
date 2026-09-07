@@ -24,6 +24,7 @@ REPO_ROOT <- release_repo_root()
 release_source_project_helpers(REPO_ROOT)
 source(file.path(REPO_ROOT, "07_publication_release", "R", "release_validation.R"))
 source(file.path(REPO_ROOT, "07_publication_release", "R", "release_software_versions.R"))
+source(file.path(REPO_ROOT, "07_publication_release", "R", "release_presentation.R"))
 release_require("digest")
 
 DATA_ROOT <- release_data_root()
@@ -103,30 +104,50 @@ sens_fdr_by_comparison <- vapply(
   function(cmp) fdr_terms(sens, sens$canonical_comparison == cmp & sens$ontology == "GO_BP"),
   integer(1))
 
+#' Render a data frame as a GitHub-flavoured markdown table.
+#'
+#' Numeric columns are right-aligned and cells are trimmed. Without the trim, as.matrix()
+#' pads every numeric column to a common width and the padding survives into the rendered
+#' table as ragged whitespace; without the alignment, counts render left-aligned against
+#' their own header, which reads badly in a column of figures.
 md_table <- function(df, align = NULL) {
   cols <- names(df)
-  if (is.null(align)) align <- rep("---", length(cols))
-  body <- apply(df, 1L, function(r) paste0("| ", paste(r, collapse = " | "), " |"))
+  numeric_col <- vapply(df, function(v) is.numeric(v) || is.integer(v), logical(1))
+  if (is.null(align)) align <- ifelse(numeric_col, "--:", "---")
+  cells <- as.data.frame(lapply(df, function(v) trimws(as.character(v))),
+                         stringsAsFactors = FALSE, check.names = FALSE)
+  body <- vapply(seq_len(nrow(cells)), function(i) {
+    paste0("| ", paste(unlist(cells[i, ], use.names = FALSE), collapse = " | "), " |")
+  }, character(1))
   c(paste0("| ", paste(cols, collapse = " | "), " |"),
     paste0("|", paste(align, collapse = "|"), "|"),
     body)
 }
 
+# Reader-facing tables use display labels ("cFos: paired-CNO vs paired-VEH"), not the
+# underscored machine keys. The machine keys stay in the data files, which is where a
+# reader who needs to join something will be looking.
 da_tbl <- data.frame(
-  Comparison = diff_summary$canonical_comparison,
-  `Sample class` = diff_summary$sample_class,
-  `Tested (all)` = diff_summary$n_proteins_tested,
-  `FDR<0.05 (all)` = diff_summary$n_significant_fdr_0_05,
-  `Tested (mapped)` = diff_summary$n_proteins_tested_mapped_only,
-  `FDR<0.05 (mapped)` = diff_summary$n_significant_fdr_0_05_mapped_only,
+  Comparison = release_comparison_label(diff_summary$sample_class,
+                                        diff_summary$numerator_condition,
+                                        diff_summary$denominator_condition),
+  `Proteins tested` = diff_summary$n_proteins_tested,
+  `FDR < 0.05` = diff_summary$n_significant_fdr_0_05,
+  `Tested, mapped` = diff_summary$n_proteins_tested_mapped_only,
+  `FDR < 0.05, mapped` = diff_summary$n_significant_fdr_0_05_mapped_only,
   `Higher in numerator` = diff_summary$n_significant_higher_in_numerator_mapped_only,
   `Higher in denominator` = diff_summary$n_significant_higher_in_denominator_mapped_only,
   check.names = FALSE, stringsAsFactors = FALSE)
 
+gsea_context <- diff_summary[match(names(gsea_fdr_by_comparison),
+                                   diff_summary$canonical_comparison), , drop = FALSE]
 gsea_tbl <- data.frame(
-  Comparison = names(gsea_fdr_by_comparison),
-  `GO-BP terms FDR<0.05 (canonical, t-ranked)` = unname(gsea_fdr_by_comparison),
-  `GO-BP terms FDR<0.05 (effect-size-ranked sensitivity)` =
+  Comparison = release_comparison_label(gsea_context$sample_class,
+                                        gsea_context$numerator_condition,
+                                        gsea_context$denominator_condition),
+  `GO-BP terms, FDR < 0.05 (canonical, moderated-t-ranked)` =
+    unname(gsea_fdr_by_comparison),
+  `GO-BP terms, FDR < 0.05 (effect-size-ranked sensitivity)` =
     unname(sens_fdr_by_comparison[names(gsea_fdr_by_comparison)]),
   check.names = FALSE, stringsAsFactors = FALSE)
 
@@ -1008,8 +1029,8 @@ MA <- c(
   "",
   "Protein-level and pathway-level outcomes per comparison, generated from the release:",
   "",
-  "| Comparison | proteins FDR<0.05 | GO-BP terms FDR<0.05 | how to describe it |",
-  "|---|---|---|---|",
+  "| Comparison | Proteins, FDR < 0.05 | GO-BP terms, FDR < 0.05 | How to describe it |",
+  "|---|--:|--:|---|",
   vapply(seq_len(nrow(diff_summary)), function(i) {
     cmp <- diff_summary$canonical_comparison[i]
     np <- as.integer(diff_summary$n_significant_fdr_0_05_mapped_only[i])
@@ -1026,7 +1047,10 @@ MA <- c(
     } else {
       "null at both levels"
     }
-    paste0("| `", cmp, "` | ", np, " | ", ng, " | ", how, " |")
+    label <- release_comparison_label(diff_summary$sample_class[i],
+                                      diff_summary$numerator_condition[i],
+                                      diff_summary$denominator_condition[i])
+    paste0("| ", label, " | ", np, " | ", ng, " | ", how, " |")
   }, character(1)),
   "",
   "The specific corrections most likely to be needed:",
