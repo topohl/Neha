@@ -32,15 +32,12 @@ STAGE <- "07_publication_release/11_build_readme_and_dictionary.R"
 
 release_banner("stage 11 -- README_DATA and data dictionary")
 
-PLATE_SENTENCE <- paste(
-  "Because pairing condition was completely associated with collection plate in the",
-  "paired-vehicle versus unpaired-vehicle comparison, any collection-plate-associated",
-  "contribution cannot be distinguished from a pairing-associated contribution.")
-NO_BATCH_SENTENCE <- paste(
-  "No downstream proteomics batch effect attributable to collection plate has been",
-  "demonstrated.")
-FORBIDDEN_WORDING <- c("plate artefact", "plate artifact", "confirmed batch confound",
-                       "driven by plate", "technical plate effect")
+# The mandated wording now lives in R/release_validation.R, because the changelog and the
+# manuscript action list must reproduce the same sentences verbatim and three independent
+# copies of a sentence that must not drift is exactly the shape of a future inconsistency.
+PLATE_SENTENCE <- RELEASE_PLATE_SENTENCE
+NO_BATCH_SENTENCE <- RELEASE_PLATE_NO_EFFECT_SENTENCE
+FORBIDDEN_WORDING <- FORBIDDEN_PLATE_WORDING
 
 release_check_forbidden_wording <- function(lines) {
   flat <- tolower(paste(lines, collapse = " "))

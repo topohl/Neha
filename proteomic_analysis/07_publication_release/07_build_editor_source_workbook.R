@@ -29,6 +29,7 @@ source(file.path(here, "R", "release_utils.R"))
 REPO_ROOT <- release_repo_root()
 release_source_project_helpers(REPO_ROOT)
 source(file.path(REPO_ROOT, "07_publication_release", "R", "release_validation.R"))
+source(file.path(REPO_ROOT, "07_publication_release", "R", "release_software_versions.R"))
 release_require("digest", "writexl")
 
 DATA_ROOT <- release_data_root()
@@ -70,71 +71,30 @@ run_params <- read_release(rel("enrichment", "enrichment_run_parameters.tsv"))
 
 DROP_GENE_LISTS <- c("core_enrichment", "leading_edge")
 drop_cols <- function(d, cols) d[, setdiff(names(d), cols), drop = FALSE]
-
 # --------------------------------------------------------------------------------------
-# software / database versions as recorded by the canonical runs
+# software / database versions
 # --------------------------------------------------------------------------------------
+# Built by the SHARED helper, not derived here. This sheet used to read only the 2025
+# hemisphere-level ProTigy params.txt header and publish "Protigy (v1.1.8)" with no
+# qualification, while provenance/software_versions.tsv correctly reported 2.4.1 for the
+# canonical animal-level run and confined v1.1.8 to the superseded hemisphere-level runs.
+# An editor reading this workbook would have concluded the analysis used ProTigy 1.1.8.
+#
+# The two artefacts now come from one derivation, so they cannot disagree again. The
+# `status` and `applies_to_stage` columns are carried into the sheet deliberately: they are
+# what makes a superseded version legible as superseded, and an UNKNOWN legible as an
+# unrecovered value rather than an omission.
+sw <- release_build_software_versions(DATA_ROOT, REPO_ROOT)
 
+# Retained for the registry provenance recorded at the end of this stage.
 pkg_versions_path <- file.path(DATA_ROOT, "03_output", "enrichment",
                                "enrichment_t_rank_validation_20260825", "audits",
                                "package_database_versions.csv")
-release_assert_exists(pkg_versions_path, "canonical package_database_versions.csv")
-pkg_versions <- release_read_csv(pkg_versions_path)
-
 ewce_session_path <- file.path(DATA_ROOT, "03_output", "ewce",
                                "EWCE_Results_animal_level_validation_20260825",
                                "03_QC_Mapping_Logs", "reproducibility_session_info.txt")
+release_assert_exists(pkg_versions_path, "canonical package_database_versions.csv")
 release_assert_exists(ewce_session_path, "canonical EWCE sessionInfo")
-ewce_session <- readLines(ewce_session_path, warn = FALSE)
-parse_attached <- function(lines) {
-  start <- grep("^other attached packages", lines)
-  if (!length(start)) return(character(0))
-  tail_lines <- lines[(start[[1]] + 1L):length(lines)]
-  stop_at <- grep("^loaded via a namespace", tail_lines)
-  if (length(stop_at)) tail_lines <- tail_lines[seq_len(stop_at[[1]] - 1L)]
-  toks <- unlist(strsplit(paste(tail_lines, collapse = " "), "\\s+"))
-  toks <- toks[grepl("^[A-Za-z][A-Za-z0-9._]*_[0-9]", toks)]
-  unique(toks)
-}
-ewce_pkgs <- parse_attached(ewce_session)
-
-protigy_params_path <- file.path(DATA_ROOT, "01_input", "raw_proteomics",
-                                 "20251107_pg.matrix_Neha", "params.txt")
-protigy_version <- NA_character_
-if (file.exists(protigy_params_path)) {
-  pl <- readLines(protigy_params_path, warn = FALSE)
-  hit <- grep("Protigy", pl, value = TRUE, ignore.case = TRUE)
-  if (length(hit)) {
-    protigy_version <- trimws(gsub("^##\\s*|\\s*$", "", hit[[1]]))
-  }
-}
-
-sw <- rbind(
-  data.frame(component = "R", version = pkg_versions$version[pkg_versions$component == "R"],
-             recorded_by = "enrichment run audit (2026-08-25)",
-             evidence_path = pkg_versions_path, stringsAsFactors = FALSE, check.names = FALSE),
-  data.frame(component = pkg_versions$component[pkg_versions$component != "R"],
-             version = pkg_versions$version[pkg_versions$component != "R"],
-             recorded_by = "enrichment run audit (2026-08-25)",
-             evidence_path = pkg_versions_path, stringsAsFactors = FALSE, check.names = FALSE),
-  data.frame(component = sub("_.*$", "", ewce_pkgs), version = sub("^[^_]*_", "", ewce_pkgs),
-             recorded_by = "EWCE run sessionInfo (2026-08-25)",
-             evidence_path = ewce_session_path, stringsAsFactors = FALSE, check.names = FALSE),
-  data.frame(component = "ProTigy",
-             version = ifelse(is.na(protigy_version), "UNKNOWN", protigy_version),
-             recorded_by = ifelse(is.na(protigy_version), "NOT RECOVERED",
-                                  "ProTigy params.txt header (2025-11-07 run)"),
-             evidence_path = protigy_params_path, stringsAsFactors = FALSE, check.names = FALSE),
-  data.frame(component = "upstream search / quantification software", version = "UNKNOWN",
-             recorded_by = paste("NOT RECOVERED -- the retained processed files use the",
-                                 "historical pg.matrix naming convention, but the exact",
-                                 "upstream search/quantification software and configuration",
-                                 "could not be recovered from the retained project files"),
-             evidence_path = "NONE", stringsAsFactors = FALSE, check.names = FALSE)
-)
-sw <- sw[!duplicated(paste(sw$component, sw$version)), , drop = FALSE]
-sw <- sw[order(sw$component), , drop = FALSE]
-rownames(sw) <- NULL
 
 # --------------------------------------------------------------------------------------
 # README sheet

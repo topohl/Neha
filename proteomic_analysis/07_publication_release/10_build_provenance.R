@@ -23,6 +23,7 @@ source(file.path(here, "R", "release_utils.R"))
 REPO_ROOT <- release_repo_root()
 release_source_project_helpers(REPO_ROOT)
 source(file.path(REPO_ROOT, "07_publication_release", "R", "release_validation.R"))
+source(file.path(REPO_ROOT, "07_publication_release", "R", "release_software_versions.R"))
 release_require("digest")
 
 DATA_ROOT <- release_data_root()
@@ -65,72 +66,17 @@ ewce_session_path <- file.path(EWCE_ROOT, "03_QC_Mapping_Logs",
 pca_session_path <- file.path(PCA_ROOT, "tables", "meta", "sessionInfo.txt")
 
 # --------------------------------------------------------------------------------------
-# ProTigy version for the CANONICAL animal-level run (2026-08-24).
+# ProTigy version for the CANONICAL animal-level run (2026-08-24)
+# --------------------------------------------------------------------------------------
+# PROTIGY_ANIMAL_LEVEL_VERSION / _EVIDENCE, the five-strand recovery argument behind them,
+# and the fail-closed check on the export signature all live in
+# R/release_software_versions.R. The editor workbook reports software versions too, and
+# these two artefacts previously derived them independently and disagreed -- the workbook
+# published the superseded 2025 hemisphere-level version as though it were the version
+# behind the canonical result. Sharing one builder is what stops that recurring.
 #
-# Recovered 2026-09-02 by targeted audit. It is recorded as a constant rather than read
-# from whatever ProTigy happens to be installed on the machine running this build: the
-# question is which version produced a specific run in the past, and a build-time lookup
-# would silently answer a different question on a different machine. That is the same trap
-# as carrying the 2025 version forward.
-#
-# The evidence is five strands that agree:
-#   1. The only ProTigy present on the analysis machine is 2.4.1, and its installed
-#      DESCRIPTION records Packaged 2026-08-24 12:47:48 UTC / Built 2026-08-24 12:48:07 UTC.
-#   2. The canonical run's parameter export, neha_proteome_parameters.yaml, was written
-#      2026-08-24 13:06:11 UTC -- 18 minutes after that build finished.
-#   3. ProTigy v2's exporter (R/tab_export.R) writes paste0(ome, "_parameters.yaml");
-#      the canonical file is neha_proteome_parameters.yaml, i.e. the historical project-specific proteome identifier.
-#   4. That exporter writes the parameter list minus "gct_file_path". The canonical YAML
-#      carries gct_file_name and no gct_file_path, exactly as the code does.
-#   5. All 19 schema keys in the canonical YAML are a subset of 2.4.1's
-#      setup_parameters/setupDefaults.yaml; the two extras (gct_file_name,
-#      annotation_column) are added at runtime by 2.4.1; and the two absent data-filter
-#      keys are precisely the ones 2.4.1 sets to NULL when data_filter is None, which is
-#      this run's setting.
-#
-# The negative result matters as much: v1.1.x writes a params.txt whose first lines are
-# "## <timestamp>" / "## Protigy (vX.Y.Z)". The canonical run produced no such file, and
-# its YAML key set does not exist in the v1.1.x format at all. v1.1.8 is therefore
-# disproven for this run, not merely unproven.
-#
-# Recorded evidence_path stays the canonical YAML because that is the durable, hashed
-# artefact on shared storage; the installed-package DESCRIPTION is machine-local and is
-# named in the notes instead.
-PROTIGY_ANIMAL_LEVEL_VERSION <- "2.4.1"
-PROTIGY_ANIMAL_LEVEL_EVIDENCE <- paste(
-  "Recovered 2026-09-02 by cross-source audit, not read from the build machine.",
-  "The installed Protigy DESCRIPTION (R library, sha256",
-  "74ac5f7c35dfeb06e62e472c5a072b136e52ccc8965531e0a5380dc4b65da37d) reports version",
-  "2.4.1, Packaged 2026-08-24 12:47:48 UTC and Built 2026-08-24 12:48:07 UTC; this run's",
-  "parameter export was written 18 minutes later, at 2026-08-24 13:06:11 UTC. The export",
-  "is a v2-only artefact: ProTigy v2's tab_export.R writes <ome>_parameters.yaml with the",
-  "parameter list minus gct_file_path, which is exactly this file's name and key set, and",
-  "all 19 of its schema keys are a subset of 2.4.1's setupDefaults.yaml. v1.1.8 is",
-  "DISPROVEN for this run rather than merely unproven: v1.1.x emits a params.txt with a",
-  "'## Protigy (vX.Y.Z)' header and none of these keys. See the recovery audit for the",
-  "full evidence table."
-)
-
-# Fail closed if the artefact this claim rests on stops looking like a ProTigy v2 export.
-# Without this, a future change to the canonical YAML could leave a version claim standing
-# on evidence that no longer exists.
-if (file.exists(animal_param_yaml)) {
-  .pp <- readLines(animal_param_yaml, warn = FALSE)
-  .has_v2_keys <- all(vapply(c("gct_file_name:", "annotation_column:", "group_normalization:",
-                               "convert_ids_to_gene_symbol:", "id_mapping_species:"),
-                             function(k) any(startsWith(.pp, k)), logical(1)))
-  # The v1.1.x marker is a literal "## Protigy (vX.Y.Z)" comment line; matched with
-  # startsWith on trimmed lines so this check carries no regex escaping of its own.
-  .has_v1_header <- any(startsWith(trimws(.pp), "## Protigy (v"))
-  .has_gct_file_path <- any(startsWith(.pp, "gct_file_path:"))
-  if (!.has_v2_keys || .has_v1_header || .has_gct_file_path) {
-    stop("The animal-level ProTigy parameter export no longer carries the ProTigy v2 ",
-         "export signature that the recovered version ", PROTIGY_ANIMAL_LEVEL_VERSION,
-         " rests on (", animal_param_yaml, "). Re-verify the version before releasing.",
-         call. = FALSE)
-  }
-  rm(.pp, .has_v2_keys, .has_v1_header, .has_gct_file_path)
-}
+# Asserted here as well so this stage still fails closed on its own.
+release_assert_protigy_v2_export_signature(animal_param_yaml)
 
 # --------------------------------------------------------------------------------------
 # lineage
@@ -594,119 +540,9 @@ release_log("  wrote UPSTREAM_PREPROCESSING_GAP.md (01_impute.r: set.seed presen
 # software and database versions
 # --------------------------------------------------------------------------------------
 
-sv <- function(component, category, version, status, recorded_by, evidence_path,
-               applies_to, notes = NA_character_) {
-  data.frame(component = component, category = category, version = version, status = status,
-             recorded_by = recorded_by, evidence_path = evidence_path,
-             evidence_sha256 = hash_or(evidence_path), applies_to_stage = applies_to,
-             notes = notes, stringsAsFactors = FALSE, check.names = FALSE)
-}
-
-parse_attached <- function(path) {
-  if (!file.exists(path)) return(character(0))
-  lines <- readLines(path, warn = FALSE)
-  start <- grep("^other attached packages", lines)
-  if (!length(start)) return(character(0))
-  tail_lines <- lines[(start[[1]] + 1L):length(lines)]
-  stop_at <- grep("^loaded via a namespace", tail_lines)
-  if (length(stop_at)) tail_lines <- tail_lines[seq_len(stop_at[[1]] - 1L)]
-  toks <- unlist(strsplit(paste(tail_lines, collapse = " "), "\\s+"))
-  unique(toks[grepl("^[A-Za-z][A-Za-z0-9._]*_[0-9]", toks)])
-}
-
-enrich_versions <- do.call(rbind, lapply(seq_len(nrow(pkg_versions)), function(i) {
-  sv(pkg_versions$component[i],
-     ifelse(pkg_versions$component[i] == "R", "language", "R package"),
-     pkg_versions$version[i], "KNOWN_VERIFIED",
-     "enrichment run audit, 2026-08-25",
-     file.path(ENRICH_ROOT, "audits", "package_database_versions.csv"),
-     "differential enrichment (GSEA / ORA)")
-}))
-
-ewce_toks <- parse_attached(ewce_session_path)
-ewce_versions <- if (length(ewce_toks)) {
-  do.call(rbind, lapply(ewce_toks, function(tok) {
-    sv(sub("_.*$", "", tok), "R package", sub("^[^_]*_", "", tok), "KNOWN_VERIFIED",
-       "EWCE run sessionInfo, 2026-08-25", ewce_session_path, "EWCE cell-type enrichment")
-  }))
-} else NULL
-
-pca_toks <- parse_attached(pca_session_path)
-pca_versions <- if (length(pca_toks)) {
-  do.call(rbind, lapply(pca_toks, function(tok) {
-    sv(sub("_.*$", "", tok), "R package", sub("^[^_]*_", "", tok), "KNOWN_VERIFIED",
-       "PCA run sessionInfo, 2026-08-25", pca_session_path, "PCA")
-  }))
-} else NULL
-
-protigy_version_2025 <- NA_character_
-if (file.exists(protigy_params_2025)) {
-  hit <- grep("Protigy", readLines(protigy_params_2025, warn = FALSE), value = TRUE,
-              ignore.case = TRUE)
-  if (length(hit)) {
-    m <- regmatches(hit[[1]], regexpr("v[0-9][0-9.]*", hit[[1]]))
-    if (length(m)) protigy_version_2025 <- m
-  }
-}
-
-external <- rbind(
-  sv("ProTigy (hemisphere-level runs, 2025-11-07 and 2025-12-12)", "external application",
-     ifelse(is.na(protigy_version_2025), UNKNOWN, protigy_version_2025), "KNOWN_VERIFIED",
-     "ProTigy params.txt header", protigy_params_2025,
-     "hemisphere-level ProTigy statistics (superseded)",
-     paste("Both hemisphere-level params.txt headers report this same version. The",
-           "2026-09-02 audit also found seven older params.txt files under the project's",
-           "protigy/ folder, all reporting v1.1.5 for exploratory runs on 2025-03-28.",
-           "The version therefore changed across this project's history",
-           "(1.1.5 -> 1.1.8 -> 2.4.1), which is why no version is carried between runs.")),
-  sv("ProTigy (animal-level statistical GCT, 2026-08-24)", "external application",
-     PROTIGY_ANIMAL_LEVEL_VERSION, "KNOWN_VERIFIED",
-     "recovered by cross-source audit, 2026-09-02",
-     animal_param_yaml, "canonical animal-level differential statistics",
-     PROTIGY_ANIMAL_LEVEL_EVIDENCE),
-  sv("upstream search / quantification software", "external application", UNKNOWN,
-     "MISSING_RECOVERABLE",
-     "no software name and no version string exist in the project tree", "NONE",
-     "peptide/protein identification and quantification",
-     paste("The retained processed files use the historical `pg.matrix` naming convention,",
-           "but the exact upstream search/quantification software and configuration could",
-           "not be recovered from the retained project files. Recoverable from the",
-           "acquisition facility: the original search/quantification software run log or",
-           "configuration (e.g. DIA-NN report.log.txt, if DIA-NN was used).")),
-  sv("MS instrument", "instrument", UNKNOWN, "MISSING_RECOVERABLE",
-     "no instrument model recorded anywhere", "NONE", "LC-MS acquisition",
-     paste("Run-name alias `Olive` is not a model. Acquisition format is `.d`, a",
-           "vendor-specific acquisition directory format.")),
-  sv("UniProt idmapping (MOUSE_10090)", "reference database",
-     as.character(mapped_index$mapping_reference_version[[1]]), "KNOWN_BUT_NEEDS_STANDARDIZATION",
-     paste0("mapping run record; snapshot ",
-            mapped_index$mapping_reference_snapshot_date_utc[[1]]),
-     p_idmapping, "UniProt identifier mapping",
-     paste0("SHA256 ", mapped_index$mapping_reference_sha256[[1]], "; ",
-            mapped_index$mapping_reference_bytes[[1]], " bytes; modified ",
-            mapped_index$mapping_reference_modified_utc[[1]],
-            ". The file does not encode a UniProt release number.")),
-  sv("manual identifier overrides", "reference override", "n/a", "KNOWN_VERIFIED",
-     "mapping run record", p_manual_mapping, "UniProt identifier mapping",
-     paste0(mapped_index$manual_mapping_rows[[1]], " rows; SHA256 ",
-            mapped_index$manual_mapping_sha256[[1]])),
-  sv("ewceData::ctd()", "reference dataset", "ewceData 1.18.0", "KNOWN_VERIFIED",
-     "EWCE run sessionInfo and 05_celltype_enrichment_EWCE/01_EWCE.r line 115",
-     ewce_session_path, "EWCE cell-type enrichment",
-     paste("The canonical EWCE run uses the packaged ewceData CTD. The",
-           "l1_amygdala.loom file in 01_input/single_cell/ is NOT used by it.")),
-  sv("R (publication release build)", "language",
-     paste(R.version$major, R.version$minor, sep = "."), "KNOWN_VERIFIED",
-     "this build", "NONE", "publication release layer",
-     "The environment that produced THIS package; see sessionInfo_release.txt.")
-)
-
-software_versions <- rbind(enrich_versions, ewce_versions, pca_versions, external)
-software_versions <- software_versions[
-  !duplicated(paste(software_versions$component, software_versions$version,
-                    software_versions$applies_to_stage)), , drop = FALSE]
-software_versions <- software_versions[order(software_versions$applies_to_stage,
-                                              software_versions$component), , drop = FALSE]
+# Built by the shared helper so the editor workbook's Software_Versions sheet and this
+# table are the same rows from the same derivation. See R/release_software_versions.R.
+software_versions <- release_build_software_versions(DATA_ROOT, REPO_ROOT)
 rownames(software_versions) <- NULL
 n_unknown <- sum(software_versions$version == UNKNOWN)
 release_log("  software_versions: ", nrow(software_versions), " components, ", n_unknown,

@@ -438,10 +438,42 @@ RELEASE_OLD_PACKAGE_FILES <- list(
        superseded = "Yes.")
 )
 
+# --------------------------------------------------------------------------------------
+# collection-plate wording
+# --------------------------------------------------------------------------------------
+# Mandated phrasing. Held here rather than in one stage because more than one artefact
+# must reproduce it verbatim -- README_DATA.md, the changelog, and the manuscript action
+# list -- and a near-miss paraphrase in any of them would be a scientific overstatement
+# rather than a style slip.
+#
+# The distinction being protected: the design makes a collection-plate contribution
+# UNIDENTIFIABLE in one comparison. That is not the same as having demonstrated a batch
+# effect, and no batch effect has been demonstrated.
+RELEASE_PLATE_SENTENCE <- paste(
+  "Because pairing condition was completely associated with collection plate in the",
+  "paired-vehicle versus unpaired-vehicle comparison, any collection-plate-associated",
+  "contribution cannot be distinguished from a pairing-associated contribution.")
+
+RELEASE_PLATE_NO_EFFECT_SENTENCE <- paste(
+  "No downstream proteomics batch effect attributable to collection plate has been",
+  "demonstrated.")
+
+FORBIDDEN_PLATE_WORDING <- c("plate artefact", "plate artifact", "confirmed batch confound",
+                             "driven by plate", "technical plate effect")
+
 #' Statement to publish when the original package is not reachable from this environment.
+#'
+#' Wording matters here and has been tightened once already. An earlier version said the
+#' package had been "directly inspected separately", which overstates the evidence: the
+#' submitted files were never located, and `GSEA_ORA_all_results.xlsx` in particular was
+#' never opened or structurally inspected by anyone in this record. The shapes below are
+#' carried from how the submitted files were DESCRIBED, not from bytes anyone here read.
 RELEASE_OLD_PACKAGE_EXTERNAL_STATEMENT <- paste(
-  "Original submission package directly inspected separately; local project-tree crosswalk",
-  "remains based on dimensions/content lineage.")
+  "The submitted files were not located in the project tree and were not read by this",
+  "build. Their properties below are carried from the prior description of the submission",
+  "package, not from a direct structural inspection; in particular",
+  "GSEA_ORA_all_results.xlsx was never opened, so nothing is claimed about its internal",
+  "layout. The local crosswalk rests on dimensions and content lineage.")
 
 #' Resolve how the old-package crosswalk was established, for this build.
 #'
