@@ -179,17 +179,32 @@ if (Test-Path -LiteralPath $safetyTest) {
     Record "test_runner_safety (ps1)" "FAIL" "safety contracts missing from tests/" 0
 }
 
-Get-ChildItem -LiteralPath (Join-Path $repo "tests") -Filter "*.R" | ForEach-Object {
-    $sw = [System.Diagnostics.Stopwatch]::StartNew()
-    $log = Join-Path $scratch ($_.BaseName + ".log")
-    & $rscript $_.FullName *> $log
-    $code = $LASTEXITCODE
-    $sw.Stop()
-    if ($code -eq 0) {
-        Record $_.BaseName "PASS" "ok" $sw.Elapsed.TotalSeconds
-    } else {
-        $tail = (Get-Content -LiteralPath $log -Tail 3 -ErrorAction SilentlyContinue) -join " | "
-        Record $_.BaseName "FAIL" $tail $sw.Elapsed.TotalSeconds
+# Both test directories are discovered. 07_publication_release/tests/ was previously not
+# reached by this runner at all, so ten test files -- the release contracts, effect-size
+# semantics, sample-class correction, PRIDE metadata, lineage and manifest -- only ever ran
+# when invoked by hand. They skip cleanly when no built release is reachable, so including
+# them here is safe in every tier.
+$testDirs = @(
+    (Join-Path $repo "tests"),
+    (Join-Path $repo "07_publication_release\tests")
+)
+foreach ($testDir in $testDirs) {
+    if (-not (Test-Path -LiteralPath $testDir)) {
+        Record ("tests: " + (Split-Path $testDir -Leaf)) "FAIL" "test directory missing: $testDir" 0
+        continue
+    }
+    Get-ChildItem -LiteralPath $testDir -Filter "*.R" | ForEach-Object {
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        $log = Join-Path $scratch ($_.BaseName + ".log")
+        & $rscript $_.FullName *> $log
+        $code = $LASTEXITCODE
+        $sw.Stop()
+        if ($code -eq 0) {
+            Record $_.BaseName "PASS" "ok" $sw.Elapsed.TotalSeconds
+        } else {
+            $tail = (Get-Content -LiteralPath $log -Tail 3 -ErrorAction SilentlyContinue) -join " | "
+            Record $_.BaseName "FAIL" $tail $sw.Elapsed.TotalSeconds
+        }
     }
 }
 

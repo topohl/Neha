@@ -846,8 +846,16 @@ NO_BATCH_SENTENCE,
 "Two upstream artefacts are locked by hash and verified at build time:",
 "",
 "```",
-"animal-level matrix  f12cf99e1bfb7c17bbf56bffb6783e924698bce5d5533a8e312bc4bbb733bbb3",
-"ProTigy statistics   e1ae20f02e2747cfae3572933f2b23e6c770b92ef6810963a2806afb7adbe2b6",
+# Printed from RELEASE_LOCKED_ARTEFACTS rather than typed. These were literals here, which
+# is the same drift risk the software-version table had: re-locking an artefact would update
+# the constant and the validator while this published README kept quoting the old digest,
+# telling a reader the wrong provenance.
+vapply(names(RELEASE_LOCKED_ARTEFACTS), function(key) {
+  spec <- RELEASE_LOCKED_ARTEFACTS[[key]]
+  label <- if (identical(key, "animal_level_input_gct")) "animal-level matrix" else
+    if (identical(key, "protigy_stat_gct")) "ProTigy statistics" else key
+  paste0(formatC(label, width = -20), spec$sha256)
+}, character(1)),
 "```",
 "",
 "## 17. How this package maps to PRIDE",
