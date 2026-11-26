@@ -1,21 +1,16 @@
 # ====================================================================
-# Animal-level PCA workflow -- ENTRY POINT
-#
-# Was a single 2,576-line script; split 2026-08-26 into ordered parts under
-# 03_qc_exploration/pca/. This file is a thin orchestrator, so the documented
-# invocation is unchanged:
+# Animal-level PCA workflow: entry point
 #
 #     Rscript 03_qc_exploration/06_pcaPlot_animal_level.r
 #
-# The parts run at top level and share globals (mat, meta, pca, output_dir and the
-# plotting/saving helpers) created by 06a_pca_core.r, exactly as when they were one file.
-# Part order matters: 06b creates rot/cors_df/um/npc that 06c, 06g and 06h consume.
+# Sources the parts in 03_qc_exploration/pca/ in order (one script until 2026-08-26). The
+# parts run at top level and share the globals made by 06a_pca_core.r (mat, meta, pca,
+# output_dir and the plot/save helpers); 06b makes rot/cors_df/um/npc, which 06c, 06g and
+# 06h use.
 #
-# Behaviour change (deliberate): previously every extension shared ONE tryCatch, so the
-# first failure aborted all remaining extensions. Each part is now guarded separately, so
-# one failing visualization no longer suppresses the rest. Audit semantics are preserved --
-# a failure still writes the failure audit to pca_audit_path (last writer wins) and the
-# script still exits non-zero, but only after attempting every part.
+# 06a must succeed. Each later part runs in its own tryCatch, so one failing plot does not
+# stop the others; a failure writes the failure audit to pca_audit_path (last writer wins),
+# and the script exits non-zero once every part has been tried.
 # ====================================================================
 
 .pca_script_arg <- grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE)
@@ -29,7 +24,7 @@ if (!dir.exists(.pca_dir)) {
   .pca_dir <- normalizePath(file.path(getwd(), "03_qc_exploration", "pca"), winslash = "/", mustWork = TRUE)
 }
 
-# Core must succeed: it validates the input contract and writes its own audit on failure.
+# Core must succeed: it validates the input check and writes its own audit on failure.
 source(file.path(.pca_dir, "06a_pca_core.r"))
 
 .pca_extension_parts <- c(

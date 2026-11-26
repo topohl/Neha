@@ -1,24 +1,13 @@
 #!/usr/bin/env Rscript
 
-# Design-balance / identifiability checks for the animal-level design.
+# Design-balance checks for the animal-level design.
 #
-# Motivation: the collection-plate-vs-Pairing association in this cohort was only found by
-# manual provenance archaeology across two separate audits. These checks make the association
-# an explicit, machine-checked property of the design rather than something to rediscover.
-#
-# SCOPE OF THE CLAIM. Plate1/Plate2 is COLLECTION PLATE information. It is not proteomics
-# preparation, digestion, LC-MS, instrument or any other technical batch metadata, and no
-# downstream proteomics batch effect attributable to collection plate has been demonstrated for
-# this dataset. What these checks establish is an IDENTIFIABILITY property: where pairing
-# condition and collection plate are completely associated, a collection-plate-associated
-# contribution cannot be distinguished from a pairing-associated one. That is a statement about
-# the design, not about a technical artefact having been observed.
-#
-# They are descriptive contracts, not pass/fail judgements about the biology: the association
-# is a real property of the collected cohort and cannot be fixed in software. The tests
-# fail only if the design's *identifiability structure* differs from what has been audited
-# and documented in CANONICAL_OUTPUTS.md -- i.e. if someone changes the assignment metadata
-# without updating the documented caveats.
+# The Plate1/Plate2 token in the sample IDs is the collection plate, not a proteomics batch
+# (see "What the Plate1/Plate2 token records" in CANONICAL_OUTPUTS.md). Collection plate is
+# almost completely associated with Pairing, so in some contrasts a plate contribution cannot
+# be told apart from a pairing one. That is a property of the cohort and cannot be fixed in
+# code. These tests record the association and fail only if the assignment metadata changes
+# away from what CANONICAL_OUTPUTS.md documents.
 
 args <- commandArgs(trailingOnly = FALSE)
 file_arg <- grep("^--file=", args, value = TRUE)
@@ -53,9 +42,7 @@ assignment_path <- option_or_env(
   "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/02_data/animal_level/input_gct/source_sample_assignment.csv"
 )
 
-# ---------------------------------------------------------------------------
-# Pure helpers (testable without the shared drive)
-# ---------------------------------------------------------------------------
+# Helpers (no shared drive needed)
 
 #' Split a canonical condition label into its 2x2 factors.
 derive_design_factors <- function(condition) {
@@ -113,18 +100,14 @@ expect(isTRUE(stratum_is_covariate_free(c("Plate2","Plate2","Plate2"))),
 expect(isFALSE(stratum_is_covariate_free(c("Plate1","Plate2","Plate1"))),
        "mixed stratum reported as NOT covariate-free")
 
-# ---------------------------------------------------------------------------
-# Real-cohort contracts (skipped when the shared drive is unavailable)
-# ---------------------------------------------------------------------------
+# Cohort checks (skipped when the shared drive is not reachable)
 if (!file.exists(assignment_path)) {
   cat("\n=== cohort checks SKIPPED: assignment metadata not reachable ===\n")
   cat("    expected at:", assignment_path, "\n")
-  cat("    set PROTEOMICS_SOURCE_SAMPLE_ASSIGNMENT to run the cohort-level contracts.\n")
+  cat("    set PROTEOMICS_SOURCE_SAMPLE_ASSIGNMENT to run the cohort-level checks.\n")
 } else {
   src <- utils::read.csv(assignment_path, stringsAsFactors = FALSE)
-  # The Plate token is embedded in the sample identifier and records COLLECTION PLATE, i.e.
-  # which plate the sample was collected onto. It is not a proteomics preparation, digestion,
-  # LC-MS or instrument batch label; no such technical batch metadata exists for this dataset.
+  # Collection plate, parsed from the sample ID (see the header).
   src$Plate <- sub(".*_(Plate[0-9]+)_.*", "\\1", src$sample_id)
   fac <- derive_design_factors(src$condition)
   src$Pairing <- fac$Pairing
@@ -168,6 +151,6 @@ if (!file.exists(assignment_path)) {
 
 cat("\n=== RESULT ===\n")
 if (failures > 0L) {
-  stop(sprintf("Design-balance contracts failed: %d", failures), call. = FALSE)
+  stop(sprintf("Design-balance checks failed: %d", failures), call. = FALSE)
 }
-cat("All design-balance contracts hold.\n")
+cat("All design-balance checks hold.\n")

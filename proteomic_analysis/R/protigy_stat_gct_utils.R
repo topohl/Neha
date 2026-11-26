@@ -202,7 +202,7 @@ validate_primary_comparison_contract <- function(comparisons) {
   if (length(missing)) failures <- c(failures, paste0("missing: ", paste(missing, collapse = ", ")))
   if (length(unexpected)) failures <- c(failures, paste0("unexpected: ", paste(unexpected, collapse = ", ")))
   if (length(failures)) {
-    stop("primary comparison contract failed: ", paste(failures, collapse = "; "), call. = FALSE)
+    stop("primary comparison check failed: ", paste(failures, collapse = "; "), call. = FALSE)
   }
   observed[match(expected$canonical_comparison, observed$canonical_comparison), , drop = FALSE]
 }
@@ -388,8 +388,8 @@ extract_protigy_comparison_table <- function(gct, comparison) {
     stop("Metric output names collide for comparison: ", comparison, call. = FALSE)
   }
   out <- data.frame(
-    # Compatibility contract: gene_symbol is the original GCT id/UniProt-style
-    # protein identifier. It is historically misnamed for MapThatProt input.
+    # gene_symbol holds the original GCT id (a UniProt-style protein identifier); the
+    # name is historical and MapThatProt reads the column under it.
     gene_symbol = as.character(gct$ids),
     Description = as.character(gct$description),
     stringsAsFactors = FALSE,
@@ -464,7 +464,7 @@ validate_stat_gct_contract <- function(gct, expected_n_proteins = 5349L) {
     failures <- c(failures, "required DA fields contain missing values")
   }
   if (length(failures)) {
-    stop("ProTigy statistical-GCT contract failed: ", paste(unique(failures), collapse = "; "), call. = FALSE)
+    stop("ProTigy statistical-GCT check failed: ", paste(unique(failures), collapse = "; "), call. = FALSE)
   }
 
   list(

@@ -30,14 +30,12 @@ option_or_env <- function(option_name, env_name, default) {
 
 project_root <- "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler"
 
-# NOTE: this script plots ACQUISITION-LEVEL TECHNICAL QC METRICS (identification depth,
-# MS1/MS2 signal, peak width, mass accuracy, normalisation instability, RT prediction
-# accuracy) per acquisition sample. Its PCA is a PCA *of those instrument QC metrics* --
-# it is NOT a protein-abundance PCA. For protein-abundance PCA see 06_pcaPlot_animal_level.r.
-#
-# Its input, quicksearch.stats.annotated.xlsx, is a DIA-NN/instrument QC export that is not
-# present anywhere in the current project tree (its former Datasets/pg_matrix/ parent did
-# not exist either). Repeated audits could therefore not evaluate acquisition-level QC.
+# Plots acquisition-level technical QC metrics (identification depth, MS1/MS2 signal, peak
+# width, mass accuracy, normalisation instability, RT prediction accuracy) per acquisition
+# sample. Its PCA is of these QC metrics, not of protein abundance (for that, see
+# 06_pcaPlot_animal_level.r). The input, quicksearch.stats.annotated.xlsx (an instrument QC
+# export), is not in the project tree, so this script cannot run at present; see
+# CANONICAL_OUTPUTS.md.
 input_file <- option_or_env(
   "proteomics.qc_quicksearch_stats", "PROTEOMICS_QC_QUICKSEARCH_STATS",
   file.path(project_root, "01_input", "qc", "quicksearch.stats.annotated.xlsx")
@@ -51,22 +49,11 @@ out_dir <- option_or_env(
 if (!file.exists(input_file)) {
   stop(
     "Acquisition QC export not found: ", input_file,
-    "\nThis file (quicksearch.stats.annotated.xlsx) is a DIA-NN/instrument QC report and has",
-    "\nnever been present in this project tree.",
-    "\n",
-    "\nProvenance note (resolved 2026-08-27): a filesystem-wide search found this filename only",
-    "\nunder Exp9_Social-Stress, never under Collabs/Neha. The former hardcoded default here was",
-    "\n  <Neha>/clusterProfiler/Datasets/pg_matrix/raw/quicksearch.stats.annotated.xlsx",
-    "\nwhose tail is byte-identical to the real Exp9 path",
-    "\n  <Exp9_Social-Stress>/proteomics/Datasets/pg_matrix/raw/quicksearch.stats.annotated.xlsx",
-    "\nso this default appears to be boilerplate inherited from that project rather than a path",
-    "\nthat ever held this project's data. The Exp9 file has the right 33 columns but contains 0",
-    "\nof this project's samples (different instrument and acquisition date), so it is NOT a substitute.",
-    "\n",
-    "\nTo run this script you must re-export the QC report for this acquisition, then set",
-    "\nPROTEOMICS_QC_QUICKSEARCH_STATS / options(proteomics.qc_quicksearch_stats=) to point at it.",
-    "\nUntil then no acquisition-level technical QC (protein/precursor counts, MS1/MS2 signal,",
-    "\nmass accuracy, normalisation instability) can be evaluated for this dataset.",
+    "\nThis file (quicksearch.stats.annotated.xlsx) is an instrument QC report and has",
+    "\nnever been present in this project tree. The Exp9 file of that name holds none of these",
+    "\nsamples, so it is not a substitute (see CANONICAL_OUTPUTS.md).",
+    "\nRe-export the QC report for this acquisition and set",
+    "\nPROTEOMICS_QC_QUICKSEARCH_STATS / options(proteomics.qc_quicksearch_stats=) to it.",
     call. = FALSE
   )
 }

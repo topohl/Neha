@@ -114,7 +114,7 @@ assert_error(
     mapped_index = index_path,
     output_root = file.path(fixture_root, "enrichment_bad_rank")
   ),
-  "must be one of", "Unsupported GSEA ranking statistics must fail closed."
+  "must be one of", "Unsupported GSEA ranking statistics must stop with an error."
 )
 Sys.unsetenv("PROTEOMICS_ENRICHMENT_GSEA_RANK")
 
@@ -160,7 +160,7 @@ bad_t <- collapsed$collapsed
 bad_t$t[[1]] <- NA_real_
 assert_error(
   build_gsea_rank(bad_t, "t", "canonical"),
-  "finite value for every selected", "Non-finite moderated t must fail closed."
+  "finite value for every selected", "Non-finite moderated t must stop with an error."
 )
 
 tie_test <- gsea_tie_diagnostics(c(3, 3, 1, 0, 0, 0, -1, NA))

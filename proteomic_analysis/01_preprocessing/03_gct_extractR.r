@@ -1,9 +1,10 @@
 # ================================================================
-# animal-level ProTigy statistical-result GCT extraction
+# Split a statistical GCT in the ProTigy layout into one CSV per comparison
 #
-# Statistical fields can occur anywhere among the physical GCT fields,
-# including the row-descriptor area. This stage extracts existing ProTigy
-# results only; it does not fit or rerun any statistical model.
+# Default input: the per-compartment limma GCT from 02b_limma_stat_gct.r. Writes forward/
+# and reverse/ tables for the 12 comparisons, indexComparisons.csv and
+# run_contract_manifest.csv. Statistical fields may sit anywhere among the GCT fields,
+# including the row-descriptor area. No model is fitted here.
 # ================================================================
 
 args <- commandArgs(trailingOnly = FALSE)
@@ -29,18 +30,33 @@ option_or_env <- function(option_name, env_name, default) {
   default
 }
 
+# Defaults follow the primary statistics: the per-compartment limma run of 2026-11-24
+# (01_preprocessing/02b_limma_stat_gct.r). The superseded pooled ProTigy export and its split
+# (02_data/animal_level/stat_results_for_ssGSEA_neha_proteome.gct, .../split) are read only
+# if their paths are set.
 input_gct <- option_or_env(
   "proteomics.protigy_stat_gct_input",
   "PROTEOMICS_PROTIGY_STAT_GCT_INPUT",
-  "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/02_data/animal_level/stat_results_for_ssGSEA_neha_proteome.gct"
+  "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/02_data/animal_level/within_compartment_20261124/stat_results_within_compartment.gct"
 )
 output_root <- option_or_env(
   "proteomics.protigy_stat_gct_output_root",
   "PROTEOMICS_PROTIGY_STAT_GCT_OUTPUT_ROOT",
-  "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/02_data/animal_level/split"
+  "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/02_data/animal_level/within_compartment_20261124/split"
 )
+force <- tolower(option_or_env("proteomics.protigy_stat_gct_force", "PROTEOMICS_PROTIGY_STAT_GCT_FORCE", "false")) %in%
+  c("true", "1", "yes")
 input_gct <- normalizePath(input_gct, winslash = "/", mustWork = TRUE)
 output_root <- normalizePath(output_root, winslash = "/", mustWork = FALSE)
+# An existing split is a validated input of mapping, enrichment and the release; rewriting it
+# (even with the same tables) changes its run manifest, so it needs an explicit FORCE.
+if (file.exists(file.path(output_root, "indexComparisons.csv")) && !force) {
+  stop(
+    "Split index already exists; set PROTEOMICS_PROTIGY_STAT_GCT_FORCE=true to replace it: ",
+    file.path(output_root, "indexComparisons.csv"),
+    call. = FALSE
+  )
+}
 
 path_is_within <- function(path, parent) {
   path <- tolower(normalizePath(path, winslash = "/", mustWork = FALSE))
@@ -48,9 +64,8 @@ path_is_within <- function(path, parent) {
   identical(path, parent) || startsWith(path, paste0(parent, "/"))
 }
 
-# Historical hemisphere-level trees were consolidated under 99_historical/ during the
-# 2026-08-26 restructure (see CANONICAL_OUTPUTS.md). The former Datasets/raw and
-# Datasets/mapped are now 99_historical/datasets_raw and 99_historical/datasets_mapped.
+# Never write under 99_historical/ (the old hemisphere-level Datasets/raw and Datasets/mapped
+# are there since 2026-08-26; see CANONICAL_OUTPUTS.md).
 historical_root <- "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/99_historical"
 protected_roots <- c(historical_root, file.path(historical_root, c("datasets_raw", "datasets_mapped")))
 if (any(vapply(protected_roots, function(path) path_is_within(output_root, path), logical(1)))) {
@@ -86,7 +101,7 @@ unexpected <- c(
 )
 if (length(unexpected)) {
   stop(
-    "Output split directories contain unexpected CSV files; refusing a mixed contract: ",
+    "Output split directories contain unexpected CSV files; refusing a mixed check: ",
     paste(unique(unexpected), collapse = ", "),
     call. = FALSE
   )
@@ -160,7 +175,7 @@ utils::write.csv(index, index_path, row.names = FALSE, quote = TRUE, na = "")
 forward_files <- sort(list.files(forward_dir, pattern = "\\.csv$", full.names = TRUE), method = "radix")
 reverse_files <- sort(list.files(reverse_dir, pattern = "\\.csv$", full.names = TRUE), method = "radix")
 if (length(forward_files) != 12L || length(reverse_files) != 12L || nrow(index) != 12L) {
-  stop("Post-write split contract failed: expected 12 forward, 12 reverse, and 12 index rows.", call. = FALSE)
+  stop("Post-write split check failed: expected 12 forward, 12 reverse, and 12 index rows.", call. = FALSE)
 }
 
 contract_manifest <- data.frame(
@@ -197,4 +212,4 @@ message("Source GCT SHA-256: ", gct$sha256)
 message("Forward files: ", length(forward_files), " (", gct$n_protein_rows_read, " proteins each)")
 message("Reverse files: ", length(reverse_files), " (", gct$n_protein_rows_read, " proteins each)")
 message("Index: ", normalizePath(index_path, winslash = "/", mustWork = TRUE))
-message("Contract manifest: ", normalizePath(contract_path, winslash = "/", mustWork = TRUE))
+message("Check manifest: ", normalizePath(contract_path, winslash = "/", mustWork = TRUE))

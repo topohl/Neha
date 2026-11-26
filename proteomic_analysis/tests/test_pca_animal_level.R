@@ -123,7 +123,7 @@ duplicate_fixture$column_metadata["AnimalID", 2] <- duplicate_fixture$column_met
 expect_error(
   validate_pca_animal_input(duplicate_fixture),
   "duplicated within sample_class",
-  "Duplicated AnimalID/sample_class observations must fail closed."
+  "Duplicated AnimalID/sample_class observations must stop with an error."
 )
 
 hemisphere_fixture <- parsed
@@ -146,7 +146,7 @@ colnames(misaligned_fixture$column_metadata) <- rev(colnames(misaligned_fixture$
 expect_error(
   validate_pca_animal_input(misaligned_fixture),
   "not aligned",
-  "Misaligned GCT abundance and metadata columns must fail closed."
+  "Misaligned GCT abundance and metadata columns must stop with an error."
 )
 
 underfilled_fixture <- parsed
@@ -155,7 +155,7 @@ underfilled_fixture$column_metadata <- underfilled_fixture$column_metadata[, -1,
 expect_error(
   validate_pca_animal_input(underfilled_fixture),
   "exactly 3 animals per sample_class/condition",
-  "A sample_class/condition with fewer than three animals must fail closed."
+  "A sample_class/condition with fewer than three animals must stop with an error."
 )
 
 nonfinite_fixture <- parsed
@@ -211,9 +211,8 @@ expect_identical(nrow(failure_audit), 1L, "A failed PCA input must produce one m
 expect_identical(failure_audit$execution_status, "failed", "Failed PCA audit status is incorrect.")
 expect_identical(failure_audit$error_message, "fixture failure", "Failed PCA audit did not retain the error message.")
 
-# The PCA workflow was split (2026-08-26) from one monolith into an orchestrator plus ordered
-# parts under 03_qc_exploration/pca/. These contract assertions are about the workflow as a
-# whole, so read the entry point together with every part rather than just the entry point.
+# The PCA workflow is 06_pcaPlot_animal_level.r plus its parts in 03_qc_exploration/pca/;
+# the checks below read all of them.
 pca_script_files <- c(
   file.path(repo_root, "03_qc_exploration", "06_pcaPlot_animal_level.r"),
   sort(list.files(file.path(repo_root, "03_qc_exploration", "pca"),

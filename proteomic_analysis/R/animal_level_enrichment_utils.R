@@ -1,20 +1,16 @@
-# Canonical software contracts for the animal-level enrichment branch.
-# Biological comparison definitions remain owned by R/analysis_labels.R.
+# Helpers for the enrichment scripts in 04_differential_expression_enrichment/.
+# The comparisons themselves are defined in R/analysis_labels.R.
 
 if (!exists("project_normalize_path", mode = "function")) {
   stop("R/project_path_utils.R must be sourced before R/animal_level_enrichment_utils.R", call. = FALSE)
 }
 
-# Retained names delegate to the shared primitives in R/project_path_utils.R.
-# Behaviour change on non-Windows only: comparison is now case-insensitive everywhere
-# (previously case-sensitive off Windows). See the note in R/project_path_utils.R.
+# Short names for the path helpers in R/project_path_utils.R.
 enrichment_normalize_path <- function(path, must_work = FALSE) project_normalize_path(path, must_work)
 enrichment_path_is_within <- function(path, parent) project_path_is_within(path, parent)
 enrichment_paths_overlap <- function(left, right) project_paths_overlap(left, right)
 
-# The digest itself is delegated to project_file_sha256(), which hashes bytes it has
-# actually read rather than letting digest() infer readability from an SMB ACL probe.
-# Path normalisation and the error wording stay here.
+# Hashes with project_file_sha256(); see R/project_path_utils.R.
 enrichment_sha256 <- function(path) {
   if (!requireNamespace("digest", quietly = TRUE)) {
     stop("Package 'digest' is required for enrichment provenance.", call. = FALSE)
@@ -24,16 +20,22 @@ enrichment_sha256 <- function(path) {
 
 enrichment_default_paths <- function() {
   # Paths reflect the 2026-08-26 input/data/output restructure; see CANONICAL_OUTPUTS.md.
+  # Inputs default to the primary per-compartment statistics (2026-11-24); the superseded
+  # pooled split/ and mapped/ are read only if their paths are set. There is no default output
+  # root: every enrichment run writes to its own folder under 03_output/enrichment, named by
+  # PROTEOMICS_ENRICHMENT_OUTPUT_ROOT, and the shared parent itself is refused.
   project_root <- "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler"
   animal_root <- file.path(project_root, "02_data", "animal_level")
+  run_root <- file.path(animal_root, "within_compartment_20261124")
   historical_root <- file.path(project_root, "99_historical")
   list(
     project_root = project_root,
     dataset_root = file.path(project_root, "02_data"),
-    mapped_root = file.path(animal_root, "mapped"),
-    mapped_index = file.path(animal_root, "mapped", "indexMappedComparisons.csv"),
-    output_root = file.path(project_root, "03_output", "enrichment"),
-    split_root = file.path(animal_root, "split"),
+    mapped_root = file.path(run_root, "mapped"),
+    mapped_index = file.path(run_root, "mapped", "indexMappedComparisons.csv"),
+    output_root = "",
+    enrichment_collection_root = file.path(project_root, "03_output", "enrichment"),
+    split_root = file.path(run_root, "split"),
     historical_input_roots = file.path(historical_root, c("datasets_raw", "datasets_mapped")),
     historical_output_roots = c(
       file.path(historical_root, "core_enrichment"),
@@ -110,6 +112,12 @@ enrichment_env_choice <- function(name, choices, default) {
   value
 }
 
+# Unset or empty returns NA, meaning "keep the package default".
+enrichment_env_optional_number <- function(name, lower = -Inf, upper = Inf, integer = FALSE) {
+  if (!nzchar(trimws(Sys.getenv(name, unset = "")))) return(if (isTRUE(integer)) NA_integer_ else NA_real_)
+  enrichment_env_number(name, NA, lower, upper, integer)
+}
+
 resolve_enrichment_config <- function(
     mapped_root = Sys.getenv("PROTEOMICS_ENRICHMENT_MAPPED_ROOT", unset = ""),
     mapped_index = Sys.getenv("PROTEOMICS_ENRICHMENT_MAPPED_INDEX", unset = ""),
@@ -126,8 +134,18 @@ resolve_enrichment_config <- function(
   if (!enrichment_path_is_within(mapped_index, mapped_root)) {
     stop("Canonical mapped index must resolve inside the configured mapped root.", call. = FALSE)
   }
+  output_root <- choose(output_root, defaults$output_root)
+  if (!nzchar(trimws(output_root))) {
+    stop("Set PROTEOMICS_ENRICHMENT_OUTPUT_ROOT to this run's own folder under ",
+         defaults$enrichment_collection_root, ".", call. = FALSE)
+  }
+  if (identical(tolower(enrichment_normalize_path(output_root)),
+                tolower(enrichment_normalize_path(defaults$enrichment_collection_root)))) {
+    stop("Refusing to write enrichment results into the shared parent ",
+         defaults$enrichment_collection_root, "; name a run folder inside it.", call. = FALSE)
+  }
   output_root <- validate_enrichment_output_root(
-    choose(output_root, defaults$output_root),
+    output_root,
     mapped_root,
     defaults$split_root,
     defaults$historical_input_roots,
@@ -162,6 +180,8 @@ resolve_enrichment_config <- function(
     gsea_rank = gsea_rank,
     gsea_sensitivity_rank = if (identical(gsea_rank, "t")) "log2fc" else NA_character_,
     gsea_seed_base = enrichment_env_number("PROTEOMICS_ENRICHMENT_GSEA_SEED_BASE", 20260824, 1, 2147483646, integer = TRUE),
+    # fgsea nPermSimple; NA (variable unset) keeps the fgsea default of 1000.
+    gsea_n_perm_simple = enrichment_env_optional_number("PROTEOMICS_ENRICHMENT_NPERM_SIMPLE", 1, .Machine$integer.max, integer = TRUE),
     kegg_enabled = enrichment_env_flag("PROTEOMICS_ENRICHMENT_KEGG", TRUE),
     plots_enabled = enrichment_env_flag("PROTEOMICS_ENRICHMENT_PLOTS", TRUE),
     force = enrichment_env_flag("PROTEOMICS_ENRICHMENT_FORCE", FALSE),
@@ -487,6 +507,29 @@ enrichment_result_table <- function(result) {
   out
 }
 
+# fgsea gives no P value for an "unbalanced" gene set (fewer than 10 of the nPermSimple random
+# sets share the sign of its ES) and DOSE then drops the row from the result table. These two
+# helpers list the dropped sets (inside the size limits, as fgsea counts them, but absent from
+# the table) and read the number fgsea reports in its warning, so the two can be checked.
+enrichment_untested_gsea_sets <- function(gene_sets, rank_ids, tested_ids, min_gs_size, max_gs_size) {
+  set_index <- rep(seq_along(gene_sets), lengths(gene_sets))
+  hit <- match(unlist(gene_sets, use.names = FALSE), rank_ids)
+  keep <- !is.na(hit)
+  member_key <- set_index[keep] * (length(rank_ids) + 1) + hit[keep]
+  sizes <- tabulate(set_index[keep][!duplicated(member_key)], nbins = length(gene_sets))
+  untested <- sizes >= min_gs_size & sizes <= max_gs_size & !names(gene_sets) %in% tested_ids
+  out <- data.frame(ID = names(gene_sets)[untested], setSize = sizes[untested], stringsAsFactors = FALSE)
+  out <- out[order(out$ID, method = "radix"), , drop = FALSE]
+  rownames(out) <- NULL
+  out
+}
+
+enrichment_unbalanced_set_count <- function(warnings) {
+  pattern <- "There were ([0-9]+) pathways for which P-values were not calculated properly"
+  hits <- regmatches(warnings, regexec(pattern, warnings))
+  sum(vapply(hits, function(hit) if (length(hit) == 2L) as.integer(hit[[2]]) else 0L, integer(1)))
+}
+
 write_enrichment_csv <- function(x, path) {
   dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
   utils::write.csv(x, path, row.names = FALSE, na = "")
@@ -533,7 +576,7 @@ validate_enrichment_index <- function(index, require_files = TRUE) {
   if (any(!index$ranking_statistic %in% c("t", "log2fc")) ||
       any(index$rank_source_column != index$ranking_statistic) ||
       any(index$gsea_analysis_role != "canonical")) {
-    stop("Enrichment index has an invalid canonical GSEA rank contract.", call. = FALSE)
+    stop("Enrichment index has an invalid canonical GSEA rank check.", call. = FALSE)
   }
   t_primary <- index$ranking_statistic == "t"
   if (any(t_primary)) {
@@ -550,7 +593,7 @@ validate_enrichment_index <- function(index, require_files = TRUE) {
     if (any(index$sensitivity_ranking_statistic[t_primary] != "log2fc") ||
         any(index$sensitivity_rank_source_column[t_primary] != "log2fc") ||
         any(index$sensitivity_gsea_analysis_role[t_primary] != "sensitivity")) {
-      stop("t-primary enrichment index has an invalid log2fc sensitivity contract.", call. = FALSE)
+      stop("t-primary enrichment index has an invalid log2fc sensitivity check.", call. = FALSE)
     }
   }
   expected <- primary_contrast_manifest()

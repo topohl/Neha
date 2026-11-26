@@ -1,22 +1,13 @@
 #!/usr/bin/env Rscript
 
-# Contracts for project_file_sha256(), the shared file-content hashing primitive in
-# R/project_path_utils.R.
+# Tests for project_file_sha256() in R/project_path_utils.R.
 #
-# Added 2026-09-02. The primitive exists because digest::digest(file = ...) decides whether
-# a file is readable by probing it with file.access(), and on this project's SMB share that
-# probe returns -1 -- "No mapping between account names and security IDs was done" -- for
-# files that read back byte-perfect and hash to their locked values. digest() then aborts
-# with "The specified file is not readable" on wholly intact data, which is exactly how
-# test_data_integrity and test_rank_abundance_animal_level came to fail on unchanged
-# canonical artefacts.
-#
-# These contracts pin the replacement in both directions: it must hash real bytes and agree
-# with published SHA-256 digests, and it must still be strictly content sensitive -- a
-# single changed byte has to change the result, and an unreadable file has to raise rather
-# than yield a value. They run entirely on local temporary files, so they carry no
-# shared-drive dependency; the SMB behaviour itself is exercised by the canonical sections
-# of the two tests named above.
+# digest::digest(file = ...) checks readability with file.access(), which returns -1 on the
+# lab SMB share for files that read fine, so it fails on intact data. project_file_sha256()
+# reads the bytes itself. These tests check it against published SHA-256 values, check that
+# any byte change alters the digest and that unreadable input raises an error, and check that
+# the hashing helpers call it. They use local temporary files only; test_data_integrity.R and
+# test_rank_abundance_animal_level.R hash the files on the share.
 
 args <- commandArgs(trailingOnly = FALSE)
 file_arg <- grep("^--file=", args, value = TRUE)
@@ -29,7 +20,7 @@ if (!file.exists(file.path(repo_root, "R", "analysis_labels.R"))) {
 source(file.path(repo_root, "R", "project_path_utils.R"))
 
 if (!requireNamespace("digest", quietly = TRUE)) {
-  stop("Package 'digest' is required for the hashing primitive contracts.", call. = FALSE)
+  stop("Package 'digest' is required for the hashing checks.", call. = FALSE)
 }
 
 failures <- 0L
@@ -53,10 +44,8 @@ write_bytes <- function(path, bytes) {
   path
 }
 
-# --------------------------------------------------------------------------------------
 cat("=== agreement with published SHA-256 digests ===\n")
-# Known-answer vectors from FIPS 180-4 / RFC 6234, so correctness is checked against
-# published digests rather than against another call into the same library.
+# Known-answer vectors from FIPS 180-4 / RFC 6234, not another call into the same library.
 known <- list(
   list(id = "empty", label = "empty input", bytes = raw(0),
        sha = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"),
@@ -71,8 +60,7 @@ for (k in known) {
          sprintf("%s hashes to its published SHA-256", k$label))
 }
 
-# Called out separately because the empty file is the one input where a byte-reading
-# implementation could plausibly return NA, or error, instead of a digest.
+# An empty file is where a byte-reading implementation is most likely to return NA or fail.
 empty <- write_bytes(file.path(work, "empty_again.bin"), raw(0))
 expect(identical(project_file_sha256(empty),
                  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"),
@@ -86,7 +74,7 @@ expect(is.character(h) && length(h) == 1L, "returns a length-1 character vector"
 expect(!is.na(h) && nchar(h) == 64L, "returns 64 characters")
 expect(grepl("^[0-9a-f]{64}$", h), "returns lowercase hexadecimal only")
 
-cat("\n=== content sensitivity: the primitive must be no weaker than digest(file=) ===\n")
+cat("\n=== content sensitivity: the helper must be as content-sensitive as digest(file=) ===\n")
 base_bytes <- as.raw(rep(c(1L, 2L, 3L, 4L), length.out = 4096L))
 a <- write_bytes(file.path(work, "a.bin"), base_bytes)
 flipped <- base_bytes
@@ -111,17 +99,15 @@ expect(file.copy(a, copy, overwrite = TRUE), "fixture copied to a second path")
 expect(identical(project_file_sha256(a), project_file_sha256(copy)),
        "the same bytes at a different path and filename hash the same")
 
-# Bytes are hashed as bytes, so a CRLF/LF difference has to stay visible. This is what
-# keeps the primitive honest on a Windows/SMB checkout, where a text-mode read would
-# silently make the two agree.
+# The file is read in binary mode, so CRLF and LF versions must hash differently. A
+# text-mode read on Windows would make them agree.
 lf <- write_bytes(file.path(work, "lf.txt"), charToRaw("line1\nline2\n"))
 crlf <- write_bytes(file.path(work, "crlf.txt"), charToRaw("line1\r\nline2\r\n"))
 expect(!identical(project_file_sha256(lf), project_file_sha256(crlf)),
        "LF and CRLF variants of the same text hash differently (binary read, not text)")
 
 cat("\n=== larger-than-one-chunk input ===\n")
-# The implementation reads in 1 MiB chunks, so this input spans several: a chunk-boundary
-# or reassembly bug cannot hide behind a fixture that fits in a single read.
+# The implementation reads 1 MiB chunks; this input spans several to catch boundary bugs.
 set.seed(20260902L)
 big_bytes <- as.raw(sample.int(256L, 3L * 1024L * 1024L + 12345L, replace = TRUE) - 1L)
 big <- write_bytes(file.path(work, "big.bin"), big_bytes)
@@ -145,13 +131,8 @@ expect(errs(project_file_sha256("")), "an empty path raises an error")
 expect(errs(project_file_sha256(c(a, b))), "a vector of paths raises an error")
 
 cat("\n=== the implementation takes no forbidden dependency ===\n")
-# A source-level contract, because a regression here would be silent: the function would
-# keep returning correct digests everywhere except on the share this project runs against.
-#
-# Matching is done against parsed-and-deparsed code, not raw file text. Every file touched
-# by this fix *documents* the digest(file = ...) hazard in a comment, and a grep over raw
-# text would match that prose and report a call that is not there. parse() drops comments,
-# so what is asserted is the code.
+# Checked in the source, because a regression would only show on the SMB share. The code
+# is parsed and deparsed first, so comments that mention digest(file = ...) do not match.
 code_of <- function(rel) {
   exprs <- parse(file.path(repo_root, rel), keep.source = FALSE)
   paste(unlist(lapply(exprs, function(e) deparse(e))), collapse = "\n")
@@ -169,13 +150,13 @@ expect(grepl("readBin", body_txt, fixed = TRUE),
 expect(!grepl("file.access", impl, fixed = TRUE),
        "R/project_path_utils.R contains no file.access() call at all")
 
-cat("\n=== the hashers that broke on SMB now route through the primitive ===\n")
+cat("\n=== the hashers that broke on SMB now use the helper ===\n")
 callers <- list(
   c("R/animal_level_enrichment_utils.R", "enrichment_sha256"),
   c("R/mapthatprot_animal_level_utils.R", "mapthatprot_sha256"),
   c("07_publication_release/R/release_utils.R", "release_sha256"),
-  c("tests/test_data_integrity.R", "the data-integrity contracts"),
-  c("tests/test_rank_abundance_animal_level.R", "the rank-abundance contracts")
+  c("tests/test_data_integrity.R", "the data-integrity checks"),
+  c("tests/test_rank_abundance_animal_level.R", "the rank-abundance checks")
 )
 for (cl in callers) {
   code <- code_of(cl[[1]])
@@ -187,6 +168,6 @@ for (cl in callers) {
 
 cat("\n=== RESULT ===\n")
 if (failures > 0L) {
-  stop(sprintf("project_file_sha256 contracts failed: %d", failures), call. = FALSE)
+  stop(sprintf("project_file_sha256 checks failed: %d", failures), call. = FALSE)
 }
-cat("All project_file_sha256 contracts hold.\n")
+cat("All project_file_sha256 checks hold.\n")

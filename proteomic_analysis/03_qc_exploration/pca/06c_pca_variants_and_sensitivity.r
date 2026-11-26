@@ -1,9 +1,7 @@
 # ====================================================================
 # Sparse biplot, sessionInfo, ellipses, leave-one-plate-out, IRLBA, ROBPCA, t-SNE, gap statistic, PC-protein volcanoes
-# Part of the PCA workflow split out of the former monolithic
-# 03_qc_exploration/06_pcaPlot_animal_level.r (2026-08-26). Sourced in order by that
-# script, which remains the entry point. Runs at top level and shares the
-# globals created by 06a_pca_core.r (mat, meta, pca, output_dir, helpers).
+# Sourced in order by 03_qc_exploration/06_pcaPlot_animal_level.r; uses the globals
+# from 06a_pca_core.r (mat, meta, pca, output_dir, helpers).
 # Consumes cors_df from 06b.
 # ====================================================================
 

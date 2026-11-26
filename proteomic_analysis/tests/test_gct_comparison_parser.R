@@ -91,7 +91,7 @@ expect_identical(
   "Corrected and historical labels did not resolve to one biological comparison."
 )
 
-# The shared contrast manifest is exactly the requested 4 classes x 3 contrasts.
+# The shared contrast manifest has 4 classes x 3 contrasts.
 manifest <- primary_contrast_manifest()
 expect_identical(nrow(manifest), 12L, "The primary manifest must contain exactly 12 contrasts.")
 expect_identical(unique(manifest$sample_class), sample_classes, "Primary contrast sample-class order changed.")

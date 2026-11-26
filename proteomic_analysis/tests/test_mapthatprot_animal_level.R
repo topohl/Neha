@@ -93,7 +93,7 @@ fixture_root <- tempfile("mapthatprot_split_")
 dir.create(fixture_root)
 fixture <- make_split_fixture(fixture_root)
 
-# The authoritative index drives exactly 12 forward inputs in manifest order.
+# The index gives 12 forward inputs in manifest order.
 indexed <- read_mapthatprot_input_index(fixture_root, direction = "forward", expected_n_proteins = 2L)
 expect_identical(nrow(indexed), 12L, "The mapper did not discover exactly 12 indexed comparisons.")
 expect_identical(
@@ -206,5 +206,121 @@ allowed_output <- validate_mapthatprot_output_root(
 )
 expect_true(grepl("isolated_mapping_output$", allowed_output), "An isolated output root was unexpectedly rejected.")
 
+# Defaults point at the per-compartment run of 2026-11-24, not the pooled split/ and mapped/.
+animal_root <- file.path(defaults$project_root, "02_data", "animal_level")
+expect_identical(
+  defaults$split_root,
+  file.path(animal_root, "within_compartment_20261124", "split"),
+  "The default split root is not the per-compartment split."
+)
+expect_identical(
+  defaults$output_root,
+  file.path(animal_root, "within_compartment_20261124", "mapped"),
+  "The default output root is not the per-compartment mapped folder."
+)
+
+# Environment overrides and the overwrite refusal, on temp folders. The MapThatProt variables
+# are cleared first and restored afterwards.
+mapthatprot_env <- c(
+  "PROTEOMICS_MAPTHATPROT_SPLIT_ROOT", "PROTEOMICS_MAPTHATPROT_OUTPUT_ROOT",
+  "PROTEOMICS_MAPTHATPROT_DIRECTION", "PROTEOMICS_MAPTHATPROT_FORCE"
+)
+saved_env <- Sys.getenv(mapthatprot_env, unset = NA)
+Sys.unsetenv(mapthatprot_env)
+output_fixture <- tempfile("mapthatprot_output_")
+tryCatch({
+  config <- resolve_mapthatprot_config(output_root = output_fixture)
+  expect_identical(
+    config$split_root,
+    normalize_mapthatprot_path(defaults$split_root),
+    "Without overrides the default split root was not used."
+  )
+
+  Sys.setenv(
+    PROTEOMICS_MAPTHATPROT_SPLIT_ROOT = fixture_root,
+    PROTEOMICS_MAPTHATPROT_OUTPUT_ROOT = output_fixture
+  )
+  config <- resolve_mapthatprot_config()
+  expect_identical(config$split_root, normalize_mapthatprot_path(fixture_root), "PROTEOMICS_MAPTHATPROT_SPLIT_ROOT was not used.")
+  expect_identical(config$output_root, normalize_mapthatprot_path(output_fixture), "PROTEOMICS_MAPTHATPROT_OUTPUT_ROOT was not used.")
+
+  # An output folder that already holds the mapped index is refused and left as it was.
+  dir.create(output_fixture)
+  forward_index <- file.path(output_fixture, "indexMappedComparisons.csv")
+  writeLines("canonical_comparison", forward_index)
+  files_before <- list.files(output_fixture, recursive = TRUE, all.files = TRUE, include.dirs = TRUE)
+  for (value in c("false", "no", "0")) {
+    Sys.setenv(PROTEOMICS_MAPTHATPROT_FORCE = value)
+    expect_error(
+      resolve_mapthatprot_config(),
+      "set PROTEOMICS_MAPTHATPROT_FORCE=true",
+      paste("An existing mapped index was not refused with FORCE =", value)
+    )
+  }
+  Sys.unsetenv("PROTEOMICS_MAPTHATPROT_FORCE")
+  expect_error(resolve_mapthatprot_config(), basename(output_fixture), "The refusal does not name the output folder.")
+  expect_identical(
+    list.files(output_fixture, recursive = TRUE, all.files = TRUE, include.dirs = TRUE),
+    files_before,
+    "The refusal changed the output folder."
+  )
+  expect_identical(readLines(forward_index), "canonical_comparison", "The refusal changed the existing index.")
+
+  for (value in c("true", "TRUE", "1", "yes")) {
+    Sys.setenv(PROTEOMICS_MAPTHATPROT_FORCE = value)
+    config <- resolve_mapthatprot_config()
+    expect_identical(config$output_root, normalize_mapthatprot_path(output_fixture), paste("FORCE =", value, "did not allow the run."))
+  }
+  Sys.unsetenv("PROTEOMICS_MAPTHATPROT_FORCE")
+
+  # The check is per direction: a forward index does not block a reverse run; a reverse index does.
+  Sys.setenv(PROTEOMICS_MAPTHATPROT_DIRECTION = "reverse")
+  config <- resolve_mapthatprot_config()
+  expect_identical(config$direction, "reverse", "A reverse run was blocked by the forward index.")
+  writeLines("canonical_comparison", file.path(output_fixture, "indexMappedComparisons_reverse.csv"))
+  expect_error(
+    resolve_mapthatprot_config(),
+    "indexMappedComparisons_reverse\\.csv",
+    "An existing reverse mapped index was not refused."
+  )
+  Sys.unsetenv("PROTEOMICS_MAPTHATPROT_DIRECTION")
+
+  # The batch script resolves its configuration (and so the refusal) before it creates or
+  # writes any file.
+  batch_script <- file.path(repo_root, "02_id_mapping", "01_MapThatProt_batch.r")
+  parse_data <- utils::getParseData(parse(batch_script, keep.source = TRUE))
+  calls <- parse_data[parse_data$token == "SYMBOL_FUNCTION_CALL", c("line1", "text")]
+  resolve_line <- min(calls$line1[calls$text == "resolve_mapthatprot_config"])
+  write_calls <- c("dir.create", "write_csv", "write.csv", "writeLines", "saveWorkbook", "file.copy", "sink")
+  first_write_line <- min(calls$line1[calls$text %in% write_calls])
+  expect_true(
+    is.finite(resolve_line) && resolve_line < first_write_line,
+    "01_MapThatProt_batch.r writes output before resolve_mapthatprot_config()."
+  )
+
+  # Read-only check on the shared drive: the canonical per-compartment mapped index exists,
+  # so a run with the defaults is refused.
+  Sys.unsetenv(mapthatprot_env)
+  default_index <- file.path(defaults$output_root, "indexMappedComparisons.csv")
+  if (file.exists(default_index)) {
+    expect_error(
+      resolve_mapthatprot_config(),
+      "set PROTEOMICS_MAPTHATPROT_FORCE=true",
+      "A run with the defaults did not refuse the existing per-compartment mapped index."
+    )
+  } else {
+    message("Shared drive not reachable; skipped the default mapped index check.")
+  }
+}, finally = {
+  for (name in mapthatprot_env) {
+    if (is.na(saved_env[[name]])) {
+      Sys.unsetenv(name)
+    } else {
+      do.call(Sys.setenv, stats::setNames(list(saved_env[[name]]), name))
+    }
+  }
+  unlink(output_fixture, recursive = TRUE)
+})
+
 unlink(c(fixture_root, missing_root, duplicate_root), recursive = TRUE)
-message("Animal-level MapThatProt handoff tests passed (indexed discovery, identity, row accounting, and output protection).")
+message("Animal-level MapThatProt handoff tests passed (indexed discovery, identity, row accounting, output protection, default paths and overwrite refusal).")

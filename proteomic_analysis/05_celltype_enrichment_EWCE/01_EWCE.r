@@ -68,8 +68,8 @@ data_path <- option_or_env(
   "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/02_data/animal_level/input_gct/neha_protigy_input_animal_level_primary.gct"
 )
 # Legacy hemisphere-level EWCE results now live under 99_historical/ewce_legacy.
-# NOTE: the previous default here was Results/EWCE_Results, a path that never existed on
-# disk, so this guard silently protected nothing before the 2026-08-26 restructure.
+# The output root may not sit inside it (before 2026-08-26 this check pointed at
+# Results/EWCE_Results, which did not exist).
 historical_results <- "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/99_historical/ewce_legacy"
 base_results <- validate_ewce_output_root(
   option_or_env(

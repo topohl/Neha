@@ -198,10 +198,9 @@ metadata <- adapt_verified_historical_metadata(sample_info, sample_annotation, c
 expected_units <- make_expected_animal_units(metadata, sample_class_levels = sample_classes)
 aggregation_plan <- prepare_animal_level_aggregation(
   metadata = metadata,
-  # LEGACY DATASET IDENTIFIER -- do not rebrand. This value is written verbatim into the
-  # validated aggregation_audit.csv as the "dataset/project" column and is embedded in every
-  # canonical_analysis_unit key (e.g. "Neha__C11__mcherry"). Changing it would alter a
-  # validated output, so it is retained as a frozen dataset label rather than project branding.
+  # Dataset label, not branding: it is written into aggregation_audit.csv and into every
+  # canonical_analysis_unit key (e.g. "Neha__C11__mcherry"), so changing it changes a
+  # validated output.
   dataset_project = "Neha",
   expected_units = expected_units,
   sample_class_levels = sample_classes,

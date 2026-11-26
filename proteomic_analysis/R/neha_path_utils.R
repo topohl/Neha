@@ -1,32 +1,14 @@
-# DEPRECATED COMPATIBILITY SHIM -- do not use in new code.
+# Deprecated: use R/project_path_utils.R (renamed 2026-08-28).
 #
-# The active implementation moved to R/project_path_utils.R on 2026-08-28, when the collaborator
-# name was removed from this project's active branding and identifiers.
+# Kept only for the frozen scripts in 06_manuscript_figure_revision/, which are hash-locked
+# (see its SCRIPT_PROVENANCE.csv). Each 01_panelC_and_suppB_pca.R there, and its executed
+# copy under 03_output/, sources this file before R/pca_animal_level_utils.R and calls
+# validate_neha_pca_animal_input() and prepare_neha_animal_pca(). So this file loads
+# R/project_path_utils.R, which the PCA helpers need, and defines those two names as
+# aliases that warn and call the current functions.
 #
-# This shim exists for exactly one reason. The manuscript figure-revision snapshots in
-# 06_manuscript_figure_revision/ are byte-identical, hash-locked provenance (see that folder's
-# SCRIPT_PROVENANCE.csv), so they cannot be edited. 01_panelC_and_suppB_pca.R does
-#
-#     source(file.path(REPO_ROOT, "R", "analysis_labels.R"))
-#     source(file.path(REPO_ROOT, "R", "protigy_input_utils.R"))
-#     source(file.path(REPO_ROOT, "R", "neha_path_utils.R"))        # <- this file
-#     source(file.path(REPO_ROOT, "R", "pca_animal_level_utils.R"))
-#     ...
-#     validated <- validate_neha_pca_animal_input(parsed, expected_n = 3L)
-#     prepared  <- prepare_neha_animal_pca(validated$expression_matrix, ...)
-#
-# and its runnable twin under 03_output/reviewer_revision_animal_level_20260827/scripts/ reaches
-# into this repository for those three names. Removing them outright would silently break a re-run
-# of that snapshot. Note the ordering above: this file is sourced BEFORE pca_animal_level_utils.R,
-# so it must supply the path primitives that file's guard requires, while the two function
-# aliases resolve lazily at call time (by then the real definitions are loaded).
-#
-# Nothing in the ACTIVE pipeline sources this file. Every active caller, test and workflow uses
-# R/project_path_utils.R and the un-prefixed names directly.
-#
-# REMOVAL CRITERION: delete this file once 06_manuscript_figure_revision/ is either made
-# self-contained (the deferred follow-up noted in its README) or formally retired. It carries no
-# analysis logic, so deleting it can never change a numerical result.
+# No active stage sources it (tests/test_deprecated_path_utils_shim.R checks this). Delete it
+# once 06_manuscript_figure_revision/ no longer needs it; it holds no analysis logic.
 
 # Locate the sibling implementation. When a file is sourced, the calling frame holds `ofile`.
 local({

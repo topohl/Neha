@@ -5,10 +5,9 @@ repo_root <- normalizePath(file.path(dirname(script_path), ".."), winslash = "/"
 if (!dir.exists(repo_root)) repo_root <- normalizePath(getwd(), winslash = "/", mustWork = TRUE)
 
 all_files <- list.files(repo_root, recursive = TRUE, full.names = TRUE, all.files = FALSE)
-# Archived, non-runnable snapshots are excluded the same way /legacy/ is: this audit
-# checks ACTIVE pipeline code. 06_manuscript_figure_revision/ is a frozen provenance
-# snapshot of already-executed code (see its README), not an active stage, and must not
-# be edited to satisfy an active-pipeline stale-label lint.
+# Only active pipeline code is checked. /legacy/ and 06_manuscript_figure_revision/ are
+# skipped; the latter holds copies of figure scripts that were already run (see its README)
+# and is not edited to pass this check.
 archived <- "/legacy/|/06_manuscript_figure_revision/"
 active_files <- all_files[
   grepl("\\.(r|R|md|Rmd)$", all_files) &
@@ -32,10 +31,10 @@ add_hits("old con/res/sus condition mapping", '"[123]"\\s*=\\s*"(con|res|sus)"|p
 add_hits("group-code regex missing code 4", "\\[123\\]")
 add_hits("old active sample-class parsing labels", "neuron_soma|neuron_neuropil|sample_class[^\\n]*(microglia|celltype_layer)|celltype_layer[^\\n]*sample_class")
 
-# Output-identifier policy. Ordinary prose may discuss manuscripts, publications, or the
-# nature of a measurement. Active filenames/helper identifiers must not encode a target
-# journal, drafting status, or retired theme name. Separators are intentionally required
-# for manuscript/publication identifiers so prose such as "manuscript figure" remains valid.
+# Output names. Prose may mention manuscripts, publications or the nature of a measurement,
+# but file and helper names must not carry a journal name, a drafting status or a retired
+# theme name. The manuscript/publication rule needs a separator, so prose such as
+# "manuscript figure" still passes.
 output_label_rules <- list(
   journal_named_output = "(?i)(?<![A-Za-z])nature(?=(?:[_-](?:fig(?:ure)?[0-9]*|panel|plot|supp)|figure|\\.(?:svg|pdf|png|tiff?)))",
   drafting_status_output = "(?i)(?<![A-Za-z])(publication|manuscript)[-_]+(ready|quality)(?:[-_]+figure)?",
@@ -46,7 +45,7 @@ has_stale_output_label <- function(text) {
   any(vapply(output_label_rules, function(pattern) grepl(pattern, text, perl = TRUE), logical(1)))
 }
 
-# Committed table-driven controls make changes to the output-label regex policy observable.
+# Known cases each rule must reject or allow, so a regex change that alters them fails here.
 control_cases <- data.frame(
   text = c(
     "Nature_Fig3.svg",
@@ -79,21 +78,14 @@ for (rule_name in names(output_label_rules)) {
   add_hits(paste0("stale output identifier (", rule_name, ")"), output_label_rules[[rule_name]])
 }
 
-# Collaborator-name branding policy (added 2026-08-28). The project is "Associative Memory
-# Proteomics"; the collaborator name must not return to active branding, identifiers, filenames
-# or prose. A small, closed set of occurrences is legitimate and is enumerated here:
-#
-#   * the physical shared-drive storage path (Collabs/Neha) -- a real legacy location
-#   * validated, SHA-locked artefact filenames, which cannot be renamed without invalidating
-#     the recorded hashes and manifests
-#   * dataset_project = "Neha", written verbatim into the validated aggregation audit as the
-#     "dataset/project" column and into every canonical_analysis_unit key
-#   * the frozen split contract_version token recorded in a validated manifest
-#   * the frozen dated audit dump retained as historical material
-#
-# Anything else is branding creep and fails this audit. R/neha_path_utils.R is exempt because it
-# IS the documented deprecated shim (see tests/test_deprecated_path_utils_shim.R), and
-# 06_manuscript_figure_revision/ is already excluded above as frozen provenance.
+# Collaborator name. Since 2026-08-28 the project is "Associative Memory Proteomics", and the
+# collaborator name may appear in active code, file names and prose only as one of the
+# exceptions below: the shared-drive path (Collabs/Neha), hashed artefact file names that
+# cannot be renamed without breaking recorded hashes, the dataset_project value written into
+# the aggregation audit and every canonical_analysis_unit key, the split version token in a
+# validated manifest, and the public repository URL with the folder a clone creates.
+# R/neha_path_utils.R is the deprecated shim and is exempt (see
+# tests/test_deprecated_path_utils_shim.R).
 legacy_collaborator_exceptions <- c(
   "Collabs/Neha",
   "Collabs\\Neha",
@@ -104,29 +96,31 @@ legacy_collaborator_exceptions <- c(
   'dataset_project = "Neha"',
   "Neha__",
   "<Neha>",
-  "neha_proteomics_audit_fast.txt",
-  # Deliberate stale-name guard: a test asserts the pre-rename override is NOT used.
+  # Old variable name; tests/test_rank_abundance_animal_level.R checks it is no longer used.
   "NEHA_RANK_ABUNDANCE_INPUT_DIR",
-  # The deprecated shim's own filename, which documentation legitimately refers to. Whether any
-  # active file actually SOURCES it is a separate contract, asserted by
-  # tests/test_deprecated_path_utils_shim.R.
+  # The deprecated shim's file name, which the docs mention. Whether any active file sources
+  # it is checked in tests/test_deprecated_path_utils_shim.R.
   "neha_path_utils.R",
-  # Two more artefacts that exist on the shared drive under these exact names and that the
-  # publication release layer must cite by path: the ProTigy parameter record for the
-  # animal-level run, and the 2025-11-07 ProTigy session folder whose params.txt is the only
-  # surviving evidence of that application's version. Renaming validated data to satisfy a
-  # naming audit is not an option, so the names are exempted rather than the files renamed.
+  # Shared-drive files the release cites by path: the ProTigy parameter file for the
+  # animal-level run and the 2025-11-07 ProTigy session folder, whose params.txt is the only
+  # record of the ProTigy version. The data files keep their names.
   "neha_proteome_parameters.yaml",
-  "20251107_pg.matrix_Neha"
+  "20251107_pg.matrix_Neha",
+  # The folder a clone of the public repository creates (README).
+  "cd Neha/proteomic_analysis"
 )
 
+# The public repository URL. "Neha" must be the whole repository name, so a longer name such
+# as Neha-tools still fails.
+repository_url_pattern <- "https://github\\.com/topohl/Neha(?![A-Za-z0-9_-])"
+
 strip_legacy_exceptions <- function(text) {
+  text <- gsub(repository_url_pattern, "", text, perl = TRUE)
   for (literal in legacy_collaborator_exceptions) text <- gsub(literal, "", text, fixed = TRUE)
   text
 }
 
-# Committed controls, mirroring the output-label rules above, so changes to this policy are
-# observable rather than silent.
+# Known cases for the name rule, as for the output-name rules above.
 branding_controls <- data.frame(
   text = c(
     "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler",
@@ -138,10 +132,16 @@ branding_controls <- data.frame(
     "source(file.path(repo_root, 'R', 'project_path_utils.R'))",
     "neha_proteome_parameters.yaml",
     "20251107_pg.matrix_Neha",
-    "neha_publication_release_utils.R"
+    "neha_publication_release_utils.R",
+    "git clone https://github.com/topohl/Neha.git",
+    "cd Neha/proteomic_analysis",
+    "`https://github.com/topohl/Neha`",
+    "https://github.com/topohl/Neha-tools",
+    "cd Neha"
   ),
   expected_rejected = c(FALSE, FALSE, FALSE, TRUE, TRUE, TRUE, FALSE,
-                        FALSE, FALSE, TRUE),
+                        FALSE, FALSE, TRUE,
+                        FALSE, FALSE, FALSE, TRUE, TRUE),
   stringsAsFactors = FALSE
 )
 branding_controls$observed_rejected <- vapply(

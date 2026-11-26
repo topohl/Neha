@@ -1,14 +1,13 @@
 #!/usr/bin/env Rscript
 
-# Fail-closed contracts for 03_qc_exploration/02_rank_abundance_by_sample_class.r.
+# Tests for 03_qc_exploration/02_rank_abundance_by_sample_class.r.
 #
-# Sections 1-4 are self-contained and always run. They execute the real stage
-# against a valid 48-observation animal-level GCT and a syntactically valid but
-# biologically wrong 96-observation hemisphere-style GCT, plus an otherwise-valid
-# 48-observation GCT carrying technical-unit identifiers. Section 5 performs
-# full keyed equivalence against the locked canonical inputs and finalized
-# reviewer-revision reference when the shared drive is reachable; that external
-# section is reported explicitly as SKIP when its inputs are unavailable.
+# Sections 1-4 always run. They check the stage code and its sample-ID rule, then run the
+# real stage on three synthetic GCTs: a valid 48-column animal-level file, a 96-column
+# hemisphere-level file, and a 48-column file whose sample IDs carry hemisphere suffixes.
+# The last two must fail. Section 5 checks the recorded hashes of the real inputs and
+# compares the stage output row by row with the 2026-08-27 reviewer-revision tables; it is
+# reported as SKIP when the shared drive is not reachable.
 
 args <- commandArgs(trailingOnly = FALSE)
 file_arg <- grep("^--file=", args, value = TRUE)
@@ -23,7 +22,7 @@ source(file.path(repo_root, "R", "analysis_labels.R"))
 source(file.path(repo_root, "R", "project_path_utils.R"))
 source(file.path(repo_root, "R", "protigy_input_utils.R"))
 if (!requireNamespace("digest", quietly = TRUE)) {
-  stop("Package 'digest' is required for rank-abundance provenance contracts.", call. = FALSE)
+  stop("Package 'digest' is required for rank-abundance provenance checks.", call. = FALSE)
 }
 
 stage <- normalizePath(
@@ -79,10 +78,7 @@ extract_stage_function <- function(path, function_name) {
   get(function_name, envir = evaluation_environment, inherits = FALSE)
 }
 
-# project_file_sha256() hashes bytes it has read. digest(file = ...) cannot be used against
-# the canonical inputs: it probes with file.access(), which the SMB share answers with -1 on
-# perfectly readable files, so section 5 aborted on unchanged data. See the note in
-# R/project_path_utils.R.
+# digest(file = ...) fails on the SMB share; see project_file_sha256() in R/project_path_utils.R.
 sha256_file <- function(path) {
   project_file_sha256(path)
 }
@@ -156,7 +152,7 @@ compare_complete_keyed_output <- function(observed_path, reference_path, label) 
   invisible(TRUE)
 }
 
-cat("\n=== 1. executable source-code contracts (always run) ===\n")
+cat("\n=== 1. executable source-code checks (always run) ===\n")
 
 code <- strip_r_comments(stage)
 ok("animal-level GCT default appears in executable code",
@@ -183,9 +179,9 @@ ok("linearization remains 2^MeanLog2", grepl("2\\s*\\^\\s*d\\$MeanLog2", code))
 for (category in c("General Neuron", "Neuropil/Structure", "Stress Response", "Activation")) {
   ok(paste0("marker category retained: ", category), grepl(category, code, fixed = TRUE))
 }
-ok("Fig3E group contract retained",
+ok("Fig3E group check retained",
    grepl('"mcherry_paired-veh", "mcherry_unpaired-veh"', code, fixed = TRUE))
-ok("SuppD group contract retained",
+ok("SuppD group check retained",
    grepl('"neuron_unpaired-veh", "neuropil_unpaired-veh"', code, fixed = TRUE))
 
 cat("\n=== 2. technical-unit identifier controls (always run) ===\n")
@@ -338,7 +334,7 @@ cat("\n=== 4. real-stage fixture execution (always run) ===\n")
 wrong_output <- file.path(scratch_root, "wrong_output_must_not_exist")
 wrong_run <- run_stage(wrong_gct, fixture_map, wrong_output, "wrong_stage.log", scratch_root)
 ok("NEGATIVE INPUT: 96-observation hemisphere-style GCT fails closed", wrong_run$status != 0L)
-ok("NEGATIVE INPUT: failure names the animal-level experimental-unit contract",
+ok("NEGATIVE INPUT: failure names the animal-level experimental-unit check",
    grepl("exactly 48 unique animal-level sample columns|hemisphere-level technical", wrong_run$log))
 ok("NEGATIVE INPUT: output directory is not created", !dir.exists(wrong_output))
 
@@ -351,7 +347,7 @@ wrong_technical_run <- run_stage(
   scratch_root
 )
 ok("NEGATIVE INPUT: 48-observation technical-ID GCT fails closed", wrong_technical_run$status != 0L)
-ok("NEGATIVE INPUT: technical-ID failure names the experimental-unit contract",
+ok("NEGATIVE INPUT: technical-ID failure names the experimental-unit check",
    grepl("hemisphere-level technical identifiers|animal-level units", wrong_technical_run$log))
 ok("NEGATIVE INPUT: technical-ID output directory is not created",
    !dir.exists(wrong_technical_output))
@@ -484,4 +480,4 @@ if (length(failures)) {
     call. = FALSE
   )
 }
-cat(sprintf("Rank-abundance self-contained and available external contracts passed (%d checks).\n", checks))
+cat(sprintf("Rank-abundance self-contained and available external checks passed (%d checks).\n", checks))

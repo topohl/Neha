@@ -1,21 +1,17 @@
-#' Batch UniProt ID Mapping Script for Proteomics Data
+#' Batch UniProt ID mapping for the animal-level comparison tables
 #'
-#' This script processes the indexed animal-level ProTigy comparison files
-#' in parallel to map protein identifiers, UniProtKB entry names, and aliases to
-#' canonical UniProt accessions. It supports
-#' multiple mapping strategies including local mapping files, OrgDb annotations,
-#' UniProt.ws queries, and manual overrides. The script enforces a _MOUSE filter
-#' to ensure species-specific mapping and outputs mapped/unmapped datasets with
-#' detailed mapping strategy reports.
-#'
-#' Key features:
-#' - Parallel processing of multiple CSV files using doParallel
-#' - Multi-strategy mapping cascade (accession detection, entry name lookup,
-#'   gene symbol resolution, family prefix matching, OrgDb, UniProt.ws)
-#' - Manual mapping override support via Excel file
-#' - Comprehensive mapping statistics and unmapped protein tracking
-#' - Species-specific mapping eligibility (_MOUSE suffix enforcement)
-#' - Indexed 12-contrast discovery and isolated animal-level output provenance
+#' Maps the protein identifiers (accessions, UniProtKB entry names, gene symbols, aliases)
+#' of each comparison CSV in the split index to UniProt accessions, one file per worker
+#' (doParallel). Lookups, in order: accession and entry-name matching against the local
+#' mouse idmapping file, gene symbols, entry-family prefixes, org.Mm.eg.db, then UniProt.ws
+#' (needs network). Entries in the optional manual override workbook replace these results
+#' (manual_override = TRUE).
+#' Only _MOUSE entries are eligible; rows that do not map go to the unmapped tables.
+#' Writes the mapped and unmapped tables, per-file strategy summaries, the mapped index
+#' and Mapping_QC_Report.xlsx.
+#' Defaults: input within_compartment_20261124/split, output within_compartment_20261124/mapped.
+#' An output folder that already holds the mapped index is refused unless
+#' PROTEOMICS_MAPTHATPROT_FORCE=true.
 #' 
 #' Dependencies: dplyr, stringr, tidyr, purrr, readr, R.utils, foreach, doParallel, readxl, AnnotationDbi, org.Mm.eg.db, UniProt.ws
 #' 
@@ -51,6 +47,8 @@ if (!requireNamespace("pacman", quietly = TRUE)) install.packages("pacman")
 pacman::p_load(dplyr, stringr, tidyr, purrr, readr, R.utils, foreach, doParallel, readxl, AnnotationDbi, org.Mm.eg.db, UniProt.ws)
 
 # --- Configuration & Experimental Settings ---
+# Stops here, before any output is written, if the output folder already holds the mapped
+# index and PROTEOMICS_MAPTHATPROT_FORCE is not true.
 mapping_config <- resolve_mapthatprot_config()
 map_direction <- mapping_config$direction
 map_reverse <- identical(map_direction, "reverse")
@@ -129,8 +127,7 @@ accession_gene_symbol_map <- stats::setNames(
 )
 
 # --- Manual Override Configuration ---
-# Optional manual curation file. This is crucial for resolving heavily ambiguous 
-# protein groups or unannotated gene symbols common in exploratory proteomics.
+# Optional manual curation file for ambiguous protein groups and unannotated gene symbols.
 cat("Checking for manual mapping override file...\n")
 if (!requireNamespace("readxl", quietly = TRUE)) install.packages("readxl")
 
@@ -173,7 +170,7 @@ if (!is.null(manual_mapping)) {
 }
 
 # Create only the isolated animal-level output tree, after every input and
-# reference contract has passed.
+# reference check has passed.
 cat("Initializing isolated animal-level mapping output directories...\n")
 for (directory in c(
     info_dir, mapped_dir, mapped_summary_dir, unmapped_dir,
@@ -183,7 +180,7 @@ for (directory in c(
 }
 
 # --- Core Mapping Function ---
-# This function is executed asynchronously for each input proteomics file.
+# Runs once per input file, on a parallel worker.
 process_file <- function(data_path) {
     # Suppress internal messages for cleaner parallel console, file-level info handles writing
     # Ingest generic CSV arrays, supporting delimiter fallbacks (e.g. European CSVs)
@@ -443,7 +440,7 @@ process_file <- function(data_path) {
         }
     }
 
-    # Strategy 8: External DB Integration - Bioconductor OrgDb API (org.Mm.eg.db)
+    # Strategy 8: org.Mm.eg.db (symbol/alias to UniProt)
     if (requireNamespace("AnnotationDbi", quietly = TRUE) && requireNamespace("org.Mm.eg.db", quietly = TRUE)) {
         need_idx <- which((is.na(resolved$Resolved_UNIPROT) | !nzchar(resolved$Resolved_UNIPROT)) & resolved$id_class == "SYMBOL_OR_ALIAS")
         need_ids <- toupper(unique(resolved$token_base[need_idx]))
@@ -520,7 +517,7 @@ process_file <- function(data_path) {
         }
     }
 
-    # Strategy 9: External DB Integration - Online UniProt REST API Fetching
+    # Strategy 9: UniProt.ws query by gene name (needs network)
     need_idx <- which((is.na(resolved$Resolved_UNIPROT) | !nzchar(resolved$Resolved_UNIPROT)) & resolved$id_class == "SYMBOL_OR_ALIAS")
     need_ids <- unique(toupper(resolved$token_base[need_idx]))
     sym_left2 <- unique(need_ids[grepl("^[A-Z0-9\\-]{2,}$", need_ids)])
@@ -555,7 +552,7 @@ process_file <- function(data_path) {
         }
     }
 
-    # Strategy 10: Late-stage entry resolution explicitly pinging UniProt.ws
+    # Strategy 10: UniProt.ws query by entry name (needs network)
     need <- which(is.na(resolved$Resolved_UNIPROT) | !nzchar(resolved$Resolved_UNIPROT))
     idx_entry_ws <- need[resolved$id_class[need] %in% c("ENTRY","ENTRY_GUESS")]
     if (length(idx_entry_ws) && requireNamespace("UniProt.ws", quietly = TRUE)) {
@@ -877,9 +874,9 @@ process_file <- function(data_path) {
 }
 
 # -------------------------
-# Parallel Execution Engine
+# Parallel run
 # -------------------------
-# Distribute file-level mapping across available processor cores
+# One worker per file, at most (physical cores - 1)
 n_files <- length(csv_files)
 available_cores <- parallel::detectCores(logical = FALSE)
 workers <- max(1, min(available_cores - 1, n_files))
@@ -913,7 +910,7 @@ if (
     any(!mapped_comparison_index$row_accounting_valid) ||
     anyDuplicated(mapped_comparison_index$canonical_comparison)
 ) {
-    stop("Mapped comparison index failed the canonical 12-comparison row-accounting contract.", call. = FALSE)
+    stop("Mapped comparison index failed the canonical 12-comparison row-accounting check.", call. = FALSE)
 }
 mapped_comparison_index <- mapped_comparison_index[
     match(input_manifest$canonical_comparison, mapped_comparison_index$canonical_comparison),
@@ -1010,8 +1007,8 @@ coverage_stats <- mapping_full %>%
         .groups = "drop"
     )
 
-# --- Generate Comprehensive Excel QC Document ---
-cat("Generating comprehensive Excel QC Report...\n")
+# --- Excel QC report ---
+cat("Writing Excel QC report...\n")
 if (!requireNamespace("openxlsx", quietly = TRUE)) install.packages("openxlsx")
 
 report_file <- file.path(report_dir, "Mapping_QC_Report.xlsx")

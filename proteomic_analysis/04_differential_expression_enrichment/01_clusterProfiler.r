@@ -1,11 +1,12 @@
 #!/usr/bin/env Rscript
 
-# Canonical animal-level enrichment for the Associative Memory Proteomics study.
+# Animal-level enrichment for the 12 mapped comparisons: GO GSEA and ORA (one ontology per
+# run, PROTEOMICS_ENRICHMENT_ONTOLOGY, default BP) and KEGG GSEA.
 #
-# This stage consumes only the validated, forward MapThatProt manifest.  It does
-# not discover files by name and it cannot fall back to the historical mapped
-# or enrichment trees. Positive moderated t and log2fc values always mean
-# higher abundance in the canonical numerator recorded in the mapped index.
+# Reads only the comparisons listed in the forward MapThatProt index; it does not look for
+# files by name and cannot read the historical mapped or enrichment trees. Writes to
+# PROTEOMICS_ENRICHMENT_OUTPUT_ROOT, which must be set. Positive moderated t and log2fc mean
+# higher abundance in the numerator recorded in the mapped index.
 
 script_file <- grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE)
 script_file <- if (length(script_file)) sub("^--file=", "", script_file[[1]]) else "04_differential_expression_enrichment/01_clusterProfiler.r"
@@ -18,7 +19,7 @@ source(file.path(project_root, "R", "animal_level_enrichment_utils.R"))
 
 required_packages <- c(
   "clusterProfiler", "org.Mm.eg.db", "AnnotationDbi", "DOSE", "enrichplot",
-  "GOSemSim", "ggplot2", "withr", "digest", "fgsea"
+  "GOSemSim", "ggplot2", "withr", "digest", "fgsea", "BiocParallel", "GO.db"
 )
 missing_packages <- required_packages[!vapply(required_packages, requireNamespace, logical(1), quietly = TRUE)]
 if (length(missing_packages)) {
@@ -28,12 +29,17 @@ if (length(missing_packages)) {
 config <- resolve_enrichment_config()
 mapped_index <- read_enrichment_mapped_index(config$mapped_index, config$mapped_root)
 
-dir.create(config$output_root, recursive = TRUE, showWarnings = FALSE)
-per_comparison_root <- file.path(config$output_root, "per_comparison")
-audit_root <- file.path(config$output_root, "audits")
-dir.create(per_comparison_root, recursive = TRUE, showWarnings = FALSE)
-dir.create(audit_root, recursive = TRUE, showWarnings = FALSE)
+# fgsea otherwise starts the default BiocParallel cluster (SnowParam, one worker per core) for
+# every call. SerialParam gives the same tables (verified 2026-11-25) in a single process.
+BiocParallel::register(BiocParallel::SerialParam(), default = TRUE)
+# With PROTEOMICS_ENRICHMENT_NPERM_SIMPLE unset, every GSEA call passes fgsea's own default.
+gsea_n_perm_simple <- if (is.na(config$gsea_n_perm_simple)) {
+  eval(formals(fgsea::fgseaMultilevel)$nPermSimple)
+} else {
+  config$gsea_n_perm_simple
+}
 
+# Refuse before creating anything, so a refused run leaves no empty folders behind.
 index_path <- file.path(config$output_root, "indexEnrichmentComparisons.csv")
 if (file.exists(index_path) && !isTRUE(config$force)) {
   stop(
@@ -43,9 +49,18 @@ if (file.exists(index_path) && !isTRUE(config$force)) {
   )
 }
 
+dir.create(config$output_root, recursive = TRUE, showWarnings = FALSE)
+per_comparison_root <- file.path(config$output_root, "per_comparison")
+audit_root <- file.path(config$output_root, "audits")
+dir.create(per_comparison_root, recursive = TRUE, showWarnings = FALSE)
+dir.create(audit_root, recursive = TRUE, showWarnings = FALSE)
+
 timestamp_utc <- format(Sys.time(), tz = "UTC", usetz = TRUE)
 package_versions_path <- write_enrichment_csv(
-  enrichment_package_versions(),
+  rbind(enrichment_package_versions(), data.frame(
+    component = "BiocParallel", version = as.character(utils::packageVersion("BiocParallel")),
+    available = TRUE, stringsAsFactors = FALSE
+  )),
   file.path(audit_root, "package_database_versions.csv")
 )
 
@@ -56,7 +71,8 @@ parameters <- data.frame(
     "qvalue_cutoff", "p_adjust_method", "fdr_threshold", "top_abs_log2fc",
     "min_gs_size", "max_gs_size", "simplify", "simplify_cutoff",
     "gsea_seed_base", "log2fc_sensitivity_in_standard_t_run", "kegg_enabled", "plots_enabled",
-    "duplicate_uniprot_rule", "ora_universe"
+    "duplicate_uniprot_rule", "ora_universe",
+    "gsea_n_perm_simple", "gsea_n_perm_simple_source", "gsea_biocparallel_backend"
   ),
   value = c(
     config$ontology, config$gsea_rank, config$gsea_rank, "canonical",
@@ -68,7 +84,10 @@ parameters <- data.frame(
     config$max_gs_size, config$simplify, config$simplify_cutoff,
     config$gsea_seed_base, !is.na(config$gsea_sensitivity_rank), config$kegg_enabled, config$plots_enabled,
     "largest_absolute_log2fc;finite_preferred;ties_by_source_row_id_then_original_protein_id",
-    "all_unique_successfully_mapped_measured_uniprot_accessions_per_comparison"
+    "all_unique_successfully_mapped_measured_uniprot_accessions_per_comparison",
+    format(gsea_n_perm_simple, scientific = FALSE),
+    if (is.na(config$gsea_n_perm_simple)) "fgsea_default" else "PROTEOMICS_ENRICHMENT_NPERM_SIMPLE",
+    "SerialParam"
   ),
   stringsAsFactors = FALSE
 )
@@ -86,6 +105,9 @@ capture_warnings <- function(expression) {
   list(value = value, warnings = unique(warnings))
 }
 
+# The GSEA calls below pass seed = FALSE so that the seed set here is the one used.
+# With seed = TRUE, DOSE calls set.seed(.Random.seed), which reseeds every run from the
+# RNG-kind code and ignores the recorded per-comparison seed (fixed 2026-11-24).
 run_seeded <- function(expression, comparison, analysis) {
   seed <- derive_enrichment_seed(config$gsea_seed_base, comparison, analysis)
   captured <- capture_warnings(with_enrichment_seed(seed, expression))
@@ -123,8 +145,9 @@ run_go_gsea <- function(rank, comparison) {
       pvalueCutoff = config$pvalue_cutoff,
       pAdjustMethod = config$p_adjust_method,
       verbose = FALSE,
-      seed = TRUE,
-      by = "fgsea"
+      seed = FALSE,
+      by = "fgsea",
+      nPermSimple = gsea_n_perm_simple
     ),
     comparison,
     paste0("GO_", config$ontology, "_GSEA")
@@ -224,8 +247,9 @@ run_kegg_gsea <- function(rank, comparison, analysis = "KEGG_GSEA") {
       pvalueCutoff = config$pvalue_cutoff,
       pAdjustMethod = config$p_adjust_method,
       verbose = FALSE,
-      seed = TRUE,
-      by = "fgsea"
+      seed = FALSE,
+      by = "fgsea",
+      nPermSimple = gsea_n_perm_simple
     ),
     comparison,
     analysis
@@ -246,12 +270,55 @@ run_custom_gsea <- function(rank, genes, comparison, analysis, term_name) {
       pvalueCutoff = config$pvalue_cutoff,
       pAdjustMethod = config$p_adjust_method,
       verbose = FALSE,
-      seed = TRUE,
-      by = "fgsea"
+      seed = FALSE,
+      by = "fgsea",
+      nPermSimple = gsea_n_perm_simple
     ),
     comparison,
     analysis
   )
+}
+
+describe_go_terms <- function(ids) {
+  if (!length(ids)) return(character())
+  terms <- suppressMessages(AnnotationDbi::select(GO.db::GO.db, keys = ids, columns = "TERM", keytype = "GOID"))
+  as.character(terms$TERM[match(ids, terms$GOID)])
+}
+
+# Pathway names from the KEGG download that gseKEGG has just cached (NA if there is none).
+describe_kegg_pathways <- function(ids) {
+  kegg_env <- get0(".KEGG_clusterProfiler_Env", envir = globalenv())
+  names_table <- if (is.environment(kegg_env)) get0("KEGGPATHID2NAME", envir = kegg_env) else NULL
+  if (is.null(names_table)) return(rep(NA_character_, length(ids)))
+  as.character(names_table[[2]][match(ids, names_table[[1]])])
+}
+
+empty_untested_table <- function() data.frame(
+  canonical_comparison = character(), analysis = character(), ID = character(),
+  Description = character(), setSize = integer(), stringsAsFactors = FALSE
+)
+
+# Lists the gene sets fgsea returned without a P value, which DOSE drops from the result table,
+# and requires the list to match the count in fgsea's warning. With pvalue_cutoff < 1, sets above
+# the cutoff are also absent from the table, so the count check applies only at the cutoff of 1.
+append_untested_sets <- function(table, comparison, analysis, gsea, rank, describe) {
+  if (is.null(gsea$value)) return(list(table = table, count = NA_integer_))
+  untested <- enrichment_untested_gsea_sets(
+    gsea$value@geneSets, names(rank), enrichment_result_table(gsea$value)$ID,
+    config$min_gs_size, config$max_gs_size
+  )
+  reported <- enrichment_unbalanced_set_count(gsea$warnings)
+  if (config$pvalue_cutoff >= 1 && nrow(untested) != reported) {
+    stop(analysis, ": ", nrow(untested), " gene sets are missing from the result table but fgsea reported ",
+         reported, " without a P value.", call. = FALSE)
+  }
+  if (nrow(untested)) {
+    table <- rbind(table, data.frame(
+      canonical_comparison = comparison, analysis = analysis, ID = untested$ID,
+      Description = describe(untested$ID), setSize = untested$setSize, stringsAsFactors = FALSE
+    ))
+  }
+  list(table = table, count = nrow(untested))
 }
 
 empty_warning_table <- function() data.frame(
@@ -298,6 +365,7 @@ process_comparison <- function(index_row) {
   dir.create(audit_dir, recursive = TRUE, showWarnings = FALSE)
   started <- Sys.time()
   warning_rows <- empty_warning_table()
+  untested_rows <- empty_untested_table()
 
   record <- list(
     canonical_comparison = comparison,
@@ -338,6 +406,7 @@ process_comparison <- function(index_row) {
     max_gs_size = config$max_gs_size,
     simplify_enabled = config$simplify,
     simplify_cutoff = config$simplify_cutoff,
+    gsea_n_perm_simple = gsea_n_perm_simple,
     execution_status = "failed",
     error_message = NA_character_
   )
@@ -412,6 +481,11 @@ process_comparison <- function(index_row) {
 
     go_gsea <- run_go_gsea(rank_info$rank, comparison)
     warning_rows <- append_warnings(warning_rows, comparison, paste0("GO_", config$ontology, "_GSEA"), go_gsea$warnings)
+    untested <- append_untested_sets(
+      untested_rows, comparison, paste0("GO_", config$ontology, "_GSEA"), go_gsea, rank_info$rank, describe_go_terms
+    )
+    untested_rows <- untested$table
+    record$go_gsea_untested_set_count <- untested$count
     go_gsea_table <- enrichment_result_table(go_gsea$value)
     record$go_gsea_seed <- go_gsea$seed
     record$go_gsea_term_count <- nrow(go_gsea_table)
@@ -430,6 +504,13 @@ process_comparison <- function(index_row) {
         paste0("GO_", config$ontology, "_GSEA_", config$gsea_sensitivity_rank, "_sensitivity"),
         sensitivity_go_gsea$warnings
       )
+      untested <- append_untested_sets(
+        untested_rows, comparison,
+        paste0("GO_", config$ontology, "_GSEA_", config$gsea_sensitivity_rank, "_sensitivity"),
+        sensitivity_go_gsea, sensitivity_rank_info$rank, describe_go_terms
+      )
+      untested_rows <- untested$table
+      record$sensitivity_go_gsea_untested_set_count <- untested$count
       sensitivity_go_table <- enrichment_result_table(sensitivity_go_gsea$value)
       record$sensitivity_go_gsea_seed <- sensitivity_go_gsea$seed
       record$sensitivity_go_gsea_term_count <- nrow(sensitivity_go_table)
@@ -445,6 +526,7 @@ process_comparison <- function(index_row) {
       )
     } else {
       record$sensitivity_go_gsea_seed <- NA_integer_
+      record$sensitivity_go_gsea_untested_set_count <- NA_integer_
       record$sensitivity_go_gsea_term_count <- NA_integer_
       record$sensitivity_go_gsea_fdr_term_count <- NA_integer_
       record$sensitivity_go_gsea_output <- NA_character_
@@ -507,6 +589,9 @@ process_comparison <- function(index_row) {
       )
       kegg_gsea <- run_kegg_gsea(kegg$rank, comparison)
       warning_rows <- append_warnings(warning_rows, comparison, "KEGG_GSEA", kegg_gsea$warnings)
+      untested <- append_untested_sets(untested_rows, comparison, "KEGG_GSEA", kegg_gsea, kegg$rank, describe_kegg_pathways)
+      untested_rows <- untested$table
+      record$kegg_gsea_untested_set_count <- untested$count
       record$kegg_gsea_seed <- kegg_gsea$seed
       record$kegg_gsea_term_count <- result_count(kegg_gsea$value)
       record$kegg_gsea_output <- write_result(kegg_gsea$value, file.path(comparison_dir, "GSEA_KEGG.csv"))
@@ -552,6 +637,12 @@ process_comparison <- function(index_row) {
           paste0("KEGG_GSEA_", config$gsea_sensitivity_rank, "_sensitivity"),
           sensitivity_kegg_gsea$warnings
         )
+        untested <- append_untested_sets(
+          untested_rows, comparison, paste0("KEGG_GSEA_", config$gsea_sensitivity_rank, "_sensitivity"),
+          sensitivity_kegg_gsea, sensitivity_kegg$rank, describe_kegg_pathways
+        )
+        untested_rows <- untested$table
+        record$sensitivity_kegg_gsea_untested_set_count <- untested$count
         record$sensitivity_kegg_gsea_seed <- sensitivity_kegg_gsea$seed
         record$sensitivity_kegg_gsea_term_count <- result_count(sensitivity_kegg_gsea$value)
         record$sensitivity_kegg_gsea_output <- write_result(
@@ -564,6 +655,7 @@ process_comparison <- function(index_row) {
         record$sensitivity_kegg_rank_source_column <- NA_character_
         record$sensitivity_kegg_gsea_analysis_role <- NA_character_
         record$sensitivity_kegg_mapping_audit <- NA_character_
+        record$sensitivity_kegg_gsea_untested_set_count <- NA_integer_
         record$sensitivity_kegg_gsea_seed <- NA_integer_
         record$sensitivity_kegg_gsea_term_count <- NA_integer_
         record$sensitivity_kegg_gsea_output <- NA_character_
@@ -622,6 +714,8 @@ process_comparison <- function(index_row) {
       }
     } else {
       record$kegg_rank_vector_size <- 0L
+      record$kegg_gsea_untested_set_count <- NA_integer_
+      record$sensitivity_kegg_gsea_untested_set_count <- NA_integer_
       record$kegg_gsea_term_count <- 0L
       record$kegg_gsea_output <- NA_character_
       record$kegg_mapping_audit <- NA_character_
@@ -670,11 +764,15 @@ process_comparison <- function(index_row) {
       record$custom_nk3r_gsea_analysis_role <- "canonical"
     }
 
+    record$gsea_untested_set_count <- nrow(untested_rows)
+    record$gsea_untested_sets_path <- write_enrichment_csv(untested_rows, file.path(audit_dir, "gsea_untested_sets.csv"))
     record$warning_count <- nrow(warning_rows)
     record$warnings_path <- write_enrichment_csv(warning_rows, file.path(audit_dir, "warnings.csv"))
     record$execution_status <- "success"
   }, error = function(e) {
     record$error_message <<- conditionMessage(e)
+    record$gsea_untested_set_count <<- nrow(untested_rows)
+    record$gsea_untested_sets_path <<- write_enrichment_csv(untested_rows, file.path(audit_dir, "gsea_untested_sets.csv"))
     record$warning_count <<- nrow(warning_rows)
     record$warnings_path <<- write_enrichment_csv(warning_rows, file.path(audit_dir, "warnings.csv"))
   })

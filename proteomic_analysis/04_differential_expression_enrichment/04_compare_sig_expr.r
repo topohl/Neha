@@ -2,7 +2,7 @@
 
 # Compare protein-level differential statistics for the established learning
 # and paired-CNO contrasts. The animal-level mapped branch contains contrast
-# statistics, not per-animal expression, so this script deliberately produces
+# statistics, not per-animal expression, so this script produces
 # contrast-statistic concordance outputs only.
 
 script_file <- grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE)

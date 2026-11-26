@@ -1,13 +1,12 @@
 #!/usr/bin/env Rscript
 
-# Data-integrity contracts for the validated animal-level artefacts on shared storage.
+# Checks the validated animal-level files on the shared drive: the hash of the primary input
+# GCT, the pooled mapped index (02_data/animal_level/mapped) read with hash checks on, and
+# every path + SHA-256 pair recorded in the index and manifest CSVs under 02_data and
+# 03_output. Moved folders break the recorded absolute paths, so this finds a broken path
+# before the next pipeline run does.
 #
-# Added 2026-08-26 alongside the input/data/output restructure. Folder moves cannot alter
-# file contents, but they DO invalidate the absolute paths recorded inside index/manifest
-# CSVs -- and those are actively file.exists()- and hash-verified at read time. These
-# contracts catch a broken provenance chain immediately instead of at the next pipeline run.
-#
-# Skips cleanly when the shared drive is unreachable, so it is safe in CI.
+# Skips when digest is missing or the shared drive is not reachable.
 
 args <- commandArgs(trailingOnly = FALSE)
 file_arg <- grep("^--file=", args, value = TRUE)
@@ -21,7 +20,7 @@ source(file.path(repo_root, "R", "project_path_utils.R"))
 source(file.path(repo_root, "R", "animal_level_enrichment_utils.R"))
 
 if (!requireNamespace("digest", quietly = TRUE)) {
-  cat("digest not installed; skipping data-integrity contracts.\n")
+  cat("digest not installed; skipping data-integrity checks.\n")
   quit(save = "no", status = 0L)
 }
 
@@ -55,7 +54,7 @@ mapped_root <- file.path(data_root, "02_data", "animal_level", "mapped")
 mapped_index <- file.path(mapped_root, "indexMappedComparisons.csv")
 
 if (!file.exists(gct_path)) {
-  cat("Shared data root not reachable; skipping data-integrity contracts.\n")
+  cat("Shared data root not reachable; skipping data-integrity checks.\n")
   cat("  expected:", gct_path, "\n")
   cat("  set PROTEOMICS_PROJECT_DATA_ROOT to run them.\n")
   quit(save = "no", status = 0L)
@@ -64,7 +63,7 @@ if (!file.exists(gct_path)) {
 cat("=== validated animal-level GCT ===\n")
 observed <- project_file_sha256(gct_path)
 expect(identical(observed, PRIMARY_GCT_SHA256),
-       sprintf("primary GCT SHA256 matches the locked contract (%s)", substr(observed, 1, 16)))
+       sprintf("primary GCT SHA256 matches the locked value (%s)", substr(observed, 1, 16)))
 
 cat("\n=== recorded provenance still resolves and verifies ===\n")
 if (!file.exists(mapped_index)) {
@@ -123,6 +122,6 @@ if (length(problems)) for (p in unique(problems)) cat("      -", p, "\n")
 
 cat("\n=== RESULT ===\n")
 if (failures > 0L) {
-  stop(sprintf("Data-integrity contracts failed: %d", failures), call. = FALSE)
+  stop(sprintf("Data-integrity checks failed: %d", failures), call. = FALSE)
 }
-cat("All data-integrity contracts hold.\n")
+cat("All data-integrity checks hold.\n")

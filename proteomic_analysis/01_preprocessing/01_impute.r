@@ -27,9 +27,8 @@ output_dir <- option_or_env(
     file.path(project_root, "02_data", "gct")
 )
 
-# This is a historical preprocessing stage: its raw .tsv input is not present in the current
-# project tree (the validated pipeline consumes the already-imputed matrix under 02_data/gct).
-# Fail with an actionable message rather than an opaque file-not-found.
+# Historical stage: its raw .tsv input is not in the project tree (the pipeline starts from the
+# imputed matrix in 02_data/gct), so stop with a message that says how to supply it.
 if (!file.exists(input_path)) {
     stop(
         "Raw input matrix not found: ", input_path,

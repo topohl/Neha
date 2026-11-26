@@ -1,28 +1,18 @@
 # ==============================================================================
-# Rank-abundance and marker-validation QC, ANIMAL LEVEL
+# Rank-abundance and marker-validation QC at the animal level
 #
 # Regenerates the rank-abundance panels used in the corrected proteomics figures:
 #   Figure 3E                 mcherry_paired-veh  + mcherry_unpaired-veh
 #   Supplementary proteomics D  neuron_unpaired-veh + neuropil_unpaired-veh
 #
-# ------------------------------------------------------------------------------
-# WHY THIS CHANGED (2026-08-28)
+# Reads the animal-level GCT and summarises by sample_class x condition, the grouping of
+# the figure panels; hemisphere-level values are not used. Until 2026-08-28 the stage read
+# per-sample-class imputed workbooks (02_data/gct/imputed/) that are not in the project
+# tree. Ranking, abundance scale and group means are unchanged, and nothing is normalised,
+# filtered or imputed here: 2^MeanLog2 only re-linearises the processed values for the
+# log10 axis.
 #
-# The stage used to read four per-sample-class imputed workbooks from
-# 02_data/gct/imputed/ and summarise by sample_class alone. That folder is not
-# present in the project tree, so the stage was dead -- its output directory had
-# never been created -- and run_pipeline_check.ps1 recorded it as SKIP.
-#
-# It now reads the validated animal-level GCT and summarises by
-# sample_class x condition, which is the grouping the manuscript panels use.
-# Hemisphere-level observations are never used for a biological group summary.
-#
-# NOT changed: the ranking definition, the abundance scale, the group-mean
-# logic, or any normalisation/filtering/imputation. The GCT values are already
-# processed; 2^MeanLog2 is the original re-linearisation for log10 display, not
-# a new transformation.
-#
-# Numerical acceptance reference (verified equal, see the validation audit):
+# Reference output (matched in the validation audit):
 #   03_output/reviewer_revision_animal_level_20260827/full_regenerated/qc/
 #     Processed_Protein_Ranks_animal_level.csv          (16 groups x 5310 rows)
 #   .../figure_panels/Figure3/Fig3E_rank_abundance_animal_level_source_data.csv
@@ -72,11 +62,9 @@ input_gct <- option_or_env(
 )
 
 # The GCT is keyed by UniProt entry name (e.g. NOVA2_MOUSE); the marker sets and
-# the plotted labels are gene symbols. This is the canonical MapThatProt output,
-# used ONLY as a deterministic original_protein_id -> mapped_gene_symbol lookup.
-# Every one of the 12 mapped contrast files carries the same lookup; the forward
-# mcherry learning contrast is named here for definiteness. No fuzzy matching and
-# no fallback: an unmapped protein group is dropped, exactly as in the reference.
+# the plotted labels are gene symbols. This MapThatProt table is used only for the
+# original_protein_id -> mapped_gene_symbol lookup (all 12 mapped files carry the same
+# one). Unmapped protein groups are dropped, as in the reference output.
 id_map_path <- option_or_env(
   "proteomics.rank_abundance_id_map", "PROTEOMICS_RANK_ABUNDANCE_ID_MAP",
   file.path(project_root, "02_data", "animal_level", "mapped", "forward",
@@ -455,15 +443,12 @@ if (length(feature_counts) != 16L || length(unique(as.integer(feature_counts))) 
   stop("Rank-abundance feature accounting differs across validated groups.", call. = FALSE)
 }
 final_feature_count <- unname(as.integer(feature_counts[[1]]))
-# project_file_sha256() hashes bytes read from the file. digest(file = ...) asks
-# file.access() for permission first, and the SMB share answers -1 on inputs that read
-# back byte-perfect, which aborted this stage on intact canonical data. Same digest --
-# see the note in R/project_path_utils.R.
+# project_file_sha256(), not digest(file = ...): see R/project_path_utils.R.
 input_gct_sha256 <- project_file_sha256(input_gct)
 mapping_sha256 <- project_file_sha256(id_map_path)
 run_timestamp_utc <- format(Sys.time(), tz = "UTC", format = "%Y-%m-%dT%H:%M:%SZ")
 
-# All input/design/mapping validation is complete before this first output mutation.
+# All inputs are checked before the first write.
 dir.create(saving_dir, recursive = TRUE, showWarnings = FALSE)
 
 utils::write.csv(

@@ -1,19 +1,15 @@
-# Input, output, identity, and provenance contracts for the canonical
-# animal-level MapThatProt branch. The protein-resolution cascade remains in
-# 02_id_mapping/01_MapThatProt_batch.r.
+# Paths, input/output checks and provenance helpers for 02_id_mapping/01_MapThatProt_batch.r.
+# The identifier lookups themselves are in that script.
 
 if (!exists("project_normalize_path", mode = "function")) {
   stop("R/project_path_utils.R must be sourced before R/mapthatprot_animal_level_utils.R", call. = FALSE)
 }
 
-# Branch-specific: no shared counterpart, kept here.
 mapthatprot_is_absolute_path <- function(path) {
   grepl("^([A-Za-z]:[\\\\/]|\\\\\\\\|/)", path)
 }
 
-# Retained names delegate to the shared primitives in R/project_path_utils.R.
-# Behaviour change on non-Windows only: comparison is now case-insensitive everywhere
-# (previously case-sensitive off Windows). See the note in R/project_path_utils.R.
+# Short names for the path helpers in R/project_path_utils.R.
 normalize_mapthatprot_path <- function(path, must_work = FALSE) project_normalize_path(path, must_work)
 mapthatprot_path_is_within <- function(path, parent) project_path_is_within(path, parent)
 
@@ -28,8 +24,10 @@ mapthatprot_default_paths <- function() {
   historical_root <- file.path(project_root, "99_historical")
   list(
     project_root = project_root,
-    split_root = file.path(animal_root, "split"),
-    output_root = file.path(animal_root, "mapped"),
+    # Defaults follow the primary per-compartment run (2026-11-24), as in 03_gct_extractR.r and
+    # 01_clusterProfiler.r; the superseded pooled split/ and mapped/ are used only when named.
+    split_root = file.path(animal_root, "within_compartment_20261124", "split"),
+    output_root = file.path(animal_root, "within_compartment_20261124", "mapped"),
     uniprot_mapping_file = file.path(project_root, "01_input", "references", "MOUSE_10090_idmapping.dat"),
     manual_mapping_file = file.path(project_root, "01_input", "references", "manual_mapping.xlsx"),
     historical_roots = file.path(
@@ -61,7 +59,8 @@ resolve_mapthatprot_config <- function(
     output_root = Sys.getenv("PROTEOMICS_MAPTHATPROT_OUTPUT_ROOT", unset = ""),
     direction = Sys.getenv("PROTEOMICS_MAPTHATPROT_DIRECTION", unset = "forward"),
     uniprot_mapping_file = Sys.getenv("PROTEOMICS_MAPTHATPROT_REFERENCE_FILE", unset = ""),
-    manual_mapping_file = Sys.getenv("PROTEOMICS_MAPTHATPROT_MANUAL_MAPPING_FILE", unset = "")) {
+    manual_mapping_file = Sys.getenv("PROTEOMICS_MAPTHATPROT_MANUAL_MAPPING_FILE", unset = ""),
+    force = Sys.getenv("PROTEOMICS_MAPTHATPROT_FORCE", unset = "false")) {
   defaults <- mapthatprot_default_paths()
   choose <- function(value, default) if (nzchar(trimws(value))) value else default
   direction <- tolower(trimws(direction))
@@ -74,6 +73,15 @@ resolve_mapthatprot_config <- function(
     split_root,
     defaults$historical_roots
   )
+  # An existing mapped index is an input of enrichment and the release, so it is replaced only
+  # when PROTEOMICS_MAPTHATPROT_FORCE=true. This runs before the stage writes anything.
+  index_name <- if (identical(direction, "reverse")) "indexMappedComparisons_reverse.csv" else "indexMappedComparisons.csv"
+  force_replace <- tolower(trimws(as.character(force))) %in% c("true", "1", "yes")
+  if (file.exists(file.path(output_root, index_name)) && !isTRUE(force_replace)) {
+    stop("Mapped index already exists; set PROTEOMICS_MAPTHATPROT_FORCE=true to replace it: ",
+         file.path(output_root, index_name), call. = FALSE)
+  }
+
   list(
     direction = direction,
     split_root = split_root,
@@ -279,8 +287,7 @@ validate_mapthatprot_partition <- function(input, mapped, unmapped) {
   TRUE
 }
 
-# Digest delegated to project_file_sha256() -- see the note there on why
-# digest(file = ...) is unsafe against this project's SMB share.
+# Hashes with project_file_sha256(); see R/project_path_utils.R.
 mapthatprot_sha256 <- function(path) {
   if (!requireNamespace("digest", quietly = TRUE)) stop("The digest package is required for SHA-256 provenance.", call. = FALSE)
   project_file_sha256(normalize_mapthatprot_path(path, must_work = TRUE))

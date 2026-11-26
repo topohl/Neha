@@ -75,7 +75,7 @@ expect_identical(nrow(validated$sample_metadata), 48L, "Animal-level metadata ro
 expect_true(!anyDuplicated(paste(validated$sample_metadata$AnimalID, validated$sample_metadata$Stratum, sep = "\r")),
             "More than one sample entered an AnimalID x sample_class unit.")
 expect_true(all(validated$count_audit$n_animals == 3L), "Every sample_class x condition must contain exactly three animals.")
-expect_identical(validated$transformations_after_aggregation, "none", "Animal-level input contract introduced a transformation.")
+expect_identical(validated$transformations_after_aggregation, "none", "Animal-level input check introduced a transformation.")
 
 manifest <- primary_contrast_manifest()
 expect_identical(nrow(manifest), 12L, "EWCE must use exactly the 12 shared primary contrasts.")
@@ -142,7 +142,7 @@ duplicate_fixture$column_metadata["AnimalID", 2] <- duplicate_fixture$column_met
 expect_error(
   validate_ewce_animal_input(duplicate_fixture, "duplicate.gct"),
   "duplicated within sample_class/condition",
-  "Duplicate AnimalID within a sample-class condition must fail closed."
+  "Duplicate AnimalID within a sample-class condition must stop with an error."
 )
 
 hemisphere_fixture <- fixture_gct
@@ -169,7 +169,7 @@ inconsistent_fixture$column_metadata["AnimalID", inconsistent_col] <- "AX"
 expect_error(
   validate_ewce_animal_input(inconsistent_fixture, "inconsistent.gct"),
   "inconsistent AnimalID membership",
-  "Inconsistent animal membership across sample classes must fail closed."
+  "Inconsistent animal membership across sample classes must stop with an error."
 )
 
 missing_animal_fixture <- fixture_gct
@@ -177,7 +177,7 @@ missing_animal_fixture$column_metadata["AnimalID", 1] <- ""
 expect_error(
   validate_ewce_animal_input(missing_animal_fixture, "missing_animal.gct"),
   "AnimalID is missing",
-  "Missing AnimalID must fail closed."
+  "Missing AnimalID must stop with an error."
 )
 
 underfilled_fixture <- fixture_gct
@@ -186,7 +186,7 @@ underfilled_fixture$column_metadata <- underfilled_fixture$column_metadata[, -1,
 expect_error(
   validate_ewce_animal_input(underfilled_fixture, "underfilled.gct"),
   "exactly 3 animals per sample_class/condition",
-  "An animal-level group with fewer than three animals must fail closed."
+  "An animal-level group with fewer than three animals must stop with an error."
 )
 
 nonfinite_fixture <- fixture_gct
@@ -226,7 +226,7 @@ expect_true(all(audits$execution_status == "success"), "Differential audit execu
 expect_true(all(audits$post_aggregation_normalization == "none" &
                   audits$post_aggregation_filtering == "none" &
                   audits$post_aggregation_imputation == "none"),
-            "Differential audit does not preserve the no-transform contract.")
+            "Differential audit does not preserve the no-transform check.")
 required_audit_columns <- c(
   "canonical_comparison", "sample_class", "numerator_condition", "denominator_condition",
   "numerator_animal_n", "denominator_animal_n", "animal_ids_used",
@@ -246,8 +246,7 @@ expect_error(
   "Animal-level EWCE output must reject the historical result root."
 )
 
-# Accept path: an isolated root outside the historical tree must be returned unchanged.
-# (Previously only the reject path was covered here, unlike tests/test_pca_animal_level.R.)
+# An isolated root outside the historical tree is accepted.
 ewce_isolated_root <- validate_ewce_output_root(
   file.path(tempdir(), "animal_ewce"),
   file.path(tempdir(), "historical")
@@ -259,7 +258,7 @@ expect_true(!ewce_path_is_within(ewce_isolated_root, file.path(tempdir(), "histo
 
 ewce_script <- paste(readLines(file.path(repo_root, "05_celltype_enrichment_EWCE", "01_EWCE.r"), warn = FALSE), collapse = "\n")
 expect_true(grepl("validate_ewce_animal_input\\(animal_gct", ewce_script),
-            "EWCE does not consume the validated animal-level input contract.")
+            "EWCE does not consume the validated animal-level input check.")
 expect_true(grepl("limma::lmFit\\(limma_input\\$expression_matrix, limma_input\\$design\\)", ewce_script),
             "Limma is not fitted to the validated animal-level matrix and design.")
 expect_true(grepl("trend = TRUE", ewce_script, fixed = TRUE) && grepl("robust = TRUE", ewce_script, fixed = TRUE),

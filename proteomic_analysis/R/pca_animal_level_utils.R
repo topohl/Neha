@@ -1,17 +1,17 @@
-# Focused input, preprocessing, and audit contracts for animal-level PCA.
+# Input checks, PCA preparation, audit table and optional-plot helpers for the animal-level
+# PCA (03_qc_exploration/pca/).
 
 if (!exists("project_normalize_path", mode = "function")) {
   stop("R/project_path_utils.R must be sourced before R/pca_animal_level_utils.R", call. = FALSE)
 }
 
-# Retained names delegate to the shared primitives in R/project_path_utils.R.
+# Short names for the path helpers in R/project_path_utils.R.
 pca_normalize_path <- function(path, must_work = FALSE) project_normalize_path(path, must_work)
 pca_path_is_within <- function(path, root) project_path_is_within(path, root)
 
 validate_pca_output_root <- function(output_root, historical_root) {
-  # Message text is asserted by tests/test_pca_animal_level.R; keep it verbatim. Note the
-  # historical root (not the output root) is named, which is why this does not use the
-  # shared project_validate_output_root() helper.
+  # tests/test_pca_animal_level.R matches this message. It names the historical root, not the
+  # output root, so it does not use project_validate_output_root().
   output_root <- pca_normalize_path(output_root)
   historical_root <- pca_normalize_path(historical_root)
   if (pca_path_is_within(output_root, historical_root)) {

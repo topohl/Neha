@@ -1,11 +1,11 @@
 #!/usr/bin/env Rscript
 
-# Contracts for the deprecated R/neha_path_utils.R compatibility shim.
+# Tests for the deprecated shim R/neha_path_utils.R.
 #
-# The shim exists only so that the byte-identical, hash-locked figure-revision snapshots in
-# 06_manuscript_figure_revision/ (and their runnable twins on the shared drive) keep working
-# after the 2026-08-28 rename to R/project_path_utils.R. These checks pin that contract so the
-# shim cannot silently rot, and so its eventual removal is a deliberate, visible decision.
+# The shim keeps the figure scripts in 06_manuscript_figure_revision/ (and their copies on the
+# shared drive) working after the 2026-08-28 rename to R/project_path_utils.R. Those scripts
+# are hash-checked and are not edited. The tests check that the shim only delegates, that its
+# old function names still work and warn, and that no active code sources it.
 
 args <- commandArgs(trailingOnly = FALSE)
 file_arg <- grep("^--file=", args, value = TRUE)
@@ -37,7 +37,7 @@ shim_code <- paste(readLines(shim, warn = FALSE), collapse = "\n")
 expect(!grepl("normalizePath\\(path", shim_code) && !grepl("prcomp", shim_code, fixed = TRUE),
        "shim defines no path or PCA logic of its own -- it only delegates")
 
-cat("\n=== sourcing the shim supplies the path primitives ===\n")
+cat("\n=== sourcing the shim supplies the path helpers ===\n")
 # Mimic the frozen snapshot's source order: shim first, then the PCA utils.
 source(file.path(repo_root, "R", "analysis_labels.R"))
 source(shim)
@@ -57,8 +57,7 @@ expect(exists("validate_neha_pca_animal_input", mode = "function"),
 expect(exists("prepare_neha_animal_pca", mode = "function"),
        "prepare_neha_animal_pca alias is defined")
 
-# Build a real animal-level GCT fixture and parse it, exactly as test_pca_animal_level.R does:
-# 4 sample classes x 4 conditions x 3 animals = 48 units, matching the production contract.
+# Same fixture as test_pca_animal_level.R: 4 sample classes x 4 conditions x 3 animals = 48 units.
 animal_ids_by_condition <- list(
   paired_cno = c("C11", "C12", "C34f"),
   paired_veh = c("C14", "C33f", "C510"),
@@ -122,8 +121,7 @@ active <- list.files(repo_root, recursive = TRUE, full.names = TRUE,
                      pattern = "\\.(r|R|ps1)$")
 active <- active[!grepl("/06_manuscript_figure_revision/|/tests/test_deprecated_path_utils_shim\\.R$|/R/neha_path_utils\\.R$",
                         normalizePath(active, winslash = "/", mustWork = FALSE))]
-# Look for an actual source() of the shim, not a mere mention of its name: the stale-label
-# audit legitimately names the file in its exception list, and the docs describe it.
+# Match a source() call, not the file name: check_stale_labels.R and the docs name the file.
 offenders <- Filter(function(f) {
   any(grepl("source[[:space:]]*\\([^)]*neha_path_utils", readLines(f, warn = FALSE)))
 }, active)
@@ -133,6 +131,6 @@ expect(length(offenders) == 0L,
 
 cat("\n=== RESULT ===\n")
 if (failures > 0L) {
-  stop(sprintf("Deprecated-shim contracts failed: %d", failures), call. = FALSE)
+  stop(sprintf("Deprecated-shim checks failed: %d", failures), call. = FALSE)
 }
-cat("All deprecated-shim contracts hold.\n")
+cat("All deprecated-shim checks hold.\n")

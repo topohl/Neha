@@ -1,9 +1,7 @@
 # ====================================================================
 # Arc, radial, alluvial, ridgeline, hexbin, loading network, parallel coordinates, variance treemap, contour, chord, small multiples, UMAP hexbin marginals
-# Part of the PCA workflow split out of the former monolithic
-# 03_qc_exploration/06_pcaPlot_animal_level.r (2026-08-26). Sourced in order by that
-# script, which remains the entry point. Runs at top level and shares the
-# globals created by 06a_pca_core.r (mat, meta, pca, output_dir, helpers).
+# Sourced in order by 03_qc_exploration/06_pcaPlot_animal_level.r; uses the globals
+# from 06a_pca_core.r (mat, meta, pca, output_dir, helpers).
 # Consumes um from 06b; treemap/chord use the optional-visualization audit trail.
 # ====================================================================
 
@@ -382,7 +380,7 @@ sample_trajectory_multiples <- function(n_samples = 16, group_key = "sample_clas
 }
 sample_trajectory_multiples(16, "sample_class")
 
-message("All innovative visualizations completed!")
+message("Extra PCA visualizations done.")
 
 # hexbin_umap_with_marginals - UMAP version with marginal distributions
 hexbin_umap_with_marginals <- function(group_key = "sample_class") {

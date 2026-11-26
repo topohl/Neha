@@ -107,8 +107,8 @@ if (mode == "excel") {
 new_dfs <- lapply(sheet_dfs, function(df) {
     # Rename "T: Protein.Names" to "id"
     # Rename "T: Protein.Names" or "Protein.Names" to "id"
-    name_col <- intersect(c("T: Protein.Names", "Protein.Names"), colnames(df))
-    if (length(name_col) == 1) {
+    name_col <- intersect(c("T: Protein.Names", "Protein.Names", "Genes"), colnames(df))[1]
+    if (!is.na(name_col)) {
         colnames(df)[colnames(df) == name_col] <- "id"
         df <- df[, c("id", setdiff(colnames(df), "id"))]
     }
@@ -225,7 +225,7 @@ write_gct_v1.3 <- function(df, file, metadata) {
     con <- file(file, "wt")
     on.exit(close(con))
     writeLines("#1.3", con)
-    writeLines(sprintf("%d\t%d", nrow(data_rows), length(sample_cols)), con)
+    writeLines(sprintf("%d\t%d\t0\t0", nrow(data_rows), length(sample_cols)), con)
     writeLines(paste(c("id", sample_cols), collapse = "\t"), con)
     for (i in seq_len(nrow(data_rows))) {
         writeLines(paste(unlist(data_rows[i, c("id", sample_cols)]), collapse = "\t"), con)

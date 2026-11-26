@@ -1,10 +1,11 @@
-# Focused sampling-unit contracts for the animal-level EWCE branch.
+# Input checks, contrast metadata, limma inputs and audit table for the animal-level EWCE
+# stage (05_celltype_enrichment_EWCE/01_EWCE.r).
 
 if (!exists("project_normalize_path", mode = "function")) {
   stop("R/project_path_utils.R must be sourced before R/ewce_animal_level_utils.R", call. = FALSE)
 }
 
-# Retained names delegate to the shared primitives in R/project_path_utils.R.
+# Short names for the path helpers in R/project_path_utils.R.
 ewce_normalize_path <- function(path, must_work = FALSE) project_normalize_path(path, must_work)
 ewce_path_is_within <- function(path, root) project_path_is_within(path, root)
 

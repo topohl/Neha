@@ -94,7 +94,7 @@ right_values <- values[, right_only$sample_id, drop = FALSE]
 right_agg <- aggregate_animal_level_matrix(right_values, rownames(values), right_plan)
 expect_identical(unname(right_agg$primary["P1", "A1_cfos"]), 3, "Right-only observation was not retained exactly.")
 
-# 7. Missing-both units are represented explicitly and omitted from matrices.
+# 7. Missing-both units are listed in the audit and left out of the matrices.
 missing_expected <- rbind(
   expected_units,
   data.frame(AnimalID = "A2", sample_class = "neuron", condition_code = "2", condition = "paired_veh")
@@ -173,4 +173,4 @@ expect_true(
 )
 
 unlink(gct_path)
-message("Animal-level proteomics and ProTigy GCT tests passed (20 focused contracts).")
+message("Animal-level proteomics and ProTigy GCT tests passed (20 focused checks).")

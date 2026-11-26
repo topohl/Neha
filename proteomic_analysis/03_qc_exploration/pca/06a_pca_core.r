@@ -1,13 +1,9 @@
 # ====================================================================
 # PCA core: config, helpers, validated input, base plots, audit
-# Part of the PCA workflow split out of the former monolithic
-# 03_qc_exploration/06_pcaPlot_animal_level.r (2026-08-26). Sourced in order by that
-# script, which remains the entry point. Runs at top level and shares the
-# globals created by 06a_pca_core.r (mat, meta, pca, output_dir, helpers).
+# Sourced first by 03_qc_exploration/06_pcaPlot_animal_level.r.
 # Defines mat/meta/pca and the shared helpers every other part uses.
 # ====================================================================
 
-# ================== PCA analysis and plotting (extended, fixed, organized) ==================
 # Set a reliable CRAN mirror
 options(repos = c(CRAN = "https://cloud.r-project.org"))
 
