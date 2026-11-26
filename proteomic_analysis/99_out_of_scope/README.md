@@ -1,56 +1,29 @@
 # Out of scope
 
-Code that lives in this repository for historical reasons but does **not** belong to this
-proteomics analysis. Nothing here is part of the numbered pipeline, nothing here is invoked by
-`run_pipeline_check.ps1`, and nothing here reads or writes this project's data.
-
-Everything in this folder must refuse to run unless it is explicitly opted into.
+Code kept here for historical reasons that does not belong to this proteomics analysis.
+Nothing here is part of the numbered pipeline or run by `run_pipeline_check.ps1`, and
+nothing here reads or writes this project's data. Each script refuses to run without an opt-in.
 
 ## `05_metadata_create_EXP9.r`
 
-Belongs to **Exp9_Social-Stress**, not this project. It reads `TPE9_*` workbooks from the Exp9 project
-folder and writes two files back into it:
+Belongs to Exp9_Social-Stress. It reads `TPE9_*` workbooks from the Exp9 project folder
+(`Exp9_Social-Stress/proteomics/`) and writes two files back into it:
 
-- `TPE9_samples_males_processed.tsv`
+- `TPE9_samples_males_processed.tsv` (already exists there and would be overwritten)
 - `TPE9_samples_males_long_with_metadata.xlsx`
 
-It was inherited when this repository was seeded from Exp9 — the same origin as the
-`quicksearch.stats.annotated.xlsx` default described in `CANONICAL_OUTPUTS.md`.
+It came with the Exp9 code this repository was started from, like the
+`quicksearch.stats.annotated.xlsx` default described in `CANONICAL_OUTPUTS.md`. Until 2026-08-27
+it sat at `01_preprocessing/05_metadata_create.r` with no guard, so running it directly would
+have overwritten the Exp9 file. It was moved here, and an opt-in check and the
+`PROTEOMICS_EXP9_WORK_DIR` override were added; the rest of the script is unchanged.
 
-### Why it moved
-
-It previously sat at `01_preprocessing/05_metadata_create.r`, inside the numbered active stage
-sequence, and it was the only active-stage script with no `option_or_env()` override, no write
-guard, and no sourcing of `R/*_utils.R`. On the shared drive every precondition for an accidental
-cross-project overwrite was satisfied:
-
-| precondition | state |
-|---|---|
-| `Exp9_Social-Stress/proteomics/` exists | yes |
-| `TPE9_sample_metadata_males.xlsx` (read) | exists |
-| `TPE9_samples_males.xlsx` (glob) | exists |
-| `TPE9_samples_males_processed.tsv` (write) | **already exists → would be overwritten** |
-
-`run_pipeline_check.ps1` already recorded the stage as `SKIP` with the reason *"belongs to a
-different project (Exp9_Social-Stress)"*, so the runner never executed it. The gap was direct
-invocation: `Rscript 01_preprocessing/05_metadata_create.r` — the pattern the README documents for
-running a single stage — ran to completion with no warning.
-
-### Running it deliberately
-
-```bash
-PROTEOMICS_ALLOW_EXP9=true Rscript 99_out_of_scope/05_metadata_create_EXP9.r
-```
-
-The target directory can be redirected away from the live Exp9 folder, which is strongly
-recommended for any test run:
+To run it, preferably with the output redirected to scratch:
 
 ```bash
 PROTEOMICS_ALLOW_EXP9=true PROTEOMICS_EXP9_WORK_DIR=/some/scratch/dir \
   Rscript 99_out_of_scope/05_metadata_create_EXP9.r
 ```
 
-Both settings are also available as R options: `proteomics.allow_exp9`, `proteomics.exp9_work_dir`.
-
-The analysis body of the script is unchanged from the version that sat in `01_preprocessing/`;
-only the banner, the guard and the two path overrides were added.
+Without `PROTEOMICS_EXP9_WORK_DIR` it writes to the live Exp9 folder. The R options
+`proteomics.allow_exp9` and `proteomics.exp9_work_dir` do the same as the two variables.

@@ -1,3 +1,7 @@
+# Small self-contained demo, run in CI by .github/workflows/proteomic-analysis-demo.yml. It
+# parses the sample and comparison labels in demo/input with R/analysis_labels.R, writes two
+# tables to demo/output and checks them against demo/expected_output.
+
 args <- commandArgs(trailingOnly = FALSE)
 file_arg <- grep("^--file=", args, value = TRUE)
 script_path <- if (length(file_arg) == 1) sub("^--file=", "", file_arg) else "run_demo.R"

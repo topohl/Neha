@@ -9,21 +9,8 @@
 # repository was seeded from Exp9 (the same origin as the quicksearch.stats
 # default described in CANONICAL_OUTPUTS.md).
 #
-# It used to sit at 01_preprocessing/05_metadata_create.r, inside the numbered
-# active stage sequence, with no path override and no guard. Every precondition
-# for an accidental cross-project overwrite was satisfied on the shared drive:
-# the Exp9 folder exists, both inputs exist, and TPE9_samples_males_processed.tsv
-# already exists, so a direct `Rscript` invocation would have silently replaced
-# a real file belonging to another experiment.
-#
-# It is therefore quarantined here and refuses to run unless you opt in:
-#     PROTEOMICS_ALLOW_EXP9=true Rscript 99_out_of_scope/05_metadata_create_EXP9.r
-# and the target directory can be redirected away from the live Exp9 folder:
-#     PROTEOMICS_EXP9_WORK_DIR=/some/scratch/dir
-#
-# run_pipeline_check.ps1 already records this stage as SKIP with the reason
-# "belongs to a different project (Exp9_Social-Stress)"; the guard below makes
-# that true for direct invocation as well.
+# Runs only with PROTEOMICS_ALLOW_EXP9=true; PROTEOMICS_EXP9_WORK_DIR redirects the output.
+# Why it is here: 99_out_of_scope/README.md.
 # ==============================================================================
 
 option_or_env <- function(option_name, env_name, default) {

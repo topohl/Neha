@@ -1,0 +1,11 @@
+# LF line endings in the repository and in every checkout, so files hashed by the
+# release (e.g. proteomic_analysis/07_publication_release/metadata/*.tsv) have the
+# same bytes on every machine. proteomic_analysis/06_manuscript_figure_revision/.gitattributes
+# keeps the executed figure scripts byte-for-byte.
+* text=auto eol=lf
+
+*.pdf binary
+*.png binary
+*.xlsx binary
+*.gz binary
+*.zip binary

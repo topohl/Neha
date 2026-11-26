@@ -1,13 +1,11 @@
 <#
-    Contracts for the fail-closed safety gates in run_pipeline_safety.ps1.
+    Tests for the checks in run_pipeline_safety.ps1: a checkout that changes mid-run, stage
+    code that only reads the old NEHA_* variables, output paths outside scratch or inside the
+    protected shared-drive folders, and leftover override variables.
 
-    These cover the exact 2026-08-28 incident class: a runner loaded from one commit, a tree
-    checked out to another mid-run, stage scripts expecting the pre-rename NEHA_* variables,
-    and producing stages silently writing to canonical shared-drive defaults.
-
-    Everything here runs against temporary fixtures. NOTHING touches the real shared drive:
-    the protected-root checks are string/containment assertions against synthetic paths, and
-    no R stage is ever invoked.
+    Most tests use temporary fixtures. Section 3 also reads the real git checkout and section 6
+    reads the real runner and stage scripts. The protected-root tests compare path strings
+    only, so nothing on the shared drive is opened, and no R stage is run.
 #>
 
 $ErrorActionPreference = "Stop"
@@ -40,7 +38,7 @@ function Assert-Throws([scriptblock]$body, [string]$mustContain, [string]$msg) {
     }
 }
 
-# --------------------------------------------------------------------------- fixtures
+# Fixtures
 $tmp = Join-Path $env:TEMP ("runner_safety_test_" + [guid]::NewGuid().ToString("N").Substring(0, 8))
 $scratch = Join-Path $tmp "scratch"
 $fakeRepo = Join-Path $tmp "repo"
@@ -48,8 +46,8 @@ New-Item -ItemType Directory -Force -Path $scratch | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $fakeRepo "stages") | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $fakeRepo "R") | Out-Null
 
-# A stage fixture that correctly consumes the modern override, via a sourced helper --
-# mirroring how the real PCA and enrichment stages resolve their roots.
+# Stage that reads the current override through a sourced helper, as the real PCA and
+# enrichment stages do.
 $modernStage = Join-Path $fakeRepo "stages\modern_stage.r"
 @'
 # fixture: resolves its output root through a sourced helper
@@ -59,8 +57,7 @@ source(file.path(repo_root, "R", "modern_helper.R"))
 out <- option_or_env("proteomics.demo_output_root", "PROTEOMICS_DEMO_OUTPUT_ROOT", default_root)
 '@ | Set-Content -LiteralPath (Join-Path $fakeRepo "R\modern_helper.R") -Encoding utf8
 
-# A stage fixture frozen at the pre-rename generation: it only knows NEHA_*.
-# This is precisely the file the incident ran.
+# Stage from before the rename: it only reads NEHA_*.
 $legacyStage = Join-Path $fakeRepo "stages\legacy_stage.r"
 @'
 out <- option_or_env("neha.demo_output_root", "NEHA_DEMO_OUTPUT_ROOT", default_root)
@@ -73,7 +70,7 @@ $muteStage = Join-Path $fakeRepo "stages\mute_stage.r"
 Write-Host ""
 Write-Host "=== 1. normal current-tree execution ===" -ForegroundColor Cyan
 
-Test-Case "modern stage: override contract recognised (via sourced helper)" {
+Test-Case "modern stage: override check recognised (via sourced helper)" {
     [void](Assert-OverrideContract -RepoRoot $fakeRepo -StageFullPath $modernStage `
             -EnvNames @("PROTEOMICS_DEMO_OUTPUT_ROOT") -StageName "modern")
 }
@@ -88,7 +85,7 @@ Test-Case "identical repo fingerprints report no drift" {
     [void](Assert-NoCheckoutDrift -StartupState $s -CurrentState $s.Clone() -StageName "modern")
 }
 
-Test-Case "env map with only its own overrides passes the stale-variable gate" {
+Test-Case "env map with only its own overrides passes the stale-variable check" {
     $env:PROTEOMICS_DEMO_OUTPUT_ROOT = (Join-Path $scratch "demo")
     try {
         [void](Assert-NoStaleOverridesPresent -EnvMap @{ PROTEOMICS_DEMO_OUTPUT_ROOT = "x" } -StageName "modern")
@@ -98,13 +95,13 @@ Test-Case "env map with only its own overrides passes the stale-variable gate" {
 }
 
 Write-Host ""
-Write-Host "=== 2. override-contract mismatch (the incident's root cause) ===" -ForegroundColor Cyan
+Write-Host "=== 2. stage code that does not read the override ===" -ForegroundColor Cyan
 
 Test-Case "runner sets PROTEOMICS_*, stage only knows NEHA_* -> ABORT" {
     Assert-Throws {
         [void](Assert-OverrideContract -RepoRoot $fakeRepo -StageFullPath $legacyStage `
                 -EnvNames @("PROTEOMICS_DEMO_OUTPUT_ROOT") -StageName "legacy")
-    } "OVERRIDE CONTRACT NOT SATISFIED" "a legacy stage must not be accepted"
+    } "OVERRIDE CHECK NOT SATISFIED" "a legacy stage must not be accepted"
 }
 
 Test-Case "the abort names the pre-rename variable the stage actually expects" {
@@ -118,10 +115,10 @@ Test-Case "stage naming no override at all -> ABORT" {
     Assert-Throws {
         [void](Assert-OverrideContract -RepoRoot $fakeRepo -StageFullPath $muteStage `
                 -EnvNames @("PROTEOMICS_DEMO_OUTPUT_ROOT") -StageName "mute")
-    } "OVERRIDE CONTRACT NOT SATISFIED" "a stage with no override must not be accepted"
+    } "OVERRIDE CHECK NOT SATISFIED" "a stage with no override must not be accepted"
 }
 
-Test-Case "no output directory is created by a contract abort" {
+Test-Case "no output directory is created by a check abort" {
     $target = Join-Path $scratch "never_created"
     try {
         [void](Assert-OverrideContract -RepoRoot $fakeRepo -StageFullPath $legacyStage `
@@ -158,7 +155,7 @@ Test-Case "repository root change -> ABORT" {
     } "REPOSITORY CHECKOUT DRIFT DETECTED" "a root change must abort"
 }
 
-Test-Case "renamed-away stage script -> ABORT (the PCA symptom in the incident)" {
+Test-Case "renamed-away stage script -> ABORT" {
     Assert-Throws {
         [void](Assert-StageScriptResolves -RepoRoot $fakeRepo -StageRelPath "stages\vanished_stage.r" -StageName "pca")
     } "stage script not found" "a missing stage script must abort"
@@ -183,13 +180,13 @@ Test-Case "destination outside the scratch root -> ABORT" {
     } "OUTSIDE this run's scratch root" "a non-scratch destination must abort"
 }
 
-# Synthetic protected-root strings only -- these are never opened, only compared.
+# Synthetic paths, compared as strings and never opened.
 Test-Case "destination inside the protected 02_data root -> ABORT" {
     Assert-Throws {
         [void](Assert-SafeOutputTarget -EnvName "PROTEOMICS_ANIMAL_LEVEL_OUTPUT_DIR" `
                 -Value "S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/02_data/animal_level/input_gct" `
                 -ScratchRoot $scratch -StageName "02a")
-    } "PROTECTED canonical root" "the exact incident destination must be rejected"
+    } "PROTECTED canonical root" "02_data/animal_level/input_gct must be rejected"
 }
 
 Test-Case "destination inside the protected 03_output root -> ABORT" {
@@ -211,7 +208,7 @@ Test-Case "destination inside the protected 99_historical root -> ABORT" {
 Test-Case "protected root is rejected in UNC spelling too" {
     Assert-Throws {
         [void](Assert-SafeOutputTarget -EnvName "PROTEOMICS_ANIMAL_LEVEL_OUTPUT_DIR" `
-                -Value "\\mdc-berlin.net\fs\AG_Hoernberg\Lab_Member\Tobi\Experiments\Collabs\Neha\clusterProfiler\02_data\animal_level\split" `
+                -Value "\\server\share\Lab_Member\Tobi\Experiments\Collabs\Neha\clusterProfiler\02_data\animal_level\split" `
                 -ScratchRoot $scratch -StageName "03_split")
     } "PROTECTED canonical root" "the UNC spelling of the protected root must also be rejected"
 }
@@ -276,9 +273,9 @@ Test-Case "an unexpected override present at invoke time -> ABORT" {
 }
 
 Write-Host ""
-Write-Host "=== 6. the real runner wires the gates in ===" -ForegroundColor Cyan
+Write-Host "=== 6. the real runner runs the checks ===" -ForegroundColor Cyan
 
-Test-Case "run_pipeline_check.ps1 dot-sources the safety library and gates Invoke-Stage" {
+Test-Case "run_pipeline_check.ps1 dot-sources the safety library and checks before Invoke-Stage" {
     $runner = Get-Content -LiteralPath (Join-Path (Split-Path $PSScriptRoot -Parent) "run_pipeline_check.ps1") -Raw
     foreach ($needle in @(
         "run_pipeline_safety.ps1",
@@ -293,11 +290,11 @@ Test-Case "run_pipeline_check.ps1 dot-sources the safety library and gates Invok
     Assert-True ($runner -like "*ABORT*") "runner does not record an ABORT status"
 }
 
-Test-Case "every real producing stage satisfies its own override contract right now" {
+Test-Case "every real producing stage satisfies its own override check right now" {
     $repoRoot = Split-Path $PSScriptRoot -Parent
     $stages = @{
         "01_preprocessing\02a_prepare_animal_level_protigy_input.r"        = @("PROTEOMICS_ANIMAL_LEVEL_OUTPUT_DIR")
-        "01_preprocessing\03_gct_extractR.r"                               = @("PROTEOMICS_PROTIGY_STAT_GCT_OUTPUT_ROOT")
+        "01_preprocessing\03_gct_extractR.r"                               = @("PROTEOMICS_PROTIGY_STAT_GCT_INPUT", "PROTEOMICS_PROTIGY_STAT_GCT_OUTPUT_ROOT")
         "03_qc_exploration\06_pcaPlot_animal_level.r"                      = @("PROTEOMICS_PCA_OUTPUT_ROOT")
         "03_qc_exploration\02_rank_abundance_by_sample_class.r"            = @("PROTEOMICS_RANK_ABUNDANCE_OUTPUT_DIR")
         "02_id_mapping\01_MapThatProt_batch.r"                             = @("PROTEOMICS_MAPTHATPROT_SPLIT_ROOT", "PROTEOMICS_MAPTHATPROT_OUTPUT_ROOT")
@@ -310,15 +307,15 @@ Test-Case "every real producing stage satisfies its own override contract right 
     }
 }
 
-# --------------------------------------------------------------------------- teardown
+# Clean up
 Remove-Item -Recurse -Force -LiteralPath $tmp -ErrorAction SilentlyContinue
 
 Write-Host ""
 Write-Host "=== RESULT ===" -ForegroundColor Cyan
 Write-Host ("passed: {0}   failed: {1}" -f $script:pass, $script:fail)
 if ($script:fail -gt 0) {
-    Write-Host "Runner-safety contracts FAILED." -ForegroundColor Red
+    Write-Host "Runner-safety checks FAILED." -ForegroundColor Red
     exit 1
 }
-Write-Host "All runner-safety contracts hold." -ForegroundColor Green
+Write-Host "All runner-safety checks hold." -ForegroundColor Green
 exit 0

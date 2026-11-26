@@ -1,37 +1,28 @@
 <#
-    Fail-closed safety helpers for run_pipeline_check.ps1.
+    Safety checks that run_pipeline_check.ps1 runs before each producing stage:
+      A. the git checkout (root and HEAD) has not changed since the runner started;
+      B. the stage script, or an R file it names, mentions every override the runner sets;
+      C. every output override is inside this run's scratch folder and outside the
+         validated 02_data, 03_output and 99_historical folders on the shared drive;
+      D. no PROTEOMICS_* or NEHA_* variable is set other than the stage's own.
 
-    WHY THIS EXISTS (incident 2026-08-28 16:36 UTC+2)
-    -------------------------------------------------
-    A smoke run was started from the rebrand branch. PowerShell had already parsed and loaded
-    the runner, which sets PROTEOMICS_* overrides. Mid-run the working tree was checked out
-    back to `main`, whose stage scripts still read the pre-rename NEHA_* variables. The
-    overrides were therefore silently ignored, every stage fell back to its hardcoded default,
-    and two producing stages wrote 37 files into the VALIDATED shared-drive tree
-    (02_data/animal_level/{input_gct,split}) instead of the scratch root.
+    Added after a smoke run on 2026-08-28: the checkout was switched mid-run to a commit whose
+    stage scripts read NEHA_* instead of PROTEOMICS_*, so the overrides were ignored and two
+    stages wrote 37 files into 02_data/animal_level/{input_gct,split} on the shared drive.
 
-    Nothing detected it at the time: the runner had no notion of repository identity, no check
-    that a stage actually understands the override it is being handed, and no check that the
-    resolved destination is inside scratch. Each of those is now a hard gate.
-
-    These are separate, individually testable functions on purpose -- see
-    tests/test_runner_safety.ps1. They THROW on violation and return $true when satisfied, so
-    a caller cannot accidentally treat a failure as a pass.
-
-    PowerShell 5.1 compatible: no ternary, no null-coalescing, no inline if-expressions.
+    The Assert-* functions throw when a check fails; tests/test_runner_safety.ps1 tests them.
+    Keep this file PowerShell 5.1 compatible: no ternary, null-coalescing or inline
+    if-expressions.
 #>
 
-# NOTE: deliberately no Set-StrictMode here. This file is dot-sourced into the runner, and
-# strict mode would leak into the caller's scope and change unrelated behaviour. Every
-# function below validates its own inputs instead (Mandatory parameters + explicit checks).
+# No Set-StrictMode: this file is dot-sourced, so strict mode would carry over into the
+# runner. The functions check their own inputs instead.
 
-# The canonical roots a smoke run must never write into, as forward-slash lowercase path
-# fragments. Matching is segment-aligned CONTAINMENT rather than prefix matching, so the same
-# fragment catches every spelling of the same location:
-#   S:\...\Collabs\Neha\clusterProfiler\02_data\...              (mapped drive, backslashes)
-#   \\mdc-berlin.net\fs\AG_Hoernberg\...\clusterProfiler\02_data (UNC, share prefix in front)
-# A prefix-only check missed the UNC form, which is exactly the kind of near-miss that lets a
-# protected write through.
+# Validated folders a smoke run must never write into, as lowercase forward-slash path
+# fragments. A fragment matches whole path segments anywhere in the path, not just a prefix,
+# so it catches both spellings of the same folder:
+#   S:\...\Collabs\Neha\clusterProfiler\02_data\...    (mapped drive)
+#   \\server\share\...\clusterProfiler\02_data         (UNC path)
 $script:ProtectedRootFragments = @(
     'collabs/neha/clusterprofiler/02_data',
     'collabs/neha/clusterprofiler/03_output',
@@ -67,12 +58,11 @@ function Test-PathWithin {
     return $a.StartsWith($b + '/')
 }
 
-# ------------------------------------------------------------------ A. repository identity
+# A. Repository identity
 
 function Get-GitRepoState {
-    <# Fingerprint the checked-out tree. Fails closed: if the repository identity cannot be
-       established we refuse to run producing stages at all, because the whole point is to
-       detect the tree changing underneath us. #>
+    <# Returns the root, HEAD and branch of the checkout. Throws if git or HEAD cannot be
+       read, because checkout drift could not be detected then. #>
     param([Parameter(Mandatory = $true)][string]$RepoRoot)
 
     $git = Get-Command git -ErrorAction SilentlyContinue
@@ -98,8 +88,7 @@ function Get-GitRepoState {
 }
 
 function Assert-NoCheckoutDrift {
-    <# Pure comparison of two repo fingerprints. This is the gate that would have stopped the
-       2026-08-28 incident: the runner was loaded on one commit and the tree became another. #>
+    <# Throws if the repository root or HEAD differs between two Get-GitRepoState results. #>
     param(
         [Parameter(Mandatory = $true)][hashtable]$StartupState,
         [Parameter(Mandatory = $true)][hashtable]$CurrentState,
@@ -114,7 +103,7 @@ function Assert-NoCheckoutDrift {
         throw ("SAFETY ABORT before stage '{0}': REPOSITORY CHECKOUT DRIFT DETECTED DURING THE SMOKE RUN. " -f $StageName) +
               ("HEAD changed from {0} ({1}) to {2} ({3}). " -f $StartupState.Head, $StartupState.Branch, $CurrentState.Head, $CurrentState.Branch) +
               "The stage scripts on disk are no longer the ones this run started with, so the " +
-              "override contract cannot be trusted and outputs could land outside scratch. Refusing to invoke R."
+              "override check cannot be trusted and outputs could land outside scratch. Refusing to invoke R."
     }
     return $true
 }
@@ -137,15 +126,13 @@ function Assert-StageScriptResolves {
     return $full
 }
 
-# ------------------------------------------------------- B. override-contract validation
+# B. Override variables
 
 function Get-StageContractSearchSet {
-    <# The files that together define a stage's override contract: the stage script plus the
-       files it source()s, followed two levels deep.
-
-       Following source() matters: the PCA orchestrator does not name PROTEOMICS_PCA_OUTPUT_ROOT
-       itself (pca/06a_pca_core.r does), and the mapping/enrichment stages resolve their roots
-       through helpers in R/. A check that only read the stage file would pass vacuously. #>
+    <# The stage script plus every R file it names in quotes, followed two levels deep. The
+       stage file alone is not enough: the PCA orchestrator does not name
+       PROTEOMICS_PCA_OUTPUT_ROOT itself (pca/06a_pca_core.r does), and the mapping and
+       enrichment stages resolve their roots in helpers under R/. #>
     param(
         [Parameter(Mandatory = $true)][string]$RepoRoot,
         [Parameter(Mandatory = $true)][string]$StageFullPath,
@@ -156,7 +143,7 @@ function Get-StageContractSearchSet {
     $seen = @{}
     $seen[(ConvertTo-ComparablePath $StageFullPath)] = $true
 
-    # Index every R file in the repo once, by lowercase basename, excluding frozen provenance.
+    # Index every R file in the repo by lowercase file name, skipping 06_manuscript_figure_revision.
     $index = @{}
     Get-ChildItem -LiteralPath $RepoRoot -Recurse -File -Include *.R, *.r -ErrorAction SilentlyContinue |
         Where-Object { $_.FullName -notmatch '06_manuscript_figure_revision' } |
@@ -194,7 +181,7 @@ function Get-StageContractSearchSet {
 }
 
 function Test-OverrideRecognized {
-    <# Does any file in the contract search set literally reference $EnvName? #>
+    <# Does any file in the search set reference $EnvName? #>
     param(
         [Parameter(Mandatory = $true)][string[]]$SearchSet,
         [Parameter(Mandatory = $true)][string]$EnvName
@@ -209,9 +196,8 @@ function Test-OverrideRecognized {
 }
 
 function Assert-OverrideContract {
-    <# Every override the runner is about to set must actually be consumed by the code that is
-       about to run. This is the direct guard against the incident's root cause: runner on
-       PROTEOMICS_*, stage file on NEHA_*. #>
+    <# Throws unless every override the runner is about to set is named in the stage code. If
+       the code names the old NEHA_* form instead, the message says so. #>
     param(
         [Parameter(Mandatory = $true)][string]$RepoRoot,
         [Parameter(Mandatory = $true)][string]$StageFullPath,
@@ -232,20 +218,20 @@ function Assert-OverrideContract {
                 $legacyHint += (" Stage code still expects the pre-rename '{0}'." -f $legacy)
             }
         }
-        throw ("SAFETY ABORT before stage '{0}': OVERRIDE CONTRACT NOT SATISFIED. " -f $StageName) +
+        throw ("SAFETY ABORT before stage '{0}': OVERRIDE CHECK NOT SATISFIED. " -f $StageName) +
               ("The runner sets {0}, but nothing in the stage's code recognises: {1}." -f ($EnvNames -join ', '), ($missing -join ', ')) +
               $legacyHint +
-              " Without a recognised override the stage would silently fall back to its canonical" +
+              " Without a recognised override the stage would fall back to its" +
               " shared-drive default. Refusing to invoke R."
     }
     return $true
 }
 
-# ------------------------------------------- C. scratch-root / protected-root enforcement
+# C. Output paths
 
 function Assert-SafeOutputTarget {
-    <# The destination the runner hands a stage must be inside this run's scratch root, and
-       must never be inside a protected canonical root. #>
+    <# Throws unless the output path is inside this run's scratch root and outside every
+       protected folder. #>
     param(
         [Parameter(Mandatory = $true)][string]$EnvName,
         [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Value,
@@ -259,8 +245,7 @@ function Assert-SafeOutputTarget {
     if ($norm -eq '') {
         throw ("SAFETY ABORT before stage '{0}': override {1} is empty; refusing to invoke R." -f $StageName, $EnvName)
     }
-    # Segment-aligned containment: wrap both sides in '/' so a fragment can only match whole
-    # path segments, anywhere in the path (drive-letter prefix or UNC share prefix alike).
+    # Wrap both sides in '/' so a fragment only matches whole path segments.
     $padded = '/' + $norm.Trim('/') + '/'
     foreach ($frag in $ProtectedFragments) {
         if ($padded.Contains('/' + $frag.Trim('/') + '/')) {
@@ -293,13 +278,11 @@ function Assert-SafeOutputTargets {
     return $true
 }
 
-# ------------------------------------------------------------------ D. environment hygiene
+# D. Environment variables
 
 function Clear-InheritedOverrides {
-    <# Remove every environment variable matching the given prefixes and return what was
-       removed so the caller can restore it. Both the current PROTEOMICS_* names and the
-       pre-rename NEHA_* names are swept: a stale legacy variable in the parent shell could
-       still steer an older stage script to a canonical path. #>
+    <# Removes the variables with the given prefixes (by default PROTEOMICS_* and the
+       pre-rename NEHA_*) and returns them so the caller can restore them. #>
     param([string[]]$Prefixes = @('PROTEOMICS_', 'NEHA_'))
     $saved = @{}
     foreach ($prefix in $Prefixes) {
@@ -318,8 +301,7 @@ function Restore-InheritedOverrides {
 }
 
 function Assert-NoStaleOverridesPresent {
-    <# Belt-and-braces: at the moment of invoking a stage, the only PROTEOMICS_*/NEHA_*
-       variables in the environment must be the ones this stage deliberately set. #>
+    <# Throws if a PROTEOMICS_* or NEHA_* variable is set that is not in the stage's env map. #>
     param(
         [Parameter(Mandatory = $true)][hashtable]$EnvMap,
         [Parameter(Mandatory = $true)][string]$StageName,

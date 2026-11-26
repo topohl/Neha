@@ -21,7 +21,7 @@ jobs:
       - name: Run comparison parser tests
         run: Rscript proteomic_analysis/tests/test_gct_comparison_parser.R
 
-      - name: Run deprecated path-utils shim contracts
+      - name: Run deprecated path-utils shim checks
         run: Rscript proteomic_analysis/tests/test_deprecated_path_utils_shim.R
 
       - name: Run demo
