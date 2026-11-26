@@ -1,10 +1,12 @@
 #!/usr/bin/env Rscript
 
-# Publication release, stage 04 -- normalised differential-protein results.
+# Publication release, stage 04 -- normalized differential-protein results.
 #
 # Produces
 #   differential_analysis/primary_differential_proteins.tsv.gz  12 x 5349 = 64188 rows
 #   differential_analysis/primary_differential_summary.tsv      12 rows
+#   differential_analysis/significant_proteins.tsv              the mapped rows flagged
+#                                                               significant (FDR < 0.05)
 #
 # No statistic is recomputed. Every numeric value is read from the canonical animal-level
 # split tables of the per-compartment run
@@ -40,6 +42,7 @@ source(file.path(here, "R", "release_utils.R"))
 REPO_ROOT <- release_repo_root()
 release_source_project_helpers(REPO_ROOT)
 source(file.path(REPO_ROOT, "07_publication_release", "R", "release_validation.R"))
+source(file.path(REPO_ROOT, "07_publication_release", "R", "release_presentation.R"))
 release_require("digest")
 
 DATA_ROOT <- release_data_root()
@@ -105,7 +108,7 @@ SPLIT_NUMERIC <- c(log2fc = "effect_size_sd_units", aveExpr = "average_standardi
                    B = "B_log_odds", logpval = "neg_log10_P_value",
                    sign.logP = "signed_neg_log10_P_value")
 
-# `log2fc` is a difference on the per-protein standardised scale, not a log2 fold change
+# `log2fc` is a difference on the per-protein standardized scale, not a log2 fold change
 # (see RELEASE_EFFECT_SIZE in R/release_validation.R, which also holds the wording). It is
 # published as effect_size_sd_units with the source column name alongside. limma's AveExpr
 # is the mean over one sample class's 12 units, so it is not ~0 within a class.
@@ -317,6 +320,69 @@ for (i in seq_len(nrow(summary_tbl))) {
 }
 
 # --------------------------------------------------------------------------------------
+# significant proteins (rows already flagged; no threshold is applied here)
+# --------------------------------------------------------------------------------------
+# The rows of the export whose copied flag significant_fdr_0_05 is TRUE and whose protein
+# group has a mouse annotation (id_mapping_status mapped). Unmapped groups that pass (non-mouse
+# reagent and contaminant proteins) stay in primary_differential_proteins only. direction
+# follows the sign of the effect size, the rule behind the n_significant_higher_in_* counts.
+# Rows run by comparison in the workbook order (release_comparison_rank(): pairing, CNO in
+# paired animals, CNO in unpaired animals; compartments in figure order), then adjusted P
+# and P.
+
+SIGNIFICANT_PROTEIN_COLUMNS <- c(
+  "canonical_comparison", "sample_class", "numerator_condition", "denominator_condition",
+  "gene_symbol", "protein_description", "uniprot_accession", "protein_group_id", "direction",
+  "effect_size_sd_units", "moderated_t", "P.Value", "adj.P.Val")
+
+sig_rows <- differential$significant_fdr_0_05 %in% TRUE
+sig_proteins <- differential[sig_rows & differential$id_mapping_status == "mapped", ,
+                             drop = FALSE]
+if (anyNA(sig_proteins$effect_size_sd_units)) {
+  stop("A significant protein has no effect size; cannot state its direction.", call. = FALSE)
+}
+sig_proteins$direction <- ifelse(sig_proteins$effect_size_sd_units > 0,
+                                 paste0("higher_in_", sig_proteins$numerator_condition),
+                                 paste0("higher_in_", sig_proteins$denominator_condition))
+comparison_rank <- release_comparison_rank(sig_proteins$sample_class,
+                                           sig_proteins$contrast_family)
+if (anyNA(comparison_rank)) {
+  stop("A significant protein belongs to a comparison with no place in the comparison order.",
+       call. = FALSE)
+}
+sig_proteins <- sig_proteins[order(comparison_rank, sig_proteins$adj.P.Val,
+                                   sig_proteins$P.Value, sig_proteins$protein_group_id),
+                             SIGNIFICANT_PROTEIN_COLUMNS, drop = FALSE]
+rownames(sig_proteins) <- NULL
+
+# The table must hold exactly the mapped significant counts of the summary, per comparison
+# and direction.
+sig_n <- function(cmp, direction = NULL) {
+  keep <- sig_proteins$canonical_comparison == cmp
+  if (!is.null(direction)) keep <- keep & sig_proteins$direction == direction
+  sum(keep)
+}
+sig_count_ok <- vapply(seq_len(nrow(summary_tbl)), function(i) {
+  s <- summary_tbl[i, , drop = FALSE]
+  sig_n(s$canonical_comparison) == s$n_significant_fdr_0_05_mapped_only &&
+    sig_n(s$canonical_comparison, paste0("higher_in_", s$numerator_condition)) ==
+      s$n_significant_higher_in_numerator_mapped_only &&
+    sig_n(s$canonical_comparison, paste0("higher_in_", s$denominator_condition)) ==
+      s$n_significant_higher_in_denominator_mapped_only
+}, logical(1))
+if (!all(sig_count_ok)) {
+  stop("significant_proteins.tsv disagrees with the mapped FDR counts of the summary for: ",
+       paste(summary_tbl$canonical_comparison[!sig_count_ok], collapse = ", "), call. = FALSE)
+}
+unmapped_sig <- differential[sig_rows & differential$id_mapping_status != "mapped", ,
+                             drop = FALSE]
+release_log("  significant proteins: ", nrow(sig_proteins), " mapped rows in ",
+            length(unique(sig_proteins$canonical_comparison)), " comparison(s); ",
+            nrow(unmapped_sig), " unmapped significant group(s) left in the full table",
+            if (nrow(unmapped_sig)) paste0(" (", paste(unmapped_sig$protein_group_id,
+                                                       collapse = ", "), ")") else "")
+
+# --------------------------------------------------------------------------------------
 # write
 # --------------------------------------------------------------------------------------
 
@@ -338,6 +404,15 @@ release_register("differential_analysis/primary_differential_summary.tsv",
                  "per-comparison counts of FDR-significant proteins",
                  source_paths, source_hashes, STAGE, "tsv")
 
+w3 <- release_write_table(sig_proteins,
+                          release_path("differential_analysis", "significant_proteins.tsv"))
+release_register("differential_analysis/significant_proteins.tsv",
+                 paste("proteins at FDR < 0.05 with a mouse annotation, all primary",
+                       "comparisons: the rows of primary_differential_proteins with",
+                       "significant_fdr_0_05 TRUE and id_mapping_status mapped"),
+                 source_paths, source_hashes, STAGE, "tsv")
+
 release_log("  wrote primary_differential_proteins.tsv.gz (", w1$rows, "x", w1$cols, ")")
 release_log("  wrote primary_differential_summary.tsv (", w2$rows, "x", w2$cols, ")")
+release_log("  wrote significant_proteins.tsv (", w3$rows, "x", w3$cols, ")")
 release_log("stage 04 complete")

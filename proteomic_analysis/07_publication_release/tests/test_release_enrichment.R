@@ -35,7 +35,7 @@ need <- file.path(OUT_ROOT, "enrichment",
                     "primary_ORA_GO_BP.tsv.gz", "GSEA_log2FC_sensitivity.tsv.gz",
                     "primary_EWCE.tsv.gz", "enrichment_coverage.tsv",
                     "primary_GSEA_GO_CC.tsv.gz", "primary_ORA_GO_CC.tsv.gz",
-                    "gsea_untested_gene_sets.tsv"))
+                    "gsea_untested_gene_sets.tsv", "significant_gene_sets.tsv.gz"))
 if (!all(file.exists(need))) {
   cat("No built publication release at", OUT_ROOT, "\n")
   cat("Skipping publication release enrichment checks.\n")
@@ -52,6 +52,7 @@ rd <- function(p) {
 gsea_go <- rd(need[1]); gsea_kegg <- rd(need[2]); ora <- rd(need[3])
 sens <- rd(need[4]); ewce <- rd(need[5]); coverage <- rd(need[6])
 gsea_cc <- rd(need[7]); ora_cc <- rd(need[8]); untested <- rd(need[9])
+sig_sets <- rd(need[10])
 inv <- RELEASE_DESIGN_INVARIANTS
 
 cat("=== coverage ===\n")
@@ -121,12 +122,56 @@ expect(all(c("fdr_significant_all", "fdr_significant_higher_in_numerator",
              "fdr_significant_higher_in_denominator") %in% ora$query_list),
        "the three FDR-based ORA query lists are present")
 expect(any(ora$analysis_role == "alternative_query_list"),
-       "the non-FDR query list is labelled as an alternative, not as canonical")
+       "the non-FDR query list is labeled as an alternative, not as canonical")
 expect(all(is.na(gsea_go$query_list) | !nzchar(gsea_go$query_list)),
        "GSEA rows carry no ORA query list")
 
+cat("\n=== gene identifiers ===\n")
+for (blk in list(list(d = gsea_kegg, type = "ENTREZID", what = "primary KEGG GSEA"),
+                 list(d = sens[sens$ontology == "KEGG", , drop = FALSE], type = "ENTREZID",
+                      what = "sensitivity KEGG GSEA"),
+                 list(d = gsea_go, type = "UNIPROT", what = "GO-BP GSEA"),
+                 list(d = gsea_cc, type = "UNIPROT", what = "GO-CC GSEA"),
+                 list(d = ora, type = "UNIPROT", what = "GO-BP ORA"),
+                 list(d = ora_cc, type = "UNIPROT", what = "GO-CC ORA"),
+                 list(d = sens[sens$ontology != "KEGG", , drop = FALSE], type = "UNIPROT",
+                      what = "sensitivity GO GSEA"))) {
+  expect(nrow(blk$d) > 0L && all(blk$d$gene_identifier_type == blk$type) &&
+           release_members_in_namespace(release_gene_members(blk$d$core_enrichment), blk$type),
+         sprintf("%s: labeled %s and every member is in that namespace (%d rows)", blk$what,
+                 blk$type, nrow(blk$d)))
+}
+
+cat("\n=== significant_gene_sets.tsv.gz (table 2f) ===\n")
+expect(identical(names(sig_sets),
+                 c("canonical_comparison", "sample_class", "numerator_condition",
+                   "denominator_condition", "ontology", "term_id", "term_name", "direction",
+                   "NES", "set_size", "n_core_enrichment_genes", "p_value", "adjusted_p_value",
+                   "core_enrichment_gene_symbols")),
+       "the 14 expected columns, in order")
+copied <- setdiff(names(sig_sets), "core_enrichment_gene_symbols")
+want <- do.call(rbind, lapply(list(gsea_go, gsea_cc, gsea_kegg), function(d) {
+  d[d$adjusted_p_value < 0.05, c(copied, "analysis_role", "core_enrichment"), drop = FALSE]
+}))
+m <- match(paste(sig_sets$canonical_comparison, sig_sets$ontology, sig_sets$term_id),
+           paste(want$canonical_comparison, want$ontology, want$term_id))
+expect(nrow(sig_sets) == nrow(want) && !anyNA(m) && !anyDuplicated(m),
+       sprintf("exactly the primary GSEA rows with adjusted P < 0.05 (%d)", nrow(sig_sets)))
+expect(all(want$analysis_role == "canonical"), "no sensitivity row is included")
+expect(!anyNA(m) && all(vapply(copied, function(cn) identical(sig_sets[[cn]], want[[cn]][m]),
+                               logical(1))),
+       "every copied value is identical to the GSEA tables")
+n_sym <- lengths(release_gene_members(sig_sets$core_enrichment_gene_symbols))
+expect(identical(n_sym, as.integer(sig_sets$n_core_enrichment_genes)) &&
+         !anyNA(m) && identical(n_sym, lengths(release_gene_members(want$core_enrichment[m]))),
+       "each leading edge has one gene symbol (or identifier) per source member")
+expect(identical(sig_sets$direction,
+                 paste0("enriched_toward_", ifelse(sig_sets$NES > 0, sig_sets$numerator_condition,
+                                                   sig_sets$denominator_condition))),
+       "direction follows the sign of NES")
+
 cat("\n=== EWCE ===\n")
-expect(all(ewce$analysis == "EWCE"), "EWCE rows are labelled EWCE")
+expect(all(ewce$analysis == "EWCE"), "EWCE rows are labeled EWCE")
 expect(all(ewce$ewce_analysis_type %in% c("Baseline", "Differential")),
        "EWCE analysis type is Baseline or Differential")
 expect(all(ewce$primary_or_secondary[ewce$ewce_analysis_type == "Baseline"] == "secondary"),

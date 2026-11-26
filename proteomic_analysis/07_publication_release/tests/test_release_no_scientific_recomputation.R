@@ -103,16 +103,23 @@ for (p in c(file.path(data_root, "02_data", "animal_level", "input_gct"),
 }
 accepted <- !inherits(tryCatch(
   release_validate_output_root(file.path(data_root, "03_output",
-                                         "release_within_compartment_20261125"),
+                                         "release_within_compartment_20261126"),
                                data_root),
   error = function(e) e), "error")
 expect(accepted,
-       "accepts the intended release root 03_output/release_within_compartment_20261125")
+       "accepts the intended release root 03_output/release_within_compartment_20261126")
 frozen_rejected <- inherits(tryCatch(
   release_validate_output_root(file.path(data_root, "03_output", "publication_release"),
                                data_root),
   error = function(e) e), "error")
 expect(frozen_rejected, "rejects the frozen pooled-run release root 03_output/publication_release")
+first_rejected <- inherits(tryCatch(
+  release_validate_output_root(file.path(data_root, "03_output",
+                                         "release_within_compartment_20261125"),
+                               data_root),
+  error = function(e) e), "error")
+expect(first_rejected,
+       "rejects the frozen first per-compartment release root 03_output/release_within_compartment_20261125")
 accepted_scratch <- !inherits(tryCatch(
   release_validate_output_root(tempdir(), data_root), error = function(e) e), "error")
 expect(accepted_scratch, "accepts a scratch root")
@@ -123,7 +130,7 @@ cat("\n=== writing to the shared drive requires an explicit opt-in ===\n")
 # and its existence must not make this write-guard fixture stateful or destructive.
 guard_data_root <- tempfile("amp_release_shared_guard_")
 shared_root <- file.path(guard_data_root, "03_output",
-                         "release_within_compartment_20261125")
+                         "release_within_compartment_20261126")
 saved <- Sys.getenv("PROTEOMICS_RELEASE_ALLOW_SHARED_DRIVE", unset = NA)
 Sys.unsetenv("PROTEOMICS_RELEASE_ALLOW_SHARED_DRIVE")
 blocked <- inherits(tryCatch(release_prepare_output_root(shared_root, guard_data_root),

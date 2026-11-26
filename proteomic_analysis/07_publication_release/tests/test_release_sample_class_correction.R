@@ -194,7 +194,7 @@ cat("\n=== UMAP is documented, not treated as ground truth ===\n")
 if ("umap_nearest_class_suggestion" %in% names(corr)) {
   agree <- corr$umap_nearest_class_suggestion == corr$analysis_sample_class
   expect(sum(agree) == 5L && sum(!agree) == 1L,
-         sprintf("the UMAP nearest-centre suggestion agrees for 5 of 6 (got %d)",
+         sprintf("the UMAP nearest-center suggestion agrees for 5 of 6 (got %d)",
                  sum(agree)))
   expect(identical(corr$plate_sample_number[!agree], "N60"),
          "the divergent row is N60, and it is published rather than hidden")

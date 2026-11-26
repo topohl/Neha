@@ -8,7 +8,7 @@
 #   processed_data/protein_feature_annotation.tsv.gz            5349 protein groups
 #
 # Nothing here is called "raw". The measurement-level matrix is processed protein-level
-# output, standardised per protein (row means ~0, SDs ~1 across acquisitions); the raw
+# output, standardized per protein (row means ~0, SDs ~1 across acquisitions); the raw
 # acquisition files are the `.d` directories named in metadata/sample_metadata.tsv and are
 # not part of this package.
 #
@@ -84,27 +84,27 @@ if (!setequal(meas$sample_ids, sample_metadata$sample_id)) {
 }
 
 # Measure the value scale rather than trust the file name (`pcaAdjusted_unnormalized`):
-# each protein is standardised across the 96 acquisitions. Not called "z-scored": the
+# each protein is standardized across the 96 acquisitions. Not called "z-scored": the
 # values have 2 decimals, so row means and SDs are 0 and 1 only to rounding, and the
 # producing step is unresolved (provenance/UPSTREAM_PREPROCESSING_GAP.md). The measured
 # deviations are reported instead.
 std <- release_standardization_evidence(meas$mat)
 release_log("  value scale: max |row mean| ", signif(std$max_abs_row_mean, 3),
             ", max |row sd - 1| ", signif(std$max_abs_row_sd_minus_1, 3),
-            " -> standardised = ", std$approximately_standardized,
+            " -> standardized = ", std$approximately_standardized,
             ", exactly z-scored = ", std$exact_zscore)
 if (!std$approximately_standardized) {
-  stop("The measurement-level matrix is no longer per-protein standardised. The release ",
-       "describes these values as standardised; refusing to publish a description the ",
+  stop("The measurement-level matrix is no longer per-protein standardized. The release ",
+       "describes these values as standardized; refusing to publish a description the ",
        "data contradict.", call. = FALSE)
 }
 VALUE_SCALE <- paste0(
-  "per-protein standardised abundance: each protein is standardised separately across the ",
+  "per-protein standardized abundance: each protein is standardized separately across the ",
   "96 acquisitions, giving row means of approximately 0 (max |mean| ",
   signif(std$max_abs_row_mean, 3), ") and row standard deviations of approximately 1 ",
   "(max |sd - 1| ", signif(std$max_abs_row_sd_minus_1, 3), "). NOT log2 abundance and NOT ",
   "raw intensity. The values carry 2 decimals, so no row is exactly mean 0 / sd 1 and the ",
-  "release does not claim a specific standardisation formula; the producing step is ",
+  "release does not claim a specific standardization formula; the producing step is ",
   "unresolved (see provenance/UPSTREAM_PREPROCESSING_GAP.md).")
 
 meas_order <- match(sample_metadata$sample_id, meas$sample_ids)
@@ -147,7 +147,7 @@ names(animal_export)[-1] <- animal_metadata$animal_level_column_name
 # protein keeps its mean of about 0 but its SD over the 48 units is below 1.
 animal_row_sd <- apply(animal$mat, 1L, stats::sd)
 ANIMAL_VALUE_SCALE <- paste0(
-  "mean of the two hemispheres on the per-protein standardised scale of the measurement-level ",
+  "mean of the two hemispheres on the per-protein standardized scale of the measurement-level ",
   "matrix: row means approximately 0 (max |mean| ", signif(max(abs(rowMeans(animal$mat))), 3),
   "), row standard deviations ", sprintf("%.2f", min(animal_row_sd)), " to ",
   sprintf("%.2f", max(animal_row_sd)), " (below 1, because two hemispheres are averaged). ",
@@ -186,7 +186,7 @@ strip_quotes <- function(x) gsub('^"|"$', "", trimws(as.character(x)))
 search_entry <- strip_quotes(search_out[[col_entry_names]])
 search_idx <- match(meas$ids, search_entry)
 if (anyNA(search_idx)) {
-  stop("Search output does not cover every analysed protein group (",
+  stop("Search output does not cover every analyzed protein group (",
        sum(is.na(search_idx)), " unmatched).", call. = FALSE)
 }
 

@@ -7,11 +7,12 @@
 #   PROTEOMICS_RELEASE_OUTPUT_ROOT=<scratch dir> Rscript 07_publication_release/run_release.R
 #
 # Without PROTEOMICS_RELEASE_OUTPUT_ROOT the release goes to the shared-drive root
-# 03_output/release_within_compartment_20261125. Any output root on the shared drive also
+# 03_output/release_within_compartment_20261126. Any output root on the shared drive also
 # needs PROTEOMICS_RELEASE_ALLOW_SHARED_DRIVE=true and no uncommitted or untracked changes
 # under proteomic_analysis/ (or PROTEOMICS_RELEASE_ALLOW_DIRTY=true). Output roots that
 # overlap 01_input, 02_data, 99_historical, the migration backup, an analysis folder under
-# 03_output or the frozen pooled-run release (03_output/publication_release) are refused.
+# 03_output or a frozen earlier release (03_output/publication_release,
+# 03_output/release_within_compartment_20261125) are refused.
 #
 # The locked input hashes are checked and the build registry is reset before stage 01.
 # Each stage runs in its own environment and can also be run alone with Rscript.
@@ -50,13 +51,13 @@ if (length(cleared_validation_reports)) {
 }
 
 locked <- release_verify_locked_artefacts()
-cat("\nlocked artefacts:\n")
+cat("\nlocked artifacts:\n")
 for (i in seq_len(nrow(locked))) {
   cat("  ", ifelse(locked$matches[i], "[ok]  ", "[FAIL]"), " ", locked$artefact[i], " ",
       substr(locked$observed_sha256[i], 1, 16), "\n", sep = "")
 }
 if (any(!locked$matches)) {
-  stop("Locked artefact hash mismatch; refusing to build a release from changed inputs.",
+  stop("Locked artifact hash mismatch; refusing to build a release from changed inputs.",
        call. = FALSE)
 }
 

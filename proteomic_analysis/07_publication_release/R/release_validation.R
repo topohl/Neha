@@ -256,7 +256,7 @@ release_verify_locked_artefacts <- function(data_root = release_data_root()) {
 #
 # Six left-hemisphere acquisitions of C46 and C47 have a sample class that differs from
 # every pre-correction record. The audit found this was a correction made during
-# sample-identity QC, not a mislabelling. Only the class labels changed; acquisition
+# sample-identity QC, not a mislabeling. Only the class labels changed; acquisition
 # identities and abundance values did not. Both animals follow the same cycle:
 #   neuropil -> mcherry,  mcherry -> neuron,  neuron -> neuropil
 #
@@ -278,7 +278,7 @@ RELEASE_SAMPLE_CLASS_CORRECTION <- list(
 
   method = "historical_sample_identity_qc_umap_correction_table",
   method_label = paste(
-    "Identified during historical sample-identity QC from UMAP nearest-class-centre",
+    "Identified during historical sample-identity QC from UMAP nearest-class-center",
     "distances, recorded in a retained project correction table, and subsequently supported",
     "by independent proteomic profile-similarity and left/right-pair analyses."),
 
@@ -442,7 +442,7 @@ RELEASE_OLD_PACKAGE_FILES <- list(
        nature = paste("superseded hemisphere-level analysis generation; did not contain the",
                       "current complete 12-primary-contrast design"),
        replacement = paste("enrichment/*.tsv.gz and",
-                           "editor_source_data/Proteomics_Source_Data_Animal_Level.xlsx"),
+                           "editor_source_data/Supplementary_Table_2_proteomics.xlsx"),
        superseded = "Yes, entirely."),
   list(name = "README.txt",
        n_protein_rows = NA_integer_, n_measurement_columns = NA_integer_,
@@ -470,6 +470,59 @@ RELEASE_PLATE_NO_EFFECT_SENTENCE <- paste(
 
 FORBIDDEN_PLATE_WORDING <- c("plate artefact", "plate artifact", "confirmed batch confound",
                              "driven by plate", "technical plate effect")
+
+# The plate is also an injection block (Plate1 runs first), so no release text may call it
+# "not an LC-MS or acquisition batch".
+RELEASE_PLATE_RETIRED_WORDING <- c("LC-MS, acquisition or instrument batch",
+                                   "Not a sample-preparation or LC-MS batch")
+
+# Injection order of the two collection plates, as metadata/sample_metadata.tsv records it:
+# every Plate1 run was injected before every Plate2 run. Stages 07 and 13 check these blocks
+# against the sample metadata, so the sentence below cannot go stale.
+RELEASE_PLATE_INJECTION_BLOCKS <- list(Plate1 = c(1L, 40L), Plate2 = c(41L, 96L))
+
+#' "Plate1 runs were injected first (injection order 1-40), Plate2 runs after them (41-96)."
+release_plate_injection_sentence <- function() {
+  b <- RELEASE_PLATE_INJECTION_BLOCKS
+  paste0("Plate1 runs were injected first (injection order ", b$Plate1[[1]], "-", b$Plate1[[2]],
+         "), Plate2 runs after them (", b$Plate2[[1]], "-", b$Plate2[[2]], ").")
+}
+
+#' Which animals were collected on which plate, as one sentence: "All paired VEH animals and
+#' two of the three paired CNO animals were collected on Plate1, all unpaired animals and one
+#' paired CNO animal (C12) on Plate2." Stops when the sample metadata no longer follow that
+#' layout or the injection blocks, so the wording cannot go stale.
+release_plate_layout_sentence <- function(sample_metadata) {
+  pa <- unique(sample_metadata[c("AnimalID", "condition", "collection_plate")])
+  on <- function(cond, plate) {
+    sort(pa$AnimalID[pa$condition %in% cond & pa$collection_plate == plate])
+  }
+  unpaired <- c("unpaired_veh", "unpaired_cno")
+  p2 <- on("paired_cno", "Plate2")
+  ok <- !anyDuplicated(pa$AnimalID) && release_plate_injection_blocks_hold(sample_metadata) &&
+    length(on("paired_veh", "Plate1")) == 3L && !length(on("paired_veh", "Plate2")) &&
+    length(on(unpaired, "Plate2")) == 6L && !length(on(unpaired, "Plate1")) &&
+    length(on("paired_cno", "Plate1")) == 2L && length(p2) == 1L
+  if (!ok) {
+    stop("The collection plates no longer follow the layout the release describes (paired ",
+         "VEH and two paired CNO animals on Plate1, the rest on Plate2, Plate1 injected ",
+         "first); update release_plate_layout_sentence().", call. = FALSE)
+  }
+  paste0("All paired VEH animals and two of the three paired CNO animals were collected on",
+         " Plate1, all unpaired animals and one paired CNO animal (", p2, ") on Plate2.")
+}
+
+#' TRUE when the injection indices of each plate are exactly its block in
+#' RELEASE_PLATE_INJECTION_BLOCKS.
+release_plate_injection_blocks_hold <- function(sample_metadata) {
+  plate <- as.character(sample_metadata$collection_plate)
+  idx <- suppressWarnings(as.integer(sample_metadata$injection_index))
+  setequal(unique(plate), names(RELEASE_PLATE_INJECTION_BLOCKS)) && !anyNA(idx) &&
+    all(vapply(names(RELEASE_PLATE_INJECTION_BLOCKS), function(p) {
+      b <- RELEASE_PLATE_INJECTION_BLOCKS[[p]]
+      setequal(idx[plate == p], seq(b[[1]], b[[2]]))
+    }, logical(1)))
+}
 
 #' Statement published when the original package is not reachable. The submitted files
 #' were never located, so their shapes come from the earlier description of the submission.
@@ -534,11 +587,11 @@ release_old_package_crosswalk <- function(root = release_old_package_root()) {
 # effect-size semantics
 # --------------------------------------------------------------------------------------
 #
-# The analysis matrix is standardised per protein across the measurement-level dataset, so
+# The analysis matrix is standardized per protein across the measurement-level dataset, so
 # the coefficient stored as `logFC` (limma; `log2fc` in the split tables) is a difference on
-# that standardised scale, not a log2 fold change.
+# that standardized scale, not a log2 fold change.
 #
-# Two terms are avoided: "standardised mean difference" without qualification (it reads as
+# Two terms are avoided: "standardized mean difference" without qualification (it reads as
 # Cohen's d, which divides by a pooled within-group SD, not the per-protein SD over the whole
 # dataset used here), and "z-scored" (the released values have 2 decimals, so row means and
 # SDs are 0 and 1 only to rounding, and the producing step is unresolved; see
@@ -550,15 +603,15 @@ RELEASE_EFFECT_SIZE <- list(
   public_term_alt = "difference in standardized protein abundance",
   source_field = "logFC",
   source_field_detail = "logFC (statistics GCT, limma) / log2fc (canonical split tables)",
-  units = "per-protein standard deviation of the standardised abundance scale",
+  units = "per-protein standard deviation of the standardized abundance scale",
 
   definition = paste(
-    "Difference of group means (numerator minus denominator) on the protein-standardised",
+    "Difference of group means (numerator minus denominator) on the protein-standardized",
     "abundance scale -- a standardized abundance difference expressed in SD units of that",
     "scale. It is NOT a log2 fold change, despite being stored as `logFC` in the statistics",
     "GCT (limma's coefficient name) and `log2fc` in the canonical split tables. Positive",
     "means higher in the numerator condition. A value of 2 means two standard deviations on",
-    "the standardised scale, not a four-fold change."),
+    "the standardized scale, not a four-fold change."),
 
   methods_sentence = paste(
     "Protein abundances in the analysis matrix were standardized separately for each",
@@ -569,7 +622,7 @@ RELEASE_EFFECT_SIZE <- list(
 
   sensitivity_public_label = "effect-size-ranked sensitivity analysis",
   sensitivity_public_detail = paste(
-    "GSEA ranked by the standardised-abundance effect size instead of the moderated t.",
+    "GSEA ranked by the standardized-abundance effect size instead of the moderated t.",
     "Sensitivity analysis only; the canonical ranking statistic is the moderated t."),
 
   # File names and column values that keep the old token so they still match the canonical
@@ -626,7 +679,7 @@ release_fold_change_mislabels <- function(lines,
 }
 
 #' Row means and SDs (both conventions) of a matrix, and whether its rows are approximately
-#' standardised or z-scored to full precision. On the released 2-decimal values
+#' standardized or z-scored to full precision. On the released 2-decimal values
 #' `exact_zscore` is FALSE; callers use it to choose their wording.
 release_standardization_evidence <- function(mat, tol_exact = 1e-9) {
   row_mean <- rowMeans(mat)
@@ -744,8 +797,8 @@ release_read_stat_run <- function(data_root = release_data_root()) {
 #' AveExpr as the per-compartment model reports it, measured on the released table.
 #'
 #' Each sample class has its own model, so AveExpr is that class's mean over its 12 units
-#' and is not centred at 0 within a class. The mean of the four class values is the mean over
-#' all 48 units, which is what corroborates a per-protein centred input. Prose quotes these
+#' and is not centered at 0 within a class. The mean of the four class values is the mean over
+#' all 48 units, which is what corroborates a per-protein centered input. Prose quotes these
 #' numbers instead of typing them. AveExpr is identical across a class's three contrasts, so
 #' one contrast family gives one value per protein and class.
 release_aveexpr_summary <- function(differential) {
@@ -909,8 +962,8 @@ release_fgsea_untested <- function(comparisons, data_root = release_data_root())
 #' Returns the facts and the sentences every reader-facing document quotes.
 release_enrichment_permutations <- function(data_root = release_data_root()) {
   if (!identical(RELEASE_STATISTICS_RUN$enrichment_rerun_status, "adopted")) {
-    stop("RELEASE_STATISTICS_RUN$enrichment_rerun_status must record the decision.",
-         call. = FALSE)
+    stop("RELEASE_STATISTICS_RUN$enrichment_rerun_status is not 'adopted'; the permutation",
+         " statement covers the adopted enrichment only.", call. = FALSE)
   }
   n_perm <- function(root) {
     p <- release_read_csv(file.path(root, "audits", "run_parameters.csv"))
@@ -979,10 +1032,18 @@ release_enrichment_permutations <- function(data_root = release_data_root()) {
     "GO-BP and GO-CC GSEA P values come from fgsea with nPermSimple = ", fmt_n(go_n), " (",
     go_rel, "). KEGG GSEA (", kegg_rel, ") and the sensitivity analyses (", sensitivities,
     ") use ", default_text, "; the sensitivity analyses are ", same_setting, ".")
+  # The same statement for readers of the package: no run folders.
+  reader_sentence <- paste0(
+    "GO-BP and GO-CC GSEA P values come from fgsea with nPermSimple = ", fmt_n(go_n), ".",
+    " KEGG GSEA and the sensitivity analyses (Pairing x CNO interaction, leave one animal out,",
+    " and moderated-t versus effect-size ranking) use ", default_text, "; the sensitivity",
+    " analyses are compared with the primary analysis at that same setting, not with the",
+    " nPermSimple = ", fmt_n(go_n), " tables.")
   list(setting = setting, go_n_perm_simple = as.integer(go_n),
        default_n_perm_simple = default_n, fgsea_version = fgsea_run,
        go_relative = go_rel, kegg_relative = kegg_rel,
-       sensitivity_sentence = sensitivity_sentence, sentence = sentence)
+       sensitivity_sentence = sensitivity_sentence, sentence = sentence,
+       reader_sentence = reader_sentence)
 }
 
 #' Assert the animal-level design invariants against a 48-row animal-level table.
@@ -1121,4 +1182,289 @@ release_column_is_misleading_gene_symbol <- function(values, threshold = 0.5) {
   flags <- release_uniprot_like(values)
   if (!length(flags)) return(FALSE)
   mean(flags) >= threshold
+}
+
+# --------------------------------------------------------------------------------------
+# Supplementary Table 2 (the workbook) as built
+# --------------------------------------------------------------------------------------
+# The layout the paper cites, pinned here so stage 13 and the tests check the built workbook
+# against it rather than against the builder's own constants (RELEASE_SHEET_META).
+
+RELEASE_WORKBOOK_REL <- "editor_source_data/Supplementary_Table_2_proteomics.xlsx"
+RELEASE_WORKBOOK_TABLE_NUMBER <- "2"
+
+#' Sheets after Contents, in tab order, with their sub-table letters.
+RELEASE_WORKBOOK_LAYOUT <- data.frame(
+  sheet_key = c("README", "Column_Definitions", "Samples", "Animal_Profiles", "Comparisons",
+                "Significant_Proteins", "All_Proteins", "Significant_Gene_Sets",
+                "GSEA_GO_BP", "GSEA_GO_CC", "GSEA_KEGG", "ORA_GO_BP", "ORA_GO_CC",
+                "GSEA_Untested_Sets", "Enrichment_Settings", "EWCE", "Secondary_Analyses",
+                "Figure_Panels", "Software"),
+  letter = c("", "", paste0("2", letters[1:17])),
+  stringsAsFactors = FALSE, check.names = FALSE)
+
+#' Header row of every workbook sheet (title row 1, caption row 2, shared values row 3).
+RELEASE_WORKBOOK_HEADER_ROW <- 4L
+
+#' Text no workbook cell may hold: drive or network paths, hashes, internal figure and
+#' folder names, the personal name in the raw-file path, and script names.
+RELEASE_WORKBOOK_INTERNAL_PATTERNS <- c(
+  "drive or network path" = "(?<![A-Za-z])[A-Za-z]:[\\\\/]|\\\\\\\\[A-Za-z0-9]",
+  "SHA-256 or commit hash" = "(?<![0-9A-Fa-f])[0-9A-Fa-f]{40,}(?![0-9A-Fa-f])",
+  "internal figure name" = "Figure3|Supplementary_proteomics",
+  "personal name of a raw-file path" = "Fabian",
+  "internal folder" = "03_output|99_historical|01_input|02_data",
+  "script name" = "\\b[A-Za-z0-9_]+\\.[Rr]\\b")
+
+#' Machine columns that must stay in the release files and never reach the workbook. Matched
+#' on whole parts of the snake_case name, so protein_description is not a "script" column.
+RELEASE_WORKBOOK_INTERNAL_COLUMNS <- paste0(
+  "(^|_)(canonical_contrast|alias|historical|legacy|sha256|path|provenance|revision|script|",
+  "original_filename|token|curation|source_assignment)(_|$)|",
+  "correction_(status|method|reference|date)")
+
+#' Hits of RELEASE_WORKBOOK_INTERNAL_PATTERNS (or other patterns) in a character vector:
+#' one row per pattern and offending string.
+release_internal_text_hits <- function(text, patterns = RELEASE_WORKBOOK_INTERNAL_PATTERNS) {
+  text <- unique(as.character(text[!is.na(text) & nzchar(text)]))
+  hits <- lapply(names(patterns), function(nm) {
+    h <- text[grepl(patterns[[nm]], text, perl = TRUE)]
+    if (!length(h)) return(NULL)
+    data.frame(kind = nm, text = h, stringsAsFactors = FALSE, check.names = FALSE)
+  })
+  hits <- do.call(rbind, hits)
+  if (is.null(hits)) {
+    hits <- data.frame(kind = character(0), text = character(0), stringsAsFactors = FALSE)
+  }
+  hits
+}
+
+#' Headers of the published figure source-data CSVs, file by file. A column that holds the
+#' same quantity as a column of Supplementary Table 2 has the workbook's display header;
+#' the others are panel-only quantities. Stage 06 writes these and stage 13 checks them.
+RELEASE_FIGURE_CSV_HEADERS <- local({
+  pca_animal <- c("Animal-level profile", "Animal ID", "Compartment", "Condition", "PC1", "PC2",
+                  "PC3")
+  pca_acquisition <- c("Sample ID", "Animal ID", "Hemisphere", "Compartment", "Condition",
+                       "Collection plate", "PC1", "PC2")
+  rank_abundance <- c("Compartment", "Condition", "Gene symbol", "Rank",
+                      "Mean standardized abundance over animals (SD units)",
+                      "Plotted value (2 to the power of the mean; display transform, not an abundance)",
+                      "Animals (n)", "Animals", "Marker category in panel")
+  gsea_grid <- c("Comparison", "Term ID", "Term", "Gene-set size", "NES", "P value",
+                 "Adjusted P value (BH)", "q value", "FDR < 0.05", "Comparison key")
+  list(
+    Fig2C_source_data.csv = pca_animal,
+    Fig2D_source_data.csv = c("Comparison", "Gene symbol", "UniProt accession", "Protein group",
+                              "Effect size (SD units)", "Moderated t", "P value",
+                              "Adjusted P value (BH)", "Direction", "Labeled in panel",
+                              "Comparison key"),
+    Fig2E_source_data.csv = rank_abundance,
+    Fig2F_source_data.csv = gsea_grid,
+    Fig2G_redundant_terms_skipped.csv = c(
+      "Comparison", "Gene-set collection", "Term ID", "Term", "Adjusted P value (BH)",
+      "Highest leading-edge Jaccard index with a plotted term", "Comparison key"),
+    Fig2G_source_data.csv = c(
+      "Comparison", "Gene-set collection", "Term ID", "Term", "Gene-set size",
+      "Enrichment score", "NES", "P value", "Adjusted P value (BH)", "q value",
+      "Leading-edge proteins (n)", "Leading-edge genes",
+      "Leading-edge proteins (UniProt accessions)", "Gene sets reported (n)",
+      "Gene sets at FDR < 0.05 (n)", "Selection rule", "Comparison key"),
+    Fig2H_source_data.csv = c(
+      "Compartment", "Gene symbol", "UniProt accession", "Protein group",
+      "Effect size (SD units): paired VEH vs unpaired VEH",
+      "Moderated t: paired VEH vs unpaired VEH",
+      "Adjusted P value (BH): paired VEH vs unpaired VEH",
+      "Effect size (SD units): paired CNO vs paired VEH",
+      "Moderated t: paired CNO vs paired VEH",
+      "Adjusted P value (BH): paired CNO vs paired VEH",
+      "Effect size (SD units): unpaired CNO vs unpaired VEH",
+      "Adjusted P value (BH): unpaired CNO vs unpaired VEH",
+      "Plotted: FDR < 0.05 in paired VEH vs unpaired VEH"),
+    Fig2I_source_data.csv = c("Comparison", "Comparison type", "Term ID", "Term", "NES",
+                              "Adjusted P value (BH)", "Comparison key"),
+    SuppFig4A_source_data.csv = c("Sample ID", "Animal ID", "Hemisphere", "Compartment",
+                                  "Compartment as recorded", "Condition", "Proteins (n)",
+                                  "Peptides (n)"),
+    SuppFig4B1_source_data.csv = pca_animal,
+    SuppFig4B2_source_data.csv = pca_acquisition,
+    SuppFig4B3_source_data.csv = pca_acquisition,
+    SuppFig4C_source_data.csv = c(
+      "Compartment", "Condition", "Cell type", "Proteins in list (n)", "Annotation level",
+      "Fold change (observed/null)", "SD from null mean", "P value",
+      "Adjusted P value, within list (BH)", "Adjusted P value, global (BH)",
+      "FDR < 0.05, global"),
+    SuppFig4D_source_data.csv = rank_abundance,
+    SuppFig4E_source_data.csv = c("Comparison", "Term ID", "Term", "Gene-set size", "NES",
+                                  "Enrichment score", "P value", "Adjusted P value (BH)",
+                                  "q value", "Ranked proteins (n)", "FDR < 0.05"),
+    SuppFig4F_blank_cells.csv = c("Comparison", "Term ID", "Term", "Reason", "Comparison key"),
+    SuppFig4F_source_data.csv = gsea_grid)
+})
+
+#' Figure source-data headers that name a workbook column in other words: the same header
+#' once case, spaces, hyphens and punctuation are ignored, but not the same text.
+release_figure_header_variants <- function(csv_headers, workbook_headers) {
+  norm <- function(x) gsub("[^a-z0-9]", "", tolower(x))
+  csv_headers <- unique(csv_headers)
+  w <- unique(workbook_headers)
+  csv_headers[!csv_headers %in% w & norm(csv_headers) %in% norm(w)]
+}
+
+#' British spellings the workbook and the reader documents (README_DATA.md,
+#' data_dictionary.tsv, README_PRIDE.md) must not use; they are written in US spelling.
+#' Matched case-insensitively as a word ending (a plural s allowed), so "relabelled" and
+#' "Standardised" count but the US "programmed" does not.
+RELEASE_BRITISH_SPELLINGS <- c("standardised", "normalised", "normalisation", "colour",
+                               "coloured", "colouring", "centred", "centre", "analysed",
+                               "labelled", "labelling", "programme", "artefact", "judgement",
+                               "itemised", "organised", "summarised", "modelling",
+                               "serialisation", "harmonised", "behaviour", "behavioural")
+
+#' Strings of `text` that use a British spelling, other than the strings in `exempt`.
+release_british_spelling_hits <- function(text, exempt = character(0)) {
+  text <- unique(as.character(text[!is.na(text) & nzchar(text)]))
+  text <- text[!text %in% exempt]
+  pattern <- paste0("(?i)(", paste(RELEASE_BRITISH_SPELLINGS, collapse = "|"), ")s?\\b")
+  text[grepl(pattern, text, perl = TRUE)]
+}
+
+#' Gene-set names in the term columns of tables 2f to 2l of the built workbook. These are
+#' GO and KEGG names as the databases write them, so a British spelling there is kept.
+release_workbook_term_names <- function(xlsx_path, inventory) {
+  term_tables <- paste0("2", letters[6:12])
+  out <- character(0)
+  for (i in which(inventory$supplementary_table %in% term_tables)) {
+    cols <- strsplit(inventory$columns[[i]], ";", fixed = TRUE)[[1]]
+    j <- match("term_name", cols)
+    if (is.na(j)) next
+    d <- openxlsx::read.xlsx(xlsx_path, sheet = inventory$sheet[[i]],
+                             startRow = RELEASE_WORKBOOK_HEADER_ROW, cols = j,
+                             colNames = TRUE, check.names = FALSE, skipEmptyRows = FALSE)
+    out <- c(out, as.character(d[[1]]))
+  }
+  unique(out[!is.na(out) & nzchar(out)])
+}
+
+#' A built .xlsx read from its XML, without loading the large sheets into data frames.
+#'
+#' Returns the tab names in order, every shared string, and for each sheet: the last row
+#' number, the top-left cell of the frozen pane, the merged ranges, the formulas, whether
+#' any inline string is present, and the cell text of rows 1 to 4 (column letter -> text).
+release_read_workbook_xml <- function(xlsx_path) {
+  tmp <- tempfile("release_workbook_")
+  dir.create(tmp)
+  on.exit(unlink(tmp, recursive = TRUE, force = TRUE), add = TRUE)
+  utils::unzip(xlsx_path, exdir = tmp)
+  slurp <- function(rel) {
+    p <- file.path(tmp, rel)
+    if (!file.exists(p)) return("")
+    x <- readChar(p, file.info(p)$size, useBytes = TRUE)
+    Encoding(x) <- "UTF-8"
+    x
+  }
+  unescape <- function(x) {
+    for (e in list(c("&lt;", "<"), c("&gt;", ">"), c("&quot;", "\""), c("&apos;", "'"),
+                   c("&#10;", "\n"), c("&#13;", "\r"), c("&amp;", "&"))) {
+      x <- gsub(e[[1]], e[[2]], x, fixed = TRUE)
+    }
+    x
+  }
+  tags <- function(x, name) regmatches(x, gregexpr(paste0("<", name, " [^>]*>"), x))[[1]]
+  attr_of <- function(tags, a) {
+    vapply(tags, function(t) {
+      m <- regmatches(t, regexpr(paste0(" ", a, "=\"[^\"]*\""), t))
+      if (!length(m)) NA_character_ else sub("^[^\"]*\"([^\"]*)\"$", "\\1", m)
+    }, character(1), USE.NAMES = FALSE)
+  }
+
+  ss <- slurp(file.path("xl", "sharedStrings.xml"))
+  parts <- strsplit(ss, "</si>", fixed = TRUE)[[1]]
+  shared <- if (length(parts) > 1L) unescape(gsub("<[^>]+>", "", parts[-length(parts)])) else
+    character(0)
+
+  wb <- slurp(file.path("xl", "workbook.xml"))
+  sheet_tags <- tags(wb, "sheet")
+  tab_names <- unescape(attr_of(sheet_tags, "name"))
+  rels <- slurp(file.path("xl", "_rels", "workbook.xml.rels"))
+  rel_tags <- tags(rels, "Relationship")
+  targets <- stats::setNames(attr_of(rel_tags, "Target"), attr_of(rel_tags, "Id"))
+  files <- sub("^/?xl/", "", unname(targets[attr_of(sheet_tags, "r:id")]))
+
+  cell_text <- function(x, r) {
+    m <- regexpr(sprintf("<row r=\"%d\"[^>]*?(/>|>.*?</row>)", r), x, perl = TRUE)
+    if (m < 0) return(stats::setNames(character(0), character(0)))
+    row <- regmatches(x, m)
+    cells <- regmatches(row, gregexpr("<c [^>]*?(/>|>.*?</c>)", row, perl = TRUE))[[1]]
+    if (!length(cells)) return(stats::setNames(character(0), character(0)))
+    ref <- attr_of(cells, "r")
+    type <- attr_of(cells, "t")
+    value <- vapply(cells, function(cl) {
+      v <- regmatches(cl, regexpr("<v>[^<]*</v>", cl))
+      if (length(v)) return(sub("^<v>(.*)</v>$", "\\1", v))
+      f <- regmatches(cl, regexpr("<f>[^<]*</f>", cl))
+      if (length(f)) return(paste0("=", unescape(sub("^<f>(.*)</f>$", "\\1", f))))
+      it <- regmatches(cl, regexpr("<is>.*</is>", cl))
+      if (length(it)) return(unescape(gsub("<[^>]+>", "", it)))
+      NA_character_
+    }, character(1), USE.NAMES = FALSE)
+    is_shared <- !is.na(type) & type == "s" & !is.na(value)
+    value[is_shared] <- shared[as.integer(value[is_shared]) + 1L]
+    stats::setNames(value, sub("[0-9]+$", "", ref))
+  }
+
+  sheets <- lapply(seq_along(tab_names), function(i) {
+    x <- slurp(file.path("xl", files[[i]]))
+    starts <- gregexpr("<row r=\"", x, fixed = TRUE)[[1]]
+    last_row <- if (starts[[1]] < 0) 0L else {
+      as.integer(sub("\".*$", "", substr(x, max(starts) + 8L, max(starts) + 20L)))
+    }
+    pane <- tags(x, "pane")
+    formulas <- regmatches(x, gregexpr("<f>[^<]*</f>", x))[[1]]
+    list(tab = tab_names[[i]], file = files[[i]], last_row = last_row,
+         frozen_at = if (length(pane)) attr_of(pane[[1]], "topLeftCell") else NA_character_,
+         merges = attr_of(tags(x, "mergeCell"), "ref"),
+         formulas = unescape(sub("^<f>(.*)</f>$", "\\1", formulas)),
+         hyperlinks = unescape(attr_of(tags(x, "hyperlink"), "location")),
+         hyperlink_refs = attr_of(tags(x, "hyperlink"), "ref"),
+         inline_strings = grepl("t=\"inlineStr\"", x, fixed = TRUE),
+         rows = lapply(seq_len(RELEASE_WORKBOOK_HEADER_ROW), function(r) cell_text(x, r)))
+  })
+  names(sheets) <- tab_names
+  list(tabs = tab_names, shared_strings = shared, sheets = sheets)
+}
+
+#' Members of "/"-separated gene lists, one character vector per row.
+release_gene_members <- function(x) {
+  x <- as.character(x)
+  x[is.na(x)] <- ""
+  lapply(strsplit(x, "/", fixed = TRUE), function(v) v[nzchar(v)])
+}
+
+#' TRUE when every member belongs to its declared namespace: ENTREZID members are NCBI
+#' Gene IDs (digits only), UNIPROT members UniProt accessions (an isoform suffix allowed).
+release_members_in_namespace <- function(members, identifier_type) {
+  members <- unlist(members, use.names = FALSE)
+  if (!length(members)) return(TRUE)
+  switch(identifier_type,
+         ENTREZID = all(grepl("^[0-9]+$", members)),
+         UNIPROT = all(release_uniprot_like(sub("-[0-9]+$", "", members)) &
+                         !grepl("_", members, fixed = TRUE)),
+         FALSE)
+}
+
+#' TRUE when two numeric vectors agree value by value up to how .xlsx stores a double
+#' (relative difference at most 1e-12; NA only where both are NA).
+release_same_numbers <- function(a, b, tolerance = 1e-12) {
+  a <- suppressWarnings(as.numeric(a))
+  b <- suppressWarnings(as.numeric(b))
+  if (length(a) != length(b) || !identical(is.na(a), is.na(b))) return(FALSE)
+  ok <- !is.na(a)
+  all(abs(a[ok] - b[ok]) <= tolerance * pmax(abs(a[ok]), abs(b[ok])))
+}
+
+#' A reader-facing panel source-data CSV (UTF-8 with BOM), every column as text.
+release_read_published_csv <- function(path) {
+  utils::read.csv(path, fileEncoding = "UTF-8-BOM", check.names = FALSE,
+                  colClasses = "character", na.strings = character(0))
 }

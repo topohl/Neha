@@ -1,6 +1,6 @@
 # The software / database version table. provenance/software_versions.tsv (stage 10) and
-# the Software_Versions sheet of the editor workbook (stage 07) both call
-# release_build_software_versions(), so they always agree.
+# table 2q (Software) of Supplementary Table 2 (stage 07) both call
+# release_build_software_versions(), so the versions always agree.
 #
 # Since 2026-11-24 the differential statistics come from limma
 # (01_preprocessing/02b_limma_stat_gct.r, one model per sample class); the limma and R
@@ -13,7 +13,7 @@
 # ProTigy version of the superseded pooled animal-level run (2026-08-24)
 # --------------------------------------------------------------------------------------
 # Recovered 2026-09-02 and stored as a constant, because it describes a past run and must
-# not be read from whatever ProTigy is installed now. Evidence (summarised in
+# not be read from whatever ProTigy is installed now. Evidence (summarized in
 # PROTIGY_ANIMAL_LEVEL_EVIDENCE):
 #   - the only ProTigy on the analysis machine is 2.4.1, built 2026-08-24 12:48:07 UTC;
 #   - the run's neha_proteome_parameters.yaml was written 18 minutes later (13:06:11 UTC);
@@ -32,7 +32,7 @@ PROTIGY_ANIMAL_LEVEL_EVIDENCE <- paste(
   "74ac5f7c35dfeb06e62e472c5a072b136e52ccc8965531e0a5380dc4b65da37d) reports version",
   "2.4.1, Packaged 2026-08-24 12:47:48 UTC and Built 2026-08-24 12:48:07 UTC; this run's",
   "parameter export was written 18 minutes later, at 2026-08-24 13:06:11 UTC. The export",
-  "is a v2-only artefact: ProTigy v2's tab_export.R writes <ome>_parameters.yaml with the",
+  "is a v2-only artifact: ProTigy v2's tab_export.R writes <ome>_parameters.yaml with the",
   "parameter list minus gct_file_path, which is exactly this file's name and key set, and",
   "all 19 of its schema keys are a subset of 2.4.1's setupDefaults.yaml. v1.1.8 is",
   "DISPROVEN for this run rather than merely unproven: v1.1.x emits a params.txt with a",

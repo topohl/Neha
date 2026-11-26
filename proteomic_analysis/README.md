@@ -96,7 +96,7 @@ These read the animal-level GCT from step 1.
 | `03_qc_exploration/02_rank_abundance_by_sample_class.r` | `03_output/qc/rank_abundance/` | `PROTEOMICS_RANK_ABUNDANCE_INPUT_GCT`, `PROTEOMICS_RANK_ABUNDANCE_ID_MAP`, `PROTEOMICS_RANK_ABUNDANCE_OUTPUT_DIR` |
 | `05_celltype_enrichment_EWCE/01_EWCE.r` | `03_output/ewce/` | `PROTEOMICS_EWCE_ANIMAL_LEVEL_INPUT`, `PROTEOMICS_EWCE_OUTPUT_ROOT` |
 
-- PCA: one point per `AnimalID × sample_class` (48), centred and scaled, with zero-variance proteins dropped and listed in the audit. `06_pcaPlot_animal_level.r` runs `pca/06a_pca_core.r` and then the parts `06b` to `06h` in order (`06b` creates objects that `06c`, `06g` and `06h` use). `06a` must succeed; if one of `06b` to `06h` fails, the others still run and the script exits with an error at the end.
+- PCA: one point per `AnimalID × sample_class` (48), centered and scaled, with zero-variance proteins dropped and listed in the audit. `06_pcaPlot_animal_level.r` runs `pca/06a_pca_core.r` and then the parts `06b` to `06h` in order (`06b` creates objects that `06c`, `06g` and `06h` use). `06a` must succeed; if one of `06b` to `06h` fails, the others still run and the script exits with an error at the end.
 - Rank abundance: groups by `sample_class × condition` (16 groups of 3 animals) and writes the panels `Fig3E` (mCherry, paired vs unpaired vehicle) and `SuppD` (neuron and neuropil, unpaired vehicle), a panel for each of the 16 groups, `processed_protein_ranks_animal_level.csv`, `rank_abundance_run_provenance.csv` and a marker workbook. Gene names come from one mapped table of the pooled run, used only as an ID lookup.
 - EWCE: fits its own limma model per sample class (`eBayes(trend = TRUE, robust = TRUE)`, so close to but not the same as step 2) for the 12 contrasts and runs 10,000 bootstrap repetitions, which takes hours. The sampling-unit audit is `03_QC_Mapping_Logs/animal_level_differential_audit.csv`.
 
@@ -127,7 +127,7 @@ Inputs and outputs are under `S:/Lab_Member/Tobi/Experiments/Collabs/Neha/cluste
 | `03_output/` | results: `enrichment/`, `ewce/`, `pca/`, `inferential_checks/`, `synthesis/`, `qc/`, figure rebuilds and releases | yes |
 | `99_historical/` | the superseded hemisphere-level analysis and older runs | no |
 
-Several stages have more than one run on disk. [`CANONICAL_OUTPUTS.md`](CANONICAL_OUTPUTS.md) says which one is current and lists the caveats that come with the data. The 2026-08-26 reorganisation renamed folders and rewrote the paths recorded in index and manifest CSVs; the manifest to undo it and the original files are in `_migration_backup_20260826/`.
+Several stages have more than one run on disk. [`CANONICAL_OUTPUTS.md`](CANONICAL_OUTPUTS.md) says which one is current and lists the caveats that come with the data. The 2026-08-26 reorganization renamed folders and rewrote the paths recorded in index and manifest CSVs; the manifest to undo it and the original files are in `_migration_backup_20260826/`.
 
 ## Tests
 
@@ -165,7 +165,7 @@ powershell -ExecutionPolicy Bypass -File .\run_pipeline_check.ps1 -Tier Full  # 
 
 ## Release
 
-`07_publication_release/` builds the data release from finished outputs: the source-data workbook, figure source data, processed and differential tables, enrichment tables, PRIDE/SDRF metadata, data lineage, software versions and a SHA-256 manifest. It fits no model and runs no enrichment or PCA; `07_publication_release/tests/test_release_no_scientific_recomputation.R` checks the builders for such calls. Since 2026-11-24 it releases the per-compartment statistics.
+`07_publication_release/` builds the data release from finished outputs: Supplementary Table 2 (`editor_source_data/Supplementary_Table_2_proteomics.xlsx`), figure source data, processed and differential tables, enrichment tables, PRIDE/SDRF metadata, data lineage, software versions and a SHA-256 manifest. It fits no model and runs no enrichment or PCA; `07_publication_release/tests/test_release_no_scientific_recomputation.R` checks the builders for such calls. Since 2026-11-24 it releases the per-compartment statistics.
 
 Build into a scratch folder and validate it there:
 
@@ -176,7 +176,7 @@ PROTEOMICS_RELEASE_OUTPUT_ROOT="<same root>" \
   Rscript 07_publication_release/13_validate_release.R
 ```
 
-Without the variable the release goes to `03_output/release_within_compartment_20261125/` on the shared drive. That needs `PROTEOMICS_RELEASE_ALLOW_SHARED_DRIVE=true` and a clean git tree, because the release records the commit that built it. The output folder may not overlap `01_input/`, `02_data/`, `99_historical/`, the analysis folders in `03_output/` or the frozen pooled-run release in `03_output/publication_release/`. The C46/C47 sample-class correction, the effect-size columns and the PRIDE metadata that is still missing are described in [`07_publication_release/README.md`](07_publication_release/README.md).
+Without the variable the release goes to `03_output/release_within_compartment_20261126/` on the shared drive. That needs `PROTEOMICS_RELEASE_ALLOW_SHARED_DRIVE=true` and a clean git tree, because the release records the commit that built it. The output folder may not overlap `01_input/`, `02_data/`, `99_historical/`, the analysis folders in `03_output/` or the frozen earlier releases (`03_output/publication_release/`, `03_output/release_within_compartment_20261125/`). The C46/C47 sample-class correction, the effect-size columns and the PRIDE metadata that is still missing are described in [`07_publication_release/README.md`](07_publication_release/README.md).
 
 ## License and citation
 

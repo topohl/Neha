@@ -3,10 +3,17 @@
 # Publication release, stage 06 -- figure source data and the panel provenance map.
 #
 # Produces
-#   editor_source_data/figure_source_map.tsv          one row per manuscript panel
-#   editor_source_data/figure_source_data/**          the per-panel source-data files,
-#                                                     copied byte for byte (G and Supp. F
-#                                                     have two each)
+#   provenance/figure_source_map.tsv          one row per manuscript panel
+#   editor_source_data/figure_source_data/*.csv       reader-facing source data per panel
+#                                                     (G and Supp. F have two files each)
+#
+# The published source data are reader-facing versions of the canonical panel files: plain
+# headers (the workbook's display header wherever a column holds the same quantity, as pinned
+# in RELEASE_FIGURE_CSV_HEADERS), the display labels of the workbook, no internal columns,
+# values carried over as text. The canonical files are checked against pinned hashes and
+# named in the map with that hash, but not copied into the release. Supp. Fig. 4 A takes
+# only the per-acquisition counts of its source workbook (sheet 1); the workbook's other
+# sheet is unrelated data.
 #
 # Built from the 2026-08-27 revision manifests:
 #   manifests/regenerated_panel_manifest.csv          what was done, with the numbers
@@ -47,7 +54,7 @@ REPO_ROOT <- release_repo_root()
 release_source_project_helpers(REPO_ROOT)
 source(file.path(REPO_ROOT, "07_publication_release", "R", "release_validation.R"))
 source(file.path(REPO_ROOT, "07_publication_release", "R", "release_presentation.R"))
-release_require("digest")
+release_require("digest", "readxl")
 
 DATA_ROOT <- release_data_root()
 OUT_ROOT <- release_prepare_output_root()
@@ -85,7 +92,18 @@ paths <- list(
                                  "mcherry_paired_veh_over_mcherry_unpaired_veh",
                                  "ORA_GO_CC_fdr_up.csv"),
   contrast_manifest = release_path("metadata", "primary_contrast_manifest.tsv",
-                                   create_dir = FALSE)
+                                   create_dir = FALSE),
+  # Release tables of the earlier stages, for the lookups and cross-checks of the
+  # reader-facing source data.
+  sample_metadata = release_path("metadata", "sample_metadata.tsv", create_dir = FALSE),
+  animal_metadata = release_path("metadata", "animal_level_sample_metadata.tsv",
+                                 create_dir = FALSE),
+  feature_annotation = release_path("processed_data", "protein_feature_annotation.tsv.gz",
+                                    create_dir = FALSE),
+  differential = release_path("differential_analysis", "primary_differential_proteins.tsv.gz",
+                              create_dir = FALSE),
+  gsea_go_bp = release_path("enrichment", "primary_GSEA_GO_BP.tsv.gz", create_dir = FALSE),
+  untested_sets = release_path("enrichment", "gsea_untested_gene_sets.tsv", create_dir = FALSE)
 )
 for (nm in names(paths)) release_assert_exists(paths[[nm]], nm)
 
@@ -195,12 +213,12 @@ PANEL_ANALYSIS <- c(
   "Figure3|E" = "rank-abundance curves by sample class and condition (descriptive)",
   "Figure3|F" = "GSEA GO-BP bubble grid, paired_veh vs unpaired_veh across sample classes",
   "Figure3|G" = "GSEA lollipop, GO-BP and GO-CC (ranked by the moderated t), mCherry paired_veh vs unpaired_veh",
-  "Figure3|H" = "scatter of the learning effect size against the CNO effect size (standardised abundance differences, SD units), mCherry (descriptive)",
+  "Figure3|H" = "scatter of the learning effect size against the CNO effect size (standardized abundance differences, SD units), mCherry (descriptive)",
   "Figure3|I" = "GSEA NES heatmap, learning and paired-CNO contrasts",
   "Supplementary_proteomics|A" = "protein and peptide identification counts per acquisition (technical QC)",
-  "Supplementary_proteomics|B1" = "PCA of animal-level protein abundance coloured by experimental group",
-  "Supplementary_proteomics|B2" = "PCA of acquisition-level protein abundance coloured by hemisphere (technical QC)",
-  "Supplementary_proteomics|B3" = "PCA of acquisition-level protein abundance coloured by collection plate (technical QC)",
+  "Supplementary_proteomics|B1" = "PCA of animal-level protein abundance colored by experimental group",
+  "Supplementary_proteomics|B2" = "PCA of acquisition-level protein abundance colored by hemisphere (technical QC)",
+  "Supplementary_proteomics|B3" = "PCA of acquisition-level protein abundance colored by collection plate (technical QC)",
   "Supplementary_proteomics|C" = "EWCE cell-type identity heatmap (Baseline analysis)",
   "Supplementary_proteomics|D" = "rank-abundance curves, neuron and neuropil at unpaired_veh (descriptive)",
   "Supplementary_proteomics|E" = "cross-compartment GSEA bubble plot from a secondary within-animal paired model",
@@ -230,7 +248,7 @@ PANEL_RELEASE_TABLE <- c(
   "Figure3|G" = "enrichment/primary_GSEA_GO_BP.tsv.gz;enrichment/primary_GSEA_GO_CC.tsv.gz",
   "Figure3|H" = "differential_analysis/primary_differential_proteins.tsv.gz",
   "Figure3|I" = "enrichment/primary_GSEA_GO_BP.tsv.gz",
-  "Supplementary_proteomics|A" = "(not in this release: acquisition QC counts, see notes)",
+  "Supplementary_proteomics|A" = "(acquisition QC counts: in the panel source data only)",
   "Supplementary_proteomics|B1" = "processed_data/protein_abundance_animal_level.tsv.gz",
   "Supplementary_proteomics|B2" = "processed_data/protein_abundance_measurement_level.tsv.gz",
   "Supplementary_proteomics|B3" = "processed_data/protein_abundance_measurement_level.tsv.gz",
@@ -243,39 +261,45 @@ PANEL_RELEASE_TABLE <- c(
 PANEL_ROW_FILTER <- c(
   "Figure3|C" = "all 5349 proteins x 48 animal-level units",
   "Figure3|D" = "canonical_comparison == mcherry_paired_veh_over_mcherry_unpaired_veh AND id_mapping_status == mapped",
-  "Figure3|E" = "all 5349 proteins; means over the 3 animals per sample_class x condition",
+  # the rows per curve are appended from the panel's own source data below
+  "Figure3|E" = "means over the 3 animals per sample_class x condition",
   "Figure3|F" = "contrast_family == paired_veh_vs_unpaired_veh AND analysis_role == canonical AND ontology == GO_BP",
   # the selection rule is appended from the panel's own source data below
   "Figure3|G" = "canonical_comparison == mcherry_paired_veh_over_mcherry_unpaired_veh AND analysis_role == canonical AND ontology in {GO_BP, GO_CC}",
   "Figure3|H" = "canonical_comparison in {mcherry_paired_veh_over_mcherry_unpaired_veh, mcherry_paired_cno_over_mcherry_paired_veh} AND id_mapping_status == mapped AND significant_fdr_0_05 == TRUE in mcherry_paired_veh_over_mcherry_unpaired_veh",
   "Figure3|I" = "contrast_family in {paired_veh_vs_unpaired_veh, paired_cno_vs_paired_veh} AND analysis_role == canonical AND adjusted_p_value <= 0.05 in BOTH within a sample class",
   "Supplementary_proteomics|B1" = "all 5349 proteins x 48 animal-level units",
-  "Supplementary_proteomics|B2" = "all 5349 proteins x 96 acquisitions; coloured by sample_metadata hemisphere",
-  "Supplementary_proteomics|B3" = "all 5349 proteins x 96 acquisitions; coloured by sample_metadata collection_plate",
+  "Supplementary_proteomics|B2" = "all 5349 proteins x 96 acquisitions; colored by sample_metadata hemisphere",
+  "Supplementary_proteomics|B3" = "all 5349 proteins x 96 acquisitions; colored by sample_metadata collection_plate",
   "Supplementary_proteomics|C" = "ewce_analysis_type == Baseline AND is_primary_setting == TRUE",
-  "Supplementary_proteomics|D" = "sample_class in {neuron, neuropil} AND condition == unpaired_veh",
+  "Supplementary_proteomics|D" = "sample_class in {neuron, neuropil} AND condition == unpaired_veh; means over the 3 animals",
   "Supplementary_proteomics|F" = "contrast_family == paired_cno_vs_paired_veh AND analysis_role == canonical AND ontology == GO_BP"
 )
+
+# The rank-abundance panels plot 2^(mean standardized abundance). The mean is in SD units, so
+# the plotted value is a display transform, not an abundance.
+RANK_PLOTTED_VALUE_NOTE <- paste(
+  "The plotted value is 2 to the power of the mean standardized abundance (SD units): a",
+  "display transform, not an abundance.")
 
 # Notes for the six rebuilt panels (D, F, G, H, I, Supp F) are computed from the rebuild's
 # files below and added to this map; the pooled-run notes they replace are not kept.
 PANEL_NOTE <- c(
+  # The sentence on corrected sample classes is added from the published file below.
   "Supplementary_proteomics|A" = paste("Acquisition-level identification depth. The unit is",
                                        "the acquisition, which is correct for technical QC",
-                                       "and is NOT a biological n. Its source workbook lives",
-                                       "outside the clusterProfiler tree and is cited in the",
-                                       "map rather than re-derived."),
-  "Supplementary_proteomics|B2" = paste("Retained at acquisition level by necessity:",
-                                        "hemisphere does not exist in the 48-row animal-level",
-                                        "metadata. Hemisphere explains 0.11% of PC1 and 0.02%",
-                                        "of PC2, neither significant."),
-  "Supplementary_proteomics|B3" = paste("Retained at acquisition level by necessity:",
-                                        "collection plate does not exist in the animal-level",
-                                        "metadata. Collection plate explains 0.01% of PC1 and",
-                                        "1.5% of PC2, neither significant. Label reads",
-                                        "'Collection plate'; the word 'batch' must not be used."),
+                                       "and is NOT a biological n."),
+  "Supplementary_proteomics|B2" = paste("Shown at acquisition level because hemisphere is",
+                                        "averaged out of the 48 animal-level profiles.",
+                                        "Hemisphere explains 0.11% of PC1 and 0.02% of PC2,",
+                                        "neither significant."),
+  "Supplementary_proteomics|B3" = paste("Acquisition-level technical check. Collection plate",
+                                        "explains 0.01% of PC1 and 1.5% of PC2, neither",
+                                        "significant.", release_plate_injection_sentence(),
+                                        "Label reads 'Collection plate'; the word 'batch' must",
+                                        "not be used."),
   "Supplementary_proteomics|E" = paste("SECONDARY analysis, not one of the 12 primary",
-                                       "contrasts and not a treatment effect. Both arms of",
+                                       "comparisons and not a treatment effect. Both arms of",
                                        "every cross-compartment comparison come from the SAME",
                                        "three animals, so it was fitted as a within-animal",
                                        "paired model (limma ~ 0 + sample_class + AnimalID;",
@@ -283,15 +307,32 @@ PANEL_NOTE <- c(
                                        "note blocking this panel was superseded."),
   "Supplementary_proteomics|C" = paste("EWCE Baseline analysis over per-condition abundant",
                                        "protein lists; descriptive cell-type identity, not a",
-                                       "treatment contrast. 12 of the legacy 14 cell types",
+                                       "treatment comparison. 12 of the legacy 14 cell types",
                                        "survive animal-level correction."),
-  "Figure3|E" = paste("Descriptive; no statistical test. Numerically indistinguishable from",
+  "Figure3|E" = paste("Descriptive; no statistical test.", RANK_PLOTTED_VALUE_NOTE,
+                      "Numerically indistinguishable from",
                       "the hemisphere-level original (Spearman 0.99999, Pearson on group",
                       "means 1.000), because in a balanced design the mean of animal means",
                       "equals the mean of all hemispheres."),
-  "Supplementary_proteomics|D" = paste("Descriptive; no statistical test. Same equivalence as",
+  "Supplementary_proteomics|D" = paste("Descriptive; no statistical test.",
+                                        RANK_PLOTTED_VALUE_NOTE, "Same equivalence as",
                                         "Fig. 2 E.")
 )
+
+# Reader-facing unit of the panels whose manifest unit is written in the revision's terms.
+# The manifest's explanation after " - " is kept (the changelog shows it; table 2p does not).
+PANEL_UNIT <- c(
+  "Figure3|E" = "animal (left/right averaged), then mean of 3 animals",
+  "Supplementary_proteomics|B2" = "acquisition (96 runs)",
+  "Supplementary_proteomics|B3" = "acquisition (96 runs)",
+  "Supplementary_proteomics|C" = "protein list of one compartment x condition (n = 3 animals)",
+  "Supplementary_proteomics|D" = "animal (left/right averaged), then mean of 3 animals"
+)
+panel_unit <- function(key, manifest_unit) {
+  if (!key %in% names(PANEL_UNIT)) return(manifest_unit)
+  at <- regexpr(" - ", manifest_unit, fixed = TRUE)
+  paste0(PANEL_UNIT[[key]], if (at > 0L) substring(manifest_unit, at) else "")
+}
 
 # --------------------------------------------------------------------------------------
 # panels rebuilt on the per-compartment statistics (2026-11-24; again 2026-11-25)
@@ -342,11 +383,11 @@ REBUILT_PANELS <- data.frame(
           "(learning and paired-CNO contrasts)"),
     file.path(ENRICH_REL, "GO_BP", "per_comparison", "*_paired_cno_over_*_paired_veh",
               "GSEA_GO_BP.csv")),
-  # Decided 2026-11-25, relative to the pooled-model release.
+  # 2026-11-25, relative to the pooled-model release.
   biological_interpretation_changed = c("NO", "YES", "YES", "NO", "YES", "NO"),
   # Title and unit stated here rather than copied from the 2026-08-27 manifest, whose text
   # described the pooled-model panels (and called the H axes "moderated limma log2FC").
-  # Axis wording as decided 2026-11-25: D "Effect size (SD)"; H "Learning effect (SD)" against
+  # Axis wording (2026-11-25): D "Effect size (SD)"; H "Learning effect (SD)" against
   # "CNO vs VEH effect, paired (SD)".
   panel_title = c(
     "Volcano: mCherry paired vs unpaired, effect size (SD) against adjusted P",
@@ -365,6 +406,33 @@ REBUILT_PANELS <- data.frame(
     "animal; GSEA ranked by the moderated t from the per-sample-class limma fit",
     "animal; GSEA ranked by the moderated t from the per-sample-class limma fit"),
   stringsAsFactors = FALSE, check.names = FALSE
+)
+
+# The canonical source data of the other panels, pinned by hash the same way: the published
+# files are parsed from them, so a changed file must stop the build. Keyed by file name.
+PANEL_SOURCE_PINS <- c(
+  "Fig3C_PCA_animal_level_source_data.csv" =
+    "c026c23202c1a63b7e662031a856b5296febc02511129ce107c0f51edbed1a8c",
+  "Fig3E_rank_abundance_animal_level_source_data.csv" =
+    "597bd3fb3b094a0346a10c1862f45da2ff168722ea02fa1b683ba04f5a848128",
+  "SuppA_protein_peptide_counts_source_data.xlsx" =
+    "52359117b8b253c41960d00d6a8dc55cd47abbcdbb5289c56fba7ac66e5c5056",
+  "SuppB1_PCA_experimental_group_animal_level_source_data.csv" =
+    "c026c23202c1a63b7e662031a856b5296febc02511129ce107c0f51edbed1a8c",
+  "SuppB2_B3_PCA_acquisition_level_QC_source_data.csv" =
+    "6d3421202d3747f7cbe0174359c47ebad7aea2eeab678d0541db15899ef6eb0d",
+  "SuppC_celltype_identity_heatmap_animal_level_source_data.csv" =
+    "d378bb86c5fc8f773bc5b6303876fc3994898f11dfde0a4f768597010fed1003",
+  "SuppD_rank_abundance_animal_level_source_data.csv" =
+    "ebdf363bff8a69f28b29545f9efb52de196d7160b9a304c5140814d833371535",
+  "SuppE_source_data.csv" =
+    "2de96a5209ae7fa89c90c14431e9c5b6b02bc07e8d9ae6b606ca3daab235aed9"
+)
+
+# Published name of a panel's further files: <panel>_<name>.csv, in file order.
+PANEL_EXTRA_FILE_NAMES <- list(
+  "Figure3|G" = "redundant_terms_skipped",
+  "Supplementary_proteomics|F" = "blank_cells"
 )
 
 rebuilt_files <- function(key) {
@@ -476,11 +544,17 @@ g_rule <- unique(as.character(g_src$selection_rule))
 if (nrow(g_ont) != 2L || length(g_rule) != 1L) {
   stop("Fig. 2 G source data no longer holds one GO-BP and one GO-CC block.", call. = FALSE)
 }
+# The rule names the ontologies BP and CC; the map and the source data write GO-BP and
+# GO-CC.
+go_collection_names <- function(x) {
+  gsub("(?<!GO-)\\b(BP|CC)\\b", "GO-\\1", x, perl = TRUE)
+}
+g_rule <- go_collection_names(g_rule)
 ora_up <- release_read_csv(paths$ora_learning_up)
 ora_up_cc <- release_read_csv(paths$ora_learning_up_cc)
 ora_text <- function(d, label) {
   paste0(sum(d$p.adjust < 0.05), " of ", format(nrow(d), big.mark = ","), " ", label,
-         " terms at FDR < 0.05 (minimum adjusted P ", signif(min(d$p.adjust), 2), ")")
+         " terms at FDR < 0.05 (minimum adjusted P ", release_format_p(min(d$p.adjust)), ")")
 }
 g_key <- paste0("GSEA (moderated t): ",
                 paste0("GO-", g_ont$ontology, " ", g_ont$n_FDR_significant, " of ",
@@ -502,18 +576,19 @@ PANEL_ROW_FILTER[["Figure3|G"]] <- paste0(PANEL_ROW_FILTER[["Figure3|G"]], "; ",
 # Fig. 2 H: descriptive correlation of the learning and CNO effects.
 h_audit <- release_read_csv(paths$fig_h_audit)
 h_key <- paste0("r = ", fmt_r(audit_value(h_audit, "corrected_r")),
-                " on the learning signature (n = ", audit_value(h_audit, "n_proteins"),
+                " on the proteins at FDR < 0.05 in the Pairing comparison (n = ",
+                audit_value(h_audit, "n_proteins"),
                 "); r = ", fmt_r(audit_value(h_audit, "r_all_proteins_unselected")),
                 " unselected; same-side control r = ",
                 fmt_r(audit_value(h_audit, "control_r_learning_signature")))
 h_note <- paste0(
   "DESCRIPTIVE ONLY. Pearson r = ", fmt_r(audit_value(h_audit, "corrected_r")), " across the ",
-  audit_value(h_audit, "n_proteins"), " proteins at FDR < 0.05 in the learning contrast.",
-  " The two contrasts share paired_veh on OPPOSITE sides, so a negative correlation is",
+  audit_value(h_audit, "n_proteins"), " proteins at FDR < 0.05 in the Pairing comparison.",
+  " The two comparisons share paired_veh on OPPOSITE sides, so a negative correlation is",
   " expected by construction; the same-side control gives r = ",
   fmt_r(audit_value(h_audit, "control_r_learning_signature")), " on the same protein set.",
-  " Conditioning x on learning FDR additionally induces regression to the mean on y. This",
-  " panel is not evidence that inhibition reverses learning.")
+  " Selecting the proteins on their Pairing FDR (x axis) additionally induces regression to",
+  " the mean on y. This panel is not evidence that CNO reverses the pairing effect.")
 
 # Fig. 2 I: NES heatmap of terms significant in both rows. Opposition is counted from the
 # source data and must agree with the rebuild's own audit.
@@ -550,9 +625,11 @@ i_note <- paste0(
   " sample class, ", sum(i_terms$opposed), " are opposed in sign, the expected structural",
   " consequence of the design",
   if (sum(!i_terms$opposed))
-    paste0("; the ", sum(!i_terms$opposed), " concordant term(s) are in ",
+    paste0("; the ", sum(!i_terms$opposed),
+           if (sum(!i_terms$opposed) == 1L) " concordant term is in " else
+             " concordant terms are in ",
            paste(release_sample_class_display(i_conc_classes), collapse = ", ")) else "",
-  ". The opposition cannot be read as proof that CNO reverses a pairing-associated programme. ",
+  ". The opposition cannot be read as proof that CNO reverses a pairing-associated program. ",
   untested_sentence(c("paired_veh_vs_unpaired_veh", "paired_cno_vs_paired_veh"), "GO_BP",
                     unique(as.character(i_src$sample_class))))
 
@@ -592,23 +669,21 @@ rows <- lapply(seq_len(nrow(regenerated)), function(i) {
     trimws(as.character(r$source_data_path))
   has_source_data <- nzchar(source_data_rel[[1]]) && !source_data_rel[[1]] %in% c("n/a", "NA")
   source_data_abs <- if (has_source_data) file.path(panel_root, source_data_rel) else NA_character_
-  # Destination names are flattened to <panel>_source_data.<ext>, named in the manuscript
-  # numbering (Fig2D, SuppFig4F). The canonical layout is nested three levels deep with long
-  # descriptive filenames, and reproducing it pushed paths past the Windows 260-character
-  # limit. The original filename is kept in a column so the correspondence stays exact. A
-  # panel's further files keep their own name after the panel slug, with the internal slug
-  # replaced (Fig3G_redundant_terms_skipped.csv -> Fig2G_redundant_terms_skipped.csv); all
-  # are ";"-separated in order.
+  # Published files are CSV, named in the manuscript numbering: <panel>_source_data.csv
+  # (Fig2D, SuppFig4F), further files <panel>_<name>.csv from PANEL_EXTRA_FILE_NAMES; all are
+  # ";"-separated in order. The canonical file names are kept in a column so the
+  # correspondence stays exact.
   panel_label <- paste(ifelse(figure == "Figure3", "Fig. 2", "Supp. Fig. 4"), panel)
   panel_slug <- gsub("[^A-Za-z0-9]", "", sub("^Supp[.] Fig[.]", "SuppFig", panel_label))
-  internal_slug <- paste0(ifelse(figure == "Figure3", "Fig3", "Supp"), panel)
   dest_rel <- if (has_source_data) {
-    first <- paste0(panel_slug, "_source_data.", tolower(tools::file_ext(source_data_rel[[1]])))
-    extra <- if (length(source_data_rel) > 1L) {
-      paste0(panel_slug, "_", sub(paste0("^", internal_slug, "_"), "",
-                                  basename(source_data_rel[-1])))
-    } else character(0)
-    file.path("editor_source_data", "figure_source_data", c(first, extra))
+    extra_names <- PANEL_EXTRA_FILE_NAMES[[key]]
+    if (length(extra_names) != length(source_data_rel) - 1L) {
+      stop("Panel ", panel_label, " has ", length(source_data_rel) - 1L, " further source ",
+           "file(s) but ", length(extra_names), " published name(s).", call. = FALSE)
+    }
+    file.path("editor_source_data", "figure_source_data",
+              c(paste0(panel_slug, "_source_data.csv"),
+                if (length(extra_names)) paste0(panel_slug, "_", extra_names, ".csv")))
   } else NA_character_
   join <- function(x) paste(x, collapse = ";")
 
@@ -625,7 +700,7 @@ rows <- lapply(seq_len(nrow(regenerated)), function(i) {
     source_rows_filter = unname(ifelse(key %in% names(PANEL_ROW_FILTER),
                                        PANEL_ROW_FILTER[[key]], NA_character_)),
     statistical_unit = if (rebuilt) REBUILT_PANELS$statistical_unit[rb] else
-      trimws(as.character(r$new_sampling_unit)),
+      panel_unit(key, trimws(as.character(r$new_sampling_unit))),
     original_statistical_unit = trimws(as.character(r$old_sampling_unit)),
     primary_or_secondary = unname(ifelse(key %in% names(PANEL_PRIMARY),
                                          PANEL_PRIMARY[[key]], NA_character_)),
@@ -697,46 +772,614 @@ if (length(pin_mismatch) || sum(!is.na(rb_idx)) != nrow(REBUILT_PANELS)) {
 }
 
 # --------------------------------------------------------------------------------------
-# copy the per-panel source data verbatim
+# reader-facing panel source data
 # --------------------------------------------------------------------------------------
+# Each canonical file is checked against its pin, read as text and published as CSV with
+# the headers of RELEASE_FIGURE_CSV_HEADERS and the display labels of the workbook. Every
+# source column is either published or dropped by name, so a changed file stops the build.
+# Values are carried over as text. Added columns are lookups only (sample IDs, hemisphere,
+# gene symbols, comparison names), and the comparisons with the release tables are checks,
+# not inputs.
 
-copied <- 0L
+# The display labels are the workbook's (R/release_presentation.R); fig_label() stops on a
+# value with no label instead of passing it through.
+FIG_CLASS_LABEL <- RELEASE_SAMPLE_CLASS_DISPLAY
+FIG_CONDITION_LABEL <- RELEASE_CONDITION_DISPLAY
+FIG_FAMILY_LABEL <- RELEASE_FAMILY_LABEL
+FIG_ONTOLOGY_LABEL <- stats::setNames(RELEASE_ONTOLOGY_DISPLAY[c("GO_BP", "GO_CC")],
+                                      c("BP", "CC"))
+LEARNING_COMPARISON <- "mcherry_paired_veh_over_mcherry_unpaired_veh"
+
+sample_meta <- release_read_tsv_plain(paths$sample_metadata)
+animal_meta <- release_read_tsv_plain(paths$animal_metadata)
+read_release_gz <- function(p, ...) {
+  utils::read.delim(gzfile(p), sep = "\t", quote = "", stringsAsFactors = FALSE,
+                    check.names = FALSE, ...)
+}
+differential <- read_release_gz(paths$differential)
+gsea_go_bp <- read_release_gz(paths$gsea_go_bp)
+untested_tbl <- utils::read.delim(paths$untested_sets, sep = "\t", quote = "",
+                                  stringsAsFactors = FALSE, check.names = FALSE,
+                                  colClasses = "character")
+features <- read_release_gz(paths$feature_annotation, colClasses = "character")
+has_acc <- !is.na(features$uniprot_accession) & nzchar(features$uniprot_accession)
+acc_sym <- unique(data.frame(
+  acc = features$uniprot_accession[has_acc],
+  sym = ifelse(is.na(features$gene_symbol[has_acc]), "", trimws(features$gene_symbol[has_acc])),
+  stringsAsFactors = FALSE))
+if (anyDuplicated(acc_sym$acc)) {
+  stop("The feature annotation gives more than one gene symbol for an accession.",
+       call. = FALSE)
+}
+symbol_of_accession <- stats::setNames(acc_sym$sym, acc_sym$acc)
+
+fig_check <- function(ok, ...) {
+  if (!isTRUE(all(ok))) stop(..., call. = FALSE)
+  invisible(TRUE)
+}
+fig_label <- function(map, x, what) {
+  x <- as.character(x)
+  out <- unname(map[x])
+  if (anyNA(out)) {
+    stop("No display label for ", what, ": ", paste(unique(x[is.na(out)]), collapse = ", "),
+         call. = FALSE)
+  }
+  out
+}
+contrast_of <- function(key) {
+  i <- match(key, contrasts$canonical_comparison)
+  fig_check(!is.na(i), "Not a primary comparison: ", paste(unique(key[is.na(i)]), collapse = ", "))
+  contrasts[i, , drop = FALSE]
+}
+groups_label <- function(key) {
+  r <- contrast_of(key)
+  paste(fig_label(FIG_CONDITION_LABEL, r$numerator_condition, "condition"), "vs",
+        fig_label(FIG_CONDITION_LABEL, r$denominator_condition, "condition"))
+}
+comparison_label <- function(key) {
+  paste0(fig_label(FIG_CLASS_LABEL, contrast_of(key)$sample_class, "compartment"), ": ",
+         groups_label(key))
+}
+comparison_key <- function(sample_class, family) {
+  i <- match(paste(sample_class, family),
+             paste(contrasts$sample_class, contrasts$contrast_family))
+  fig_check(!is.na(i), "No primary comparison for ",
+            paste(unique(paste(sample_class, family)[is.na(i)]), collapse = ", "))
+  contrasts$canonical_comparison[i]
+}
+# Hemisphere as Left/Right where the sample metadata records it from explicit evidence (and,
+# when given, the replicate number the panel used agrees); NA otherwise.
+certain_hemisphere <- function(sample_ids, replicate_group = NULL) {
+  i <- match(sample_ids, sample_meta$sample_id)
+  h <- sample_meta$hemisphere[i]
+  ok <- !is.na(i) & h %in% c("Left", "Right") &
+    sample_meta$hemisphere_evidence_source[i] %in% "explicit_evidence"
+  if (!is.null(replicate_group)) {
+    rg <- sample_meta$legacy_replicate_group[i]
+    ok <- ok & !is.na(rg) & rg == replicate_group
+  }
+  ifelse(ok, h, NA_character_)
+}
+# Text values compared with release numbers (the CSVs carry 15 significant digits).
+same_numbers <- function(text, reference) {
+  x <- suppressWarnings(as.numeric(text))
+  length(x) == length(reference) && !anyNA(x) && !anyNA(reference) &&
+    all(abs(x - reference) <= 1e-9 * pmax(1, abs(reference)))
+}
+differential_rows <- function(cmp, protein_group_ids) {
+  da <- differential[differential$canonical_comparison == cmp, , drop = FALSE]
+  j <- match(protein_group_ids, da$protein_group_id)
+  fig_check(!is.na(j), "Panel proteins missing from the release statistics of ", cmp)
+  da[j, , drop = FALSE]
+}
+gsea_go_rows <- function(keys, by, values) {
+  g <- gsea_go_bp[gsea_go_bp$canonical_comparison %in% keys, , drop = FALSE]
+  table_keys <- paste(g$canonical_comparison, g[[by]], sep = "\r")
+  j <- match(paste(keys, values, sep = "\r"), table_keys)
+  fig_check(!is.na(j) & !table_keys[j] %in% table_keys[duplicated(table_keys)],
+            "Panel gene sets not found once in the release GSEA GO-BP table")
+  g[j, , drop = FALSE]
+}
+
+read_text_csv <- function(path) {
+  d <- utils::read.csv(path, colClasses = "character", check.names = FALSE,
+                       stringsAsFactors = FALSE, fileEncoding = "UTF-8-BOM")
+  names(d) <- sub(paste0("^", intToUtf8(0xFEFF)), "", names(d))
+  d
+}
+# Supp. Fig. 4 A: only the first sheet holds this panel's data.
+read_first_sheet <- function(path) {
+  d <- as.data.frame(readxl::read_excel(path, sheet = 1L, col_types = "text",
+                                        .name_repair = "minimal"),
+                     stringsAsFactors = FALSE)
+  attr(d, "sheets") <- readxl::excel_sheets(path)
+  d
+}
+expect_columns <- function(d, cols, what) {
+  fig_check(!anyDuplicated(names(d)) && setequal(names(d), cols),
+            what, " no longer has the expected columns (", paste(cols, collapse = ", "),
+            "); found: ", paste(names(d), collapse = ", "))
+}
+as_table <- function(cols) {
+  n <- max(lengths(cols))
+  fig_check(lengths(cols) %in% c(1L, n), "Published columns differ in length.")
+  out <- data.frame(row.names = seq_len(n))
+  for (nm in names(cols)) {
+    v <- rep_len(as.character(cols[[nm]]), n)
+    out[[nm]] <- ifelse(is.na(v), "", v)
+  }
+  rownames(out) <- NULL
+  out
+}
+csv_field <- function(x) {
+  x <- as.character(x)
+  x[is.na(x)] <- ""
+  q <- grepl("[\",\r\n]", x) | grepl("^\\s|\\s$", x)
+  x[q] <- paste0("\"", gsub("\"", "\"\"", x[q], fixed = TRUE), "\"")
+  x
+}
+# UTF-8 with a byte order mark, so spreadsheet programs read the labels correctly.
+write_reader_csv <- function(df, path) {
+  lines <- paste(csv_field(names(df)), collapse = ",")
+  if (nrow(df)) lines <- c(lines, do.call(paste, c(unname(lapply(df, csv_field)), sep = ",")))
+  parent <- dirname(path)
+  if (!dir.exists(parent)) dir.create(parent, recursive = TRUE, showWarnings = FALSE)
+  con <- file(path, open = "wb")
+  on.exit(close(con), add = TRUE)
+  writeBin(as.raw(c(0xef, 0xbb, 0xbf)), con)
+  writeBin(charToRaw(paste0(paste(enc2utf8(lines), collapse = "\n"), "\n")), con)
+  invisible(list(rows = nrow(df), cols = ncol(df)))
+}
+
+# --- one builder per canonical layout --------------------------------------------------
+
+build_pca_animal <- function(d, spec) {
+  expect_columns(d, c("Sample", "AnimalID", "condition_code", "condition", "sample_class",
+                      "PC1", "PC2", "PC3"), spec$what)
+  i <- match(d$Sample, animal_meta$animal_level_column_name)
+  fig_check(!is.na(i) & d$AnimalID == animal_meta$AnimalID[i] &
+              d$sample_class == animal_meta$sample_class[i] &
+              d$condition == animal_meta$condition[i] &
+              d$condition_code == animal_meta$condition_code[i],
+            spec$what, " disagrees with the animal-level sample metadata.")
+  as_table(list(
+    "Animal-level profile" = d$Sample,
+    "Animal ID" = d$AnimalID,
+    "Compartment" = fig_label(FIG_CLASS_LABEL, d$sample_class, "compartment"),
+    "Condition" = fig_label(FIG_CONDITION_LABEL, d$condition, "condition"),
+    "PC1" = d$PC1, "PC2" = d$PC2, "PC3" = d$PC3))
+}
+
+# gene_symbol holds the accession and Description the source-matrix symbols; Gene_Name is the
+# symbol with the accession filled in. Only the mapped symbol is published.
+build_volcano <- function(d, spec) {
+  expect_columns(d, c("gene_symbol", "mapped_gene_symbol", "Gene_Name", "original_protein_id",
+                      "Description", "uniprot_accession", "log2fc", "t", "pval", "padj",
+                      "Significance", "labelled_in_panel"), spec$what)
+  cmp <- spec$comparison
+  r <- contrast_of(cmp)
+  fig_check(identical(d$gene_symbol, d$uniprot_accession),
+            spec$what, ": gene_symbol no longer repeats uniprot_accession.")
+  da <- differential_rows(cmp, d$original_protein_id)
+  fig_check(same_numbers(d$log2fc, da$effect_size_sd_units) &&
+              same_numbers(d$t, da$moderated_t) && same_numbers(d$pval, da$P.Value) &&
+              same_numbers(d$padj, da$adj.P.Val),
+            spec$what, " does not hold the release statistics of ", cmp)
+  padj <- as.numeric(d$padj); es <- as.numeric(d$log2fc)
+  expected <- ifelse(padj < 0.05, ifelse(es > 0, "up", "down"), "n.s.")
+  fig_check(d$Significance == expected, spec$what, ": Significance disagrees with padj and sign.")
+  direction <- c(up = paste("higher in", fig_label(FIG_CONDITION_LABEL, r$numerator_condition,
+                                                  "condition")),
+                 down = paste("higher in", fig_label(FIG_CONDITION_LABEL, r$denominator_condition,
+                                                    "condition")),
+                 n.s. = "not significant")
+  as_table(list(
+    "Comparison" = comparison_label(cmp),
+    "Gene symbol" = d$mapped_gene_symbol,
+    "UniProt accession" = d$uniprot_accession,
+    "Protein group" = d$original_protein_id,
+    "Effect size (SD units)" = d$log2fc,
+    "Moderated t" = d$t,
+    "P value" = d$pval,
+    "Adjusted P value (BH)" = d$padj,
+    "Direction" = unname(direction[d$Significance]),
+    "Labeled in panel" = d$labelled_in_panel,
+    "Comparison key" = cmp))
+}
+
+# MeanLog2 is the mean over 3 animals of the per-protein standardized abundance, and the
+# panel plots LinearValue = 2^MeanLog2. Only the marker categories the panel shows keep a
+# label, under the panel's legend names.
+RANK_MARKER_TYPES <- c("None", "General Neuron", "Neuropil/Structure", "Stress Response",
+                       "Activation")
+build_rank_abundance <- function(d, spec) {
+  expect_columns(d, c("Genes", "Condition", "MeanLog2", "LinearValue", "Rank", "n_animals",
+                      "animals", "MarkerType"), spec$what)
+  fig_check(d$MarkerType %in% RANK_MARKER_TYPES, spec$what, ": unknown MarkerType.")
+  category <- unname(spec$categories[d$MarkerType])
+  as_table(list(
+    "Compartment" = fig_label(FIG_CLASS_LABEL, sub("_.*$", "", d$Condition), "compartment"),
+    "Condition" = fig_label(FIG_CONDITION_LABEL,
+                            gsub("-", "_", sub("^[^_]*_", "", d$Condition), fixed = TRUE),
+                            "condition"),
+    "Gene symbol" = d$Genes,
+    "Rank" = d$Rank,
+    "Mean standardized abundance over animals (SD units)" = d$MeanLog2,
+    "Plotted value (2 to the power of the mean; display transform, not an abundance)" =
+      d$LinearValue,
+    "Animals (n)" = d$n_animals,
+    "Animals" = d$animals,
+    "Marker category in panel" = ifelse(is.na(category), "", category)))
+}
+
+build_gsea_grid <- function(d, spec) {
+  expect_columns(d, c("Comparison", "sample_class", "canonical_contrast", "ID", "Description",
+                      "setSize", "NES", "pvalue", "p.adjust", "qvalue", "fdr_significant",
+                      "selected_by_column"), spec$what)
+  key <- d$canonical_contrast
+  r <- contrast_of(key)
+  fig_check(r$sample_class == d$sample_class & r$contrast_family == spec$family,
+            spec$what, ": comparisons outside ", spec$family)
+  fig_check(d$selected_by_column == "TRUE", spec$what,
+            ": selected_by_column is no longer TRUE on every row.")
+  g <- gsea_go_rows(key, "term_id", d$ID)
+  fig_check(same_numbers(d$NES, g$NES) && same_numbers(d[["p.adjust"]], g$adjusted_p_value),
+            spec$what, " does not hold the release GSEA GO-BP values.")
+  as_table(list(
+    "Comparison" = comparison_label(key),
+    "Term ID" = d$ID,
+    "Term" = d$Description,
+    "Gene-set size" = d$setSize,
+    "NES" = d$NES,
+    "P value" = d$pvalue,
+    "Adjusted P value (BH)" = d[["p.adjust"]],
+    "q value" = d$qvalue,
+    "FDR < 0.05" = d$fdr_significant,
+    "Comparison key" = key))
+}
+
+build_lollipop <- function(d, spec) {
+  expect_columns(d, c("ontology", "ID", "Description", "setSize", "leading_edge_proteins",
+                      "enrichmentScore", "NES", "pvalue", "p.adjust", "qvalue",
+                      "core_enrichment", "n_terms_tested", "n_FDR_significant",
+                      "selection_rule", "input_file"), spec$what)
+  key <- spec$comparison
+  fig_check(basename(dirname(gsub("\\\\", "/", d$input_file))) == key,
+            spec$what, ": input files are not all from ", key)
+  members <- strsplit(d$core_enrichment, "/", fixed = TRUE)
+  fig_check(lengths(members) == as.integer(d$leading_edge_proteins),
+            spec$what, ": leading_edge_proteins is not the member count.")
+  symbols <- vapply(members, function(m) {
+    s <- unname(symbol_of_accession[m])
+    fig_check(!is.na(s), spec$what, ": leading-edge accession(s) not in the feature annotation.")
+    paste(ifelse(nzchar(s), s, m), collapse = "/")
+  }, character(1))
+  as_table(list(
+    "Comparison" = comparison_label(key),
+    "Gene-set collection" = fig_label(FIG_ONTOLOGY_LABEL, d$ontology, "ontology"),
+    "Term ID" = d$ID,
+    "Term" = d$Description,
+    "Gene-set size" = d$setSize,
+    "Enrichment score" = d$enrichmentScore,
+    "NES" = d$NES,
+    "P value" = d$pvalue,
+    "Adjusted P value (BH)" = d[["p.adjust"]],
+    "q value" = d$qvalue,
+    "Leading-edge proteins (n)" = d$leading_edge_proteins,
+    "Leading-edge genes" = symbols,
+    "Leading-edge proteins (UniProt accessions)" = d$core_enrichment,
+    "Gene sets reported (n)" = d$n_terms_tested,
+    "Gene sets at FDR < 0.05 (n)" = d$n_FDR_significant,
+    "Selection rule" = go_collection_names(d$selection_rule),
+    "Comparison key" = key))
+}
+
+build_redundant_terms <- function(d, spec) {
+  expect_columns(d, c("ontology", "ID", "Description", "p.adjust", "max_similarity_to_kept"),
+                 spec$what)
+  key <- spec$comparison
+  as_table(list(
+    "Comparison" = comparison_label(key),
+    "Gene-set collection" = fig_label(FIG_ONTOLOGY_LABEL, d$ontology, "ontology"),
+    "Term ID" = d$ID,
+    "Term" = d$Description,
+    "Adjusted P value (BH)" = d[["p.adjust"]],
+    "Highest leading-edge Jaccard index with a plotted term" = d$max_similarity_to_kept,
+    "Comparison key" = key))
+}
+
+build_scatter <- function(d, spec) {
+  expect_columns(d, c("uniprot_accession", "original_protein_id", "mapped_gene_symbol",
+                      "log2fc_learning", "t_learning", "padj_learning", "log2fc_cno", "t_cno",
+                      "padj_cno", "log2fc_unpaired_cno", "padj_unpaired_cno",
+                      "learning_signature"), spec$what)
+  cmp <- spec$comparisons
+  ok <- vapply(names(cmp), function(nm) {
+    da <- differential_rows(cmp[[nm]], d$original_protein_id)
+    same_numbers(d[[paste0("log2fc_", nm)]], da$effect_size_sd_units) &&
+      same_numbers(d[[paste0("padj_", nm)]], da$adj.P.Val) &&
+      (!paste0("t_", nm) %in% names(d) || same_numbers(d[[paste0("t_", nm)]], da$moderated_t))
+  }, logical(1))
+  fig_check(ok, spec$what, " does not hold the release statistics of ",
+            paste(cmp[!ok], collapse = ", "))
+  fig_check(d$learning_signature == ifelse(as.numeric(d$padj_learning) < 0.05, "TRUE", "FALSE"),
+            spec$what, ": learning_signature is not FDR < 0.05 in the learning comparison.")
+  compartment <- unique(contrast_of(cmp)$sample_class)
+  fig_check(length(compartment) == 1L, spec$what, ": comparisons from more than one compartment.")
+  g <- vapply(cmp, groups_label, character(1))
+  cols <- list("Compartment" = fig_label(FIG_CLASS_LABEL, compartment, "compartment"),
+               "Gene symbol" = d$mapped_gene_symbol,
+               "UniProt accession" = d$uniprot_accession,
+               "Protein group" = d$original_protein_id)
+  for (nm in names(cmp)) {
+    cols[[paste0("Effect size (SD units): ", g[[nm]])]] <- d[[paste0("log2fc_", nm)]]
+    if (paste0("t_", nm) %in% names(d)) {
+      cols[[paste0("Moderated t: ", g[[nm]])]] <- d[[paste0("t_", nm)]]
+    }
+    cols[[paste0("Adjusted P value (BH): ", g[[nm]])]] <- d[[paste0("padj_", nm)]]
+  }
+  cols[[paste0("Plotted: FDR < 0.05 in ", g[["learning"]])]] <- d$learning_signature
+  as_table(cols)
+}
+
+# Rows of the heatmap: "Memory Engram" (dataset "Memory Ensemble") is the pairing contrast,
+# "Inhibition" ("Effects Inhibition") CNO in paired animals.
+HEATMAP_ROW_FAMILY <- c("Memory Engram" = "paired_veh_vs_unpaired_veh",
+                        "Inhibition" = "paired_cno_vs_paired_veh")
+HEATMAP_DATASET_FAMILY <- c("Memory Ensemble" = "paired_veh_vs_unpaired_veh",
+                            "Effects Inhibition" = "paired_cno_vs_paired_veh")
+build_heatmap <- function(d, spec) {
+  expect_columns(d, c("Description", "Comparison_Group", "sample_class", "Dataset", "NES",
+                      "p.adjust", "Column", "Row"), spec$what)
+  family <- unname(HEATMAP_ROW_FAMILY[d$Row])
+  fig_check(!is.na(family) & family == unname(HEATMAP_DATASET_FAMILY[d$Dataset]),
+            spec$what, ": Row and Dataset do not name the same contrast family.")
+  key <- comparison_key(d$sample_class, family)
+  g <- gsea_go_rows(key, "term_name", d$Description)
+  fig_check(same_numbers(d$NES, g$NES) && same_numbers(d[["p.adjust"]], g$adjusted_p_value),
+            spec$what, " does not hold the release GSEA GO-BP values.")
+  as_table(list(
+    "Comparison" = comparison_label(key),
+    "Comparison type" = fig_label(FIG_FAMILY_LABEL, family, "comparison type"),
+    "Term ID" = g$term_id,
+    "Term" = d$Description,
+    "NES" = d$NES,
+    "Adjusted P value (BH)" = d[["p.adjust"]],
+    "Comparison key" = key))
+}
+
+build_ewce <- function(d, spec) {
+  expect_columns(d, c("CellType", "Column", "sample_class", "condition", "Target", "TopN",
+                      "AnnotLevel", "fold_change", "sd_from_mean", "p", "q_target",
+                      "q_global", "Significant_Global"), spec$what)
+  fig_check(d$Target == paste0(d$sample_class, "__", d$condition),
+            spec$what, ": Target is not sample class and condition.")
+  as_table(list(
+    "Compartment" = fig_label(FIG_CLASS_LABEL, d$sample_class, "compartment"),
+    "Condition" = fig_label(FIG_CONDITION_LABEL, d$condition, "condition"),
+    "Cell type" = ifelse(d$CellType == "(none)",
+                         paste0("unassigned level-", d$AnnotLevel, " cluster"), d$CellType),
+    "Proteins in list (n)" = d$TopN,
+    "Annotation level" = d$AnnotLevel,
+    "Fold change (observed/null)" = d$fold_change,
+    "SD from null mean" = d$sd_from_mean,
+    "P value" = d$p,
+    "Adjusted P value, within list (BH)" = d$q_target,
+    "Adjusted P value, global (BH)" = d$q_global,
+    "FDR < 0.05, global" = d$Significant_Global))
+}
+
+build_pca_acquisition <- function(d, spec) {
+  expect_columns(d, c("acquisition", "shortname", "PC1", "PC2", "Hemisphere",
+                      "Collection plate", "sample_class", "AnimalID", "condition_code"),
+                 spec$what)
+  i <- match(d$acquisition, sample_meta$sample_id)
+  cls <- release_normalize_annotation_label(d$sample_class)
+  fig_check(!is.na(i) & d$shortname == sample_meta$legacy_shortname[i] &
+              cls == sample_meta$sample_class[i] & d$AnimalID == sample_meta$AnimalID[i] &
+              d$condition_code == sample_meta$condition_code[i] &
+              d[["Collection plate"]] == sample_meta$collection_plate[i],
+            spec$what, " disagrees with the sample metadata.")
+  hemisphere <- certain_hemisphere(d$acquisition, sub("^Hemisphere ", "", d$Hemisphere))
+  as_table(list(
+    "Sample ID" = d$acquisition,
+    "Animal ID" = d$AnimalID,
+    "Hemisphere" = ifelse(is.na(hemisphere), d$Hemisphere, hemisphere),
+    "Compartment" = fig_label(FIG_CLASS_LABEL, cls, "compartment"),
+    "Condition" = fig_label(FIG_CONDITION_LABEL, sample_meta$condition[i], "condition"),
+    "Collection plate" = d[["Collection plate"]],
+    "PC1" = d$PC1, "PC2" = d$PC2))
+}
+
+# ids such as 1_n01_s4<U+2212>a1_1_8782 are the run short names (Plate1_N01_S4-A1_1_8782) in
+# lower case, without "Plate", with a Unicode minus. Celltype is the sample class before the
+# correction of six acquisitions; both are published.
+build_acquisition_counts <- function(d, spec) {
+  expect_columns(d, c("Celltype", "Group", "celltype_group", "id", "proteins", "peptides"),
+                 spec$what)
+  fig_check(d$celltype_group == paste0(d$Celltype, "_", d$Group),
+            spec$what, ": celltype_group is not Celltype and Group.")
+  run <- tolower(paste0("plate", gsub(intToUtf8(0x2212), "-", d$id, fixed = TRUE)))
+  i <- match(run, tolower(sample_meta$legacy_shortname))
+  fig_check(!anyNA(i) && !anyDuplicated(i) && length(i) == nrow(sample_meta),
+            spec$what, " does not name every acquisition of the sample metadata once.")
+  fig_check(d$Group == sample_meta$condition_code[i],
+            spec$what, ": Group is not the condition code.")
+  before <- release_normalize_annotation_label(d$Celltype)
+  fig_check(!is.na(before) & before == sample_meta$original_sample_class[i],
+            spec$what, ": Celltype is not the sample class before correction.")
+  fig_check(grepl("^[0-9]+$", d$proteins) & grepl("^[0-9]+$", d$peptides),
+            spec$what, ": counts are not whole numbers.")
+  as_table(list(
+    "Sample ID" = sample_meta$sample_id[i],
+    "Animal ID" = sample_meta$AnimalID[i],
+    "Hemisphere" = certain_hemisphere(sample_meta$sample_id[i]),
+    "Compartment" = fig_label(FIG_CLASS_LABEL, sample_meta$sample_class[i], "compartment"),
+    "Compartment as recorded" = fig_label(FIG_CLASS_LABEL, before, "compartment"),
+    "Condition" = fig_label(FIG_CONDITION_LABEL, sample_meta$condition[i], "condition"),
+    "Proteins (n)" = d$proteins,
+    "Peptides (n)" = d$peptides))
+}
+
+build_cross_compartment <- function(d, spec) {
+  expect_columns(d, c("Comparison", "contrast_id", "historical_alias", "ID", "Description",
+                      "setSize", "NES", "enrichmentScore", "pvalue", "p.adjust", "qvalue",
+                      "n_ranked_genes", "fdr_significant"), spec$what)
+  parts <- strsplit(d$Comparison, " vs ", fixed = TRUE)
+  fig_check(lengths(parts) == 2L, spec$what, ": Comparison is not '<a> vs <b>'.")
+  a <- vapply(parts, `[[`, character(1), 1L)
+  b <- vapply(parts, `[[`, character(1), 2L)
+  fig_check(d$contrast_id == paste0(a, "_vs_", b), spec$what,
+            ": contrast_id does not match Comparison.")
+  as_table(list(
+    "Comparison" = paste(fig_label(FIG_CLASS_LABEL, a, "compartment"), "vs",
+                         fig_label(FIG_CLASS_LABEL, b, "compartment")),
+    "Term ID" = d$ID,
+    "Term" = d$Description,
+    "Gene-set size" = d$setSize,
+    "NES" = d$NES,
+    "Enrichment score" = d$enrichmentScore,
+    "P value" = d$pvalue,
+    "Adjusted P value (BH)" = d[["p.adjust"]],
+    "q value" = d$qvalue,
+    "Ranked proteins (n)" = d$n_ranked_genes,
+    "FDR < 0.05" = d$fdr_significant))
+}
+
+build_blank_cells <- function(d, spec) {
+  expect_columns(d, c("Comparison", "sample_class", "Description", "reason"), spec$what)
+  key <- comparison_key(d$sample_class, spec$family)
+  u <- untested_tbl[untested_tbl$analysis_role == "canonical" & untested_tbl$ontology == "GO_BP", ,
+                    drop = FALSE]
+  j <- match(paste(key, d$Description, sep = "\r"),
+             paste(u$canonical_comparison, u$term_name, sep = "\r"))
+  fig_check(!is.na(j), spec$what, ": blank cells that are not gene sets without a P value.")
+  as_table(list(
+    "Comparison" = comparison_label(key),
+    "Term ID" = u$term_id[j],
+    "Term" = d$Description,
+    "Reason" = "fgsea gave no P value for this gene set (listed in Supplementary Table 2l)",
+    "Comparison key" = key))
+}
+
+PANEL_PUBLICATION <- list(
+  "Figure3|C" = list(build = list(build_pca_animal)),
+  "Figure3|D" = list(build = list(build_volcano), comparison = LEARNING_COMPARISON),
+  "Figure3|E" = list(build = list(build_rank_abundance),
+                     categories = c("Activation" = "Mitochondrial",
+                                    "Stress Response" = "Growth-Related Plasticity")),
+  "Figure3|F" = list(build = list(build_gsea_grid), family = "paired_veh_vs_unpaired_veh"),
+  "Figure3|G" = list(build = list(build_lollipop, build_redundant_terms),
+                     comparison = LEARNING_COMPARISON),
+  "Figure3|H" = list(
+    build = list(build_scatter),
+    comparisons = c(learning = LEARNING_COMPARISON,
+                    cno = "mcherry_paired_cno_over_mcherry_paired_veh",
+                    unpaired_cno = "mcherry_unpaired_cno_over_mcherry_unpaired_veh")),
+  "Figure3|I" = list(build = list(build_heatmap)),
+  "Supplementary_proteomics|A" = list(build = list(build_acquisition_counts)),
+  "Supplementary_proteomics|B1" = list(build = list(build_pca_animal)),
+  "Supplementary_proteomics|B2" = list(build = list(build_pca_acquisition)),
+  "Supplementary_proteomics|B3" = list(build = list(build_pca_acquisition)),
+  "Supplementary_proteomics|C" = list(build = list(build_ewce)),
+  "Supplementary_proteomics|D" = list(build = list(build_rank_abundance),
+                                      categories = c("General Neuron" = "Neuron Soma",
+                                                     "Neuropil/Structure" = "Neuropil/Structure")),
+  "Supplementary_proteomics|E" = list(build = list(build_cross_compartment)),
+  "Supplementary_proteomics|F" = list(build = list(build_gsea_grid, build_blank_cells),
+                                      family = "paired_cno_vs_paired_veh")
+)
+
+published <- 0L
 missing_source_data <- character(0)
+supp_a_out <- NULL
 split_paths <- function(x) strsplit(x, ";", fixed = TRUE)[[1]]
 for (i in seq_len(nrow(figure_map))) {
   if (is.na(figure_map$panel_source_data_canonical_path[i]) ||
       is.na(figure_map$panel_source_data_release_path[i])) next
+  key <- paste(figure_map$figure[i], figure_map$panel[i], sep = "|")
+  label <- figure_map$panel_label[i]
   srcs <- split_paths(figure_map$panel_source_data_canonical_path[i])
   rels <- split_paths(figure_map$panel_source_data_release_path[i])
   if (!all(file.exists(srcs))) {
     missing_source_data <- c(missing_source_data,
-                             paste0(figure_map$panel_label[i], ": ",
-                                    paste(srcs[!file.exists(srcs)], collapse = ";")))
+                             paste0(label, ": ", paste(srcs[!file.exists(srcs)], collapse = ";")))
     figure_map$panel_source_data_release_path[i] <- NA_character_
     next
   }
+  spec <- PANEL_PUBLICATION[[key]]
+  if (is.null(spec) || length(spec$build) != length(srcs)) {
+    stop("No reader-facing layout for the source data of panel ", label, call. = FALSE)
+  }
   shas <- split_paths(figure_map$panel_source_data_sha256[i])
+  pins <- if (key %in% REBUILT_PANELS$key) rebuilt_files(key)$sha else
+    unname(PANEL_SOURCE_PINS[basename(srcs)])
+  if (length(pins) != length(shas) || anyNA(pins) || !identical(pins, shas)) {
+    stop("Source data of panel ", label, " no longer match the pinned hash.", call. = FALSE)
+  }
   for (k in seq_along(srcs)) {
-    dest <- release_path(rels[[k]])
-    if (!file.copy(srcs[[k]], dest, overwrite = TRUE, copy.date = FALSE)) {
-      stop("Could not copy panel source data: ", srcs[[k]], call. = FALSE)
-    }
-    if (!identical(release_sha256(dest), shas[[k]])) {
-      stop("Copied panel source data does not match its source hash: ", rels[[k]],
-           call. = FALSE)
-    }
+    spec$what <- paste0("Source data of ", label, " (", basename(srcs[[k]]), ")")
+    is_xlsx <- grepl("[.]xlsx$", srcs[[k]], ignore.case = TRUE)
+    d <- if (is_xlsx) read_first_sheet(srcs[[k]]) else read_text_csv(srcs[[k]])
+    out <- spec$build[[k]](d, spec)
+    fig_check(identical(names(out), RELEASE_FIGURE_CSV_HEADERS[[basename(rels[[k]])]]),
+              spec$what, ": the published headers are not those of RELEASE_FIGURE_CSV_HEADERS.")
+    w <- write_reader_csv(out, release_path(rels[[k]]))
     release_register(rels[[k]],
-                     paste0(if (k == 1L) "source data" else
-                              paste0("additional source data (", basename(srcs[[k]]), ")"),
-                            " for panel ", figure_map$panel_label[i]),
-                     srcs[[k]], shas[[k]], STAGE, tolower(tools::file_ext(srcs[[k]])))
-    copied <- copied + 1L
+                     paste0("reader-facing source data for panel ", label, " (from ",
+                            basename(srcs[[k]]), ")"),
+                     srcs[[k]], shas[[k]], STAGE, "csv")
+    published <- published + 1L
+    release_log("    ", format(basename(rels[[k]]), width = 34), " ", w$rows, " x ", w$cols,
+                if (is_xlsx) paste0("  (sheet 1 of ", length(attr(d, "sheets")),
+                                    " of the source workbook)") else "")
+    if (key == "Supplementary_proteomics|A") supp_a_out <- out
+    # Rank-abundance curves: one row per gene symbol; the count is read from the file.
+    if (identical(spec$build[[k]], build_rank_abundance)) {
+      per_curve <- unique(as.integer(table(paste(out$Compartment, out$Condition))))
+      fig_check(length(per_curve) == 1L && !anyDuplicated(paste(out$Compartment, out$Condition,
+                                                                out[["Gene symbol"]])),
+                spec$what, ": the curves do not hold one row per gene symbol each.")
+      figure_map$source_rows_filter[i] <- paste0(
+        figure_map$source_rows_filter[i], "; one row per gene symbol, ",
+        format(per_curve, big.mark = ","), " per curve (proteins without a gene symbol are ",
+        "not plotted)")
+    }
   }
 }
-release_log("  copied ", copied, " panel source-data files byte-for-byte")
+release_log("  published ", published, " reader-facing panel source-data files")
 if (length(missing_source_data)) {
   release_log("  NOTE: no source-data file on disk for: ",
               paste(missing_source_data, collapse = " | "))
+}
+# Supp. Fig. 4 A: rows, count ranges and the relabeled acquisitions, read from the published
+# file.
+a_row <- which(paste(figure_map$figure, figure_map$panel, sep = "|") ==
+                 "Supplementary_proteomics|A")
+if (length(a_row) == 1L && !is.null(supp_a_out)) {
+  count_range <- function(x) {
+    paste(format(range(as.integer(x)), big.mark = ",", trim = TRUE), collapse = "-")
+  }
+  figure_map$source_rows_filter[a_row] <- paste("all", nrow(supp_a_out), "acquisitions")
+  figure_map$key_numbers_revised[a_row] <- paste0(
+    count_range(supp_a_out[["Proteins (n)"]]), " proteins and ",
+    count_range(supp_a_out[["Peptides (n)"]]), " peptides per acquisition")
+  relabeled <- supp_a_out$Compartment != supp_a_out[["Compartment as recorded"]]
+  if (any(relabeled)) {
+    n_words <- c("One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten",
+                 "Eleven", "Twelve")
+    n_text <- if (sum(relabeled) <= length(n_words)) n_words[[sum(relabeled)]] else
+      as.character(sum(relabeled))
+    animals <- sort(unique(supp_a_out[["Animal ID"]][relabeled]))
+    animals_text <- if (length(animals) == 1L) animals else
+      paste(paste(animals[-length(animals)], collapse = ", "), "and", animals[[length(animals)]])
+    figure_map$interpretation_note[a_row] <- paste0(
+      figure_map$interpretation_note[a_row], " ", n_text,
+      if (sum(relabeled) == 1L) " acquisition of " else " acquisitions of ", animals_text,
+      if (sum(relabeled) == 1L) " was" else " were",
+      " listed under another compartment before the label correction; the source data",
+      " give both labels.")
+  }
 }
 
 # --------------------------------------------------------------------------------------
@@ -750,8 +1393,8 @@ sources <- c(paths$regenerated, paths$original_map, paths$script_provenance,
 hashes <- vapply(sources, release_sha256, character(1), USE.NAMES = FALSE)
 
 w <- release_write_table(figure_map,
-                         release_path("editor_source_data", "figure_source_map.tsv"))
-release_register("editor_source_data/figure_source_map.tsv",
+                         release_path("provenance", "figure_source_map.tsv"))
+release_register("provenance/figure_source_map.tsv",
                  "per-panel provenance: analysis, source table, row filter, unit, scripts",
                  sources, hashes, STAGE, "tsv")
 release_log("  wrote figure_source_map.tsv (", w$rows, "x", w$cols, ")")

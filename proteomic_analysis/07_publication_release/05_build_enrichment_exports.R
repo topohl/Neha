@@ -1,6 +1,6 @@
 #!/usr/bin/env Rscript
 
-# Publication release, stage 05 -- normalised enrichment and cell-type exports.
+# Publication release, stage 05 -- normalized enrichment and cell-type exports.
 #
 # Produces
 #   enrichment/primary_GSEA_GO_BP.tsv.gz        canonical, ranked by the moderated t
@@ -13,9 +13,14 @@
 #   enrichment/primary_EWCE.tsv.gz              cell-type enrichment, all settings
 #   enrichment/gsea_untested_gene_sets.tsv      GO gene sets fgsea gave no P value
 #   enrichment/enrichment_run_parameters.tsv    the canonical run parameters as recorded
+#   enrichment/significant_gene_sets.tsv.gz     canonical GSEA rows (GO-BP, GO-CC, KEGG) at
+#                                               adjusted P < 0.05, leading edge as gene symbols
+#
+# Gene members (core_enrichment) are UniProt accessions for GO and NCBI Gene (Entrez) IDs for
+# KEGG; gene_identifier_type says which.
 #
 # Nothing is recomputed. Rows are read from the enrichment runs on the per-compartment
-# statistics and relabelled: GO-BP and GO-CC from enrichment_within_compartment_20261125
+# statistics and relabeled: GO-BP and GO-CC from enrichment_within_compartment_20261125
 # (fgsea nPermSimple = 100000, adopted 2026-11-25), KEGG from the GO_BP folder of
 # enrichment_within_compartment_20261124 (not rerun). Every run must name the locked
 # statistics GCT as its source. GO-CC has been a primary output again since 2026-11-24.
@@ -37,6 +42,7 @@ source(file.path(here, "R", "release_utils.R"))
 REPO_ROOT <- release_repo_root()
 release_source_project_helpers(REPO_ROOT)
 source(file.path(REPO_ROOT, "07_publication_release", "R", "release_validation.R"))
+source(file.path(REPO_ROOT, "07_publication_release", "R", "release_presentation.R"))
 release_require("digest", "readxl")
 
 DATA_ROOT <- release_data_root()
@@ -63,12 +69,14 @@ paths <- list(
   package_versions_kegg = file.path(KEGG_ROOT, "audits", "package_database_versions.csv"),
   ewce_table = file.path(EWCE_ROOT, "02_Tables_Supplements", "Supplementary_Table_EWCE.xlsx"),
   ewce_session = file.path(EWCE_ROOT, "03_QC_Mapping_Logs", "reproducibility_session_info.txt"),
-  contrast_manifest = release_path("metadata", "primary_contrast_manifest.tsv", create_dir = FALSE)
+  contrast_manifest = release_path("metadata", "primary_contrast_manifest.tsv", create_dir = FALSE),
+  feature_annotation = release_path("processed_data", "protein_feature_annotation.tsv.gz",
+                                    create_dir = FALSE)
 )
 for (nm in names(paths)) release_assert_exists(paths[[nm]], nm)
 
 # All three enrichment indexes are locked: a rerun or forced rewrite of any run must stop the
-# release here, not be relabelled into it.
+# release here, not be relabeled into it.
 for (key in c("enrichment_index_go_bp", "enrichment_index_go_cc", "enrichment_index_kegg")) {
   observed <- release_sha256(release_locked_artefact_path(key, DATA_ROOT))
   if (!identical(observed, RELEASE_LOCKED_ARTEFACTS[[key]]$sha256)) {
@@ -130,7 +138,7 @@ if (!all(pkg_kegg$component %in% pkg_go$component) ||
        call. = FALSE)
 }
 release_log("  canonical ranking statistic confirmed: moderated t (sensitivity ranks by ",
-            "the standardised-abundance effect size, recorded upstream as log2fc)")
+            "the standardized-abundance effect size, recorded upstream as log2fc)")
 release_log("  all three enrichment runs (GO-BP, GO-CC, KEGG) record the locked statistics GCT ",
             substr(RELEASE_LOCKED_ARTEFACTS$stat_gct$sha256, 1, 16))
 release_log("  ", permutations$setting)
@@ -174,8 +182,10 @@ nes_direction <- function(nes, numerator_condition, denominator_condition) {
 GSEA_COLUMNS <- c("ID", "Description", "setSize", "enrichmentScore", "NES", "pvalue",
                   "p.adjust", "qvalue", "rank", "leading_edge", "core_enrichment")
 
+# identifier_type names what core_enrichment holds: UniProt accessions for GO, NCBI Gene
+# (Entrez) IDs for KEGG, which clusterProfiler's KEGG GSEA ranks on.
 build_gsea_block <- function(path, comparison, ontology, analysis_role, rank_statistic,
-                             rank_source_column) {
+                             rank_source_column, identifier_type) {
   d <- read_result_csv(path)
   if (is.null(d)) return(NULL)
   missing <- setdiff(GSEA_COLUMNS, names(d))
@@ -219,7 +229,7 @@ build_gsea_block <- function(path, comparison, ontology, analysis_role, rank_sta
     rank_statistic = rank_statistic,
     rank_source_column = rank_source_column,
     analysis_role = analysis_role,
-    gene_identifier_type = "UNIPROT",
+    gene_identifier_type = identifier_type,
     stringsAsFactors = FALSE, check.names = FALSE
   )
 }
@@ -319,12 +329,14 @@ for (cmp in comparisons) {
   p_go_s <- file.path(dir_cmp, "GSEA_GO_BP_log2fc_sensitivity.csv")
   p_kegg_s <- file.path(dir_kegg, "GSEA_KEGG_log2fc_sensitivity.csv")
 
-  gsea_go[[cmp]] <- build_gsea_block(p_go, cmp, "GO_BP", "canonical", "moderated_t", "t")
-  gsea_kegg[[cmp]] <- build_gsea_block(p_kegg, cmp, "KEGG", "canonical", "moderated_t", "t")
+  gsea_go[[cmp]] <- build_gsea_block(p_go, cmp, "GO_BP", "canonical", "moderated_t", "t",
+                                     "UNIPROT")
+  gsea_kegg[[cmp]] <- build_gsea_block(p_kegg, cmp, "KEGG", "canonical", "moderated_t", "t",
+                                       "ENTREZID")
   sensitivity[[paste0(cmp, "|GO_BP")]] <-
-    build_gsea_block(p_go_s, cmp, "GO_BP", "sensitivity", "log2fc", "log2fc")
+    build_gsea_block(p_go_s, cmp, "GO_BP", "sensitivity", "log2fc", "log2fc", "UNIPROT")
   sensitivity[[paste0(cmp, "|KEGG")]] <-
-    build_gsea_block(p_kegg_s, cmp, "KEGG", "sensitivity", "log2fc", "log2fc")
+    build_gsea_block(p_kegg_s, cmp, "KEGG", "sensitivity", "log2fc", "log2fc", "ENTREZID")
   source_files <- c(source_files, p_go, p_kegg, p_go_s, p_kegg_s)
 
   for (variant in ORA_VARIANTS) {
@@ -337,9 +349,10 @@ for (cmp in comparisons) {
   if (!dir.exists(dir_cc)) stop("Missing canonical GO-CC enrichment folder: ", dir_cc, call. = FALSE)
   p_cc <- file.path(dir_cc, "GSEA_GO_CC.csv")
   p_cc_s <- file.path(dir_cc, "GSEA_GO_CC_log2fc_sensitivity.csv")
-  gsea_cc[[cmp]] <- build_gsea_block(p_cc, cmp, "GO_CC", "canonical", "moderated_t", "t")
+  gsea_cc[[cmp]] <- build_gsea_block(p_cc, cmp, "GO_CC", "canonical", "moderated_t", "t",
+                                     "UNIPROT")
   sensitivity[[paste0(cmp, "|GO_CC")]] <-
-    build_gsea_block(p_cc_s, cmp, "GO_CC", "sensitivity", "log2fc", "log2fc")
+    build_gsea_block(p_cc_s, cmp, "GO_CC", "sensitivity", "log2fc", "log2fc", "UNIPROT")
   source_files <- c(source_files, p_cc, p_cc_s)
   for (variant in ORA_VARIANTS_CC) {
     p_ora <- file.path(dir_cc, variant$file)
@@ -377,6 +390,27 @@ if (!all(gsea_go_tbl$analysis_role == "canonical") ||
 if (!all(sens_tbl$analysis_role == "sensitivity") ||
     !all(sens_tbl$rank_statistic == "log2fc")) {
   stop("A canonical row leaked into the sensitivity table.", call. = FALSE)
+}
+# Every GSEA member must be of the namespace its row declares: digits for ENTREZID, UniProt
+# accessions for UNIPROT.
+UNIPROT_ACCESSION_PATTERN <- paste0("^([OPQ][0-9][A-Z0-9]{3}[0-9]|",
+                                    "[A-NR-Z][0-9]([A-Z][A-Z0-9]{2}[0-9]){1,2})(-[0-9]+)?$")
+namespace_bad <- function(tbl) {
+  members <- strsplit(as.character(tbl$core_enrichment), "/", fixed = TRUE)
+  ok <- vapply(seq_along(members), function(i) {
+    m <- members[[i]]
+    if (!length(m) || all(is.na(m))) return(TRUE)
+    if (tbl$gene_identifier_type[i] == "ENTREZID") all(grepl("^[0-9]+$", m)) else
+      all(grepl(UNIPROT_ACCESSION_PATTERN, m))
+  }, logical(1))
+  sum(!ok)
+}
+for (nm in c("gsea_go_tbl", "gsea_kegg_tbl", "gsea_cc_tbl", "sens_tbl")) {
+  n_bad <- namespace_bad(get(nm))
+  if (n_bad) {
+    stop(nm, ": ", n_bad, " row(s) hold gene members outside their declared identifier type.",
+         call. = FALSE)
+  }
 }
 release_log("  GSEA GO-BP:        ", nrow(gsea_go_tbl), " rows")
 release_log("  GSEA KEGG:         ", nrow(gsea_kegg_tbl), " rows")
@@ -454,6 +488,136 @@ for (os in list(list(tbl = ora_tbl, root = ENRICH_ROOT, variants = ORA_VARIANTS)
   }
 }
 release_log("  verified ", n_verified, " canonical enrichment result files identical")
+
+# --------------------------------------------------------------------------------------
+# significant gene sets
+# --------------------------------------------------------------------------------------
+# The canonical GSEA rows (GO-BP, GO-CC, KEGG) with adjusted P < 0.05, values copied. The
+# leading edge is added as gene symbols, in the order and with the separator of
+# core_enrichment:
+#   GO    UniProt accession -> gene_symbol of protein_feature_annotation
+#   KEGG  NCBI Gene ID -> UniProt accession through the KEGG run's own conversion record
+#         (kegg_entrez_collapse_audit.csv, selected_representative, same comparison) ->
+#         gene_symbol
+# A member whose protein has no gene symbol keeps its identifier. A member that resolves to
+# nothing stops the build. Rows run by comparison in the workbook order
+# (release_comparison_rank()), then adjusted P and P.
+
+ONTOLOGY_ORDER <- names(RELEASE_ONTOLOGY_DISPLAY)
+SIGNIFICANT_SET_COLUMNS <- c(
+  "canonical_comparison", "sample_class", "numerator_condition", "denominator_condition",
+  "ontology", "term_id", "term_name", "direction", "NES", "set_size",
+  "n_core_enrichment_genes", "p_value", "adjusted_p_value", "core_enrichment_gene_symbols")
+
+features <- read.delim(gzfile(paths$feature_annotation), sep = "\t", quote = "",
+                       stringsAsFactors = FALSE, check.names = FALSE, colClasses = "character")
+feature_acc <- features$uniprot_accession
+feature_sym <- ifelse(is.na(features$gene_symbol), "", trimws(features$gene_symbol))
+has_acc <- !is.na(feature_acc) & nzchar(feature_acc)
+acc_sym <- unique(data.frame(acc = feature_acc[has_acc], sym = feature_sym[has_acc],
+                             stringsAsFactors = FALSE))
+if (anyDuplicated(acc_sym$acc)) {
+  stop("The feature annotation gives more than one gene symbol for accession(s): ",
+       paste(unique(acc_sym$acc[duplicated(acc_sym$acc)]), collapse = ", "), call. = FALSE)
+}
+symbol_of_accession <- stats::setNames(acc_sym$sym, acc_sym$acc)
+
+kegg_audit_paths <- stats::setNames(
+  file.path(KEGG_ROOT, "audits", comparisons, "kegg_entrez_collapse_audit.csv"), comparisons)
+recorded_audit <- as.character(enrich_index_kegg$kegg_mapping_audit[
+  match(comparisons, as.character(enrich_index_kegg$canonical_comparison))])
+if (anyNA(recorded_audit) ||
+    !all(basename(recorded_audit) == "kegg_entrez_collapse_audit.csv") ||
+    !all(basename(dirname(recorded_audit)) == comparisons)) {
+  stop("The KEGG index does not record the per-comparison kegg_entrez_collapse_audit.csv ",
+       "files this stage reads.", call. = FALSE)
+}
+entrez_to_accession <- lapply(comparisons, function(cmp) {
+  a <- release_read_csv(kegg_audit_paths[[cmp]])
+  need <- c("ENTREZID", "uniprot_accession", "selected_representative")
+  if (length(setdiff(need, names(a)))) {
+    stop("KEGG conversion record lacks column(s) ", paste(setdiff(need, names(a)),
+                                                          collapse = ", "), ": ",
+         kegg_audit_paths[[cmp]], call. = FALSE)
+  }
+  a <- a[toupper(as.character(a$selected_representative)) == "TRUE", , drop = FALSE]
+  entrez <- as.character(a$ENTREZID)
+  if (anyDuplicated(entrez)) {
+    stop("KEGG conversion record selects more than one accession per NCBI Gene ID: ",
+         kegg_audit_paths[[cmp]], call. = FALSE)
+  }
+  stats::setNames(as.character(a$uniprot_accession), entrez)
+})
+names(entrez_to_accession) <- comparisons
+
+member_symbols <- function(core, ontology, cmp) {
+  ids <- strsplit(as.character(core), "/", fixed = TRUE)[[1]]
+  acc <- if (ontology == "KEGG") unname(entrez_to_accession[[cmp]][ids]) else ids
+  sym <- unname(symbol_of_accession[acc])
+  if (anyNA(sym)) {
+    stop("Leading-edge member(s) without an annotated protein (", ontology, ", ", cmp, "): ",
+         paste(ids[is.na(sym)], collapse = ", "), call. = FALSE)
+  }
+  list(text = paste(ifelse(nzchar(sym), sym, ids), collapse = "/"),
+       n_identifier = sum(!nzchar(sym)))
+}
+
+gsea_canonical <- rbind(gsea_go_tbl, gsea_cc_tbl, gsea_kegg_tbl)
+sig_sets <- gsea_canonical[!is.na(gsea_canonical$adjusted_p_value) &
+                             gsea_canonical$adjusted_p_value < 0.05, , drop = FALSE]
+if (!all(sig_sets$analysis_role == "canonical")) {
+  stop("A non-canonical row reached the significant gene sets.", call. = FALSE)
+}
+toward <- ifelse(sig_sets$NES > 0, sig_sets$numerator_condition,
+                 sig_sets$denominator_condition)
+nes_sign_ok <- sig_sets$direction == paste0("enriched_toward_", toward)
+if (!all(nes_sign_ok %in% TRUE)) {
+  stop("Direction disagrees with the NES sign in ", sum(!(nes_sign_ok %in% TRUE)),
+       " significant gene set row(s).", call. = FALSE)
+}
+leading_edges <- lapply(seq_len(nrow(sig_sets)), function(i) {
+  member_symbols(sig_sets$core_enrichment[i], sig_sets$ontology[i],
+                 sig_sets$canonical_comparison[i])
+})
+sig_sets$core_enrichment_gene_symbols <- vapply(leading_edges, function(x) x$text,
+                                                character(1))
+n_kept_identifier <- sum(vapply(leading_edges, function(x) x$n_identifier, integer(1)))
+if (!identical(count_members(sig_sets$core_enrichment_gene_symbols),
+               as.integer(sig_sets$n_core_enrichment_genes))) {
+  stop("Leading-edge gene-symbol lists do not have n_core_enrichment_genes members.",
+       call. = FALSE)
+}
+comparison_rank <- release_comparison_rank(sig_sets$sample_class, sig_sets$contrast_family)
+ontology_rank <- match(sig_sets$ontology, ONTOLOGY_ORDER)
+if (anyNA(comparison_rank) || anyNA(ontology_rank)) {
+  stop("A significant gene set has a comparison or ontology with no place in the row order.",
+       call. = FALSE)
+}
+sig_sets <- sig_sets[order(comparison_rank, sig_sets$adjusted_p_value, sig_sets$p_value,
+                           ontology_rank, sig_sets$term_id),
+                     SIGNIFICANT_SET_COLUMNS, drop = FALSE]
+rownames(sig_sets) <- NULL
+
+# The GO runs recorded their own FDR term counts; the selection must reproduce them.
+go_fdr_recorded <- function(ix, ontology) {
+  n <- suppressWarnings(as.integer(ix$go_gsea_fdr_term_count[
+    match(comparisons, as.character(ix$canonical_comparison))]))
+  got <- vapply(comparisons, function(cmp) {
+    sum(sig_sets$canonical_comparison == cmp & sig_sets$ontology == ontology)
+  }, integer(1))
+  !anyNA(n) && identical(unname(got), n)
+}
+if (!go_fdr_recorded(enrich_index, "GO_BP") || !go_fdr_recorded(enrich_index_cc, "GO_CC")) {
+  stop("Significant GO gene-set counts differ from the FDR term counts the GO runs recorded.",
+       call. = FALSE)
+}
+release_log("  significant gene sets: ", nrow(sig_sets), " rows (",
+            paste0(sub("_", "-", ONTOLOGY_ORDER), " ",
+                   vapply(ONTOLOGY_ORDER, function(o) sum(sig_sets$ontology == o), integer(1)),
+                   collapse = ", "),
+            ") in ", length(unique(sig_sets$canonical_comparison)), " comparisons; ",
+            n_kept_identifier,
+            " leading-edge member(s) without a gene symbol keep their identifier")
 
 # --------------------------------------------------------------------------------------
 # EWCE
@@ -584,7 +748,7 @@ emit(ora_cc_tbl, "enrichment/primary_ORA_GO_CC.tsv.gz",
      c(canon_ora_cc, paths$enrichment_index_cc), c(hash_of(canon_ora_cc), index_cc_hash))
 emit(sens_tbl, "enrichment/GSEA_log2FC_sensitivity.tsv.gz",
      paste("SENSITIVITY ONLY:", RELEASE_EFFECT_SIZE$sensitivity_public_label,
-           "-- GSEA GO-BP, GO-CC and KEGG ranked by the standardised-abundance effect size",
+           "-- GSEA GO-BP, GO-CC and KEGG ranked by the standardized-abundance effect size",
            "(stored as logFC) instead of the moderated t. Not a log2 fold change."),
      c(canon_sens, paths$enrichment_index, paths$enrichment_index_cc,
        paths$enrichment_index_kegg),
@@ -592,6 +756,16 @@ emit(sens_tbl, "enrichment/GSEA_log2FC_sensitivity.tsv.gz",
 emit(ewce, "enrichment/primary_EWCE.tsv.gz",
      "EWCE cell-type enrichment across all top-N and annotation-level settings",
      paths$ewce_table, release_sha256(paths$ewce_table))
+emit(sig_sets, "enrichment/significant_gene_sets.tsv.gz",
+     paste("canonical GSEA gene sets (GO-BP, GO-CC and KEGG, ranked by the moderated t) at",
+           "adjusted P < 0.05 in any primary comparison, values copied; leading edge as gene",
+           "symbols (KEGG members converted with the KEGG run's own conversion record)"),
+     c(canon_go, canon_cc, canon_kegg, paths$enrichment_index, paths$enrichment_index_cc,
+       paths$enrichment_index_kegg, unname(kegg_audit_paths), paths$feature_annotation),
+     c(hash_of(canon_go), hash_of(canon_cc), hash_of(canon_kegg), index_hash, index_cc_hash,
+       index_kegg_hash,
+       vapply(kegg_audit_paths, release_sha256, character(1), USE.NAMES = FALSE),
+       release_sha256(paths$feature_annotation)))
 
 # Gene sets fgsea returned without a P value. GO: one row per set, from the GO runs'
 # untested-set lists (checked against warnings.csv and the index). KEGG: counts only, from
@@ -683,11 +857,20 @@ coverage <- do.call(rbind, lapply(comparisons, function(cmp) {
     for (nm in names(filters)) sel <- sel & tbl[[nm]] == filters[[nm]]
     sum(sel, na.rm = TRUE)
   }
-  block <- function(analysis, ontology, query_list, role, n, recorded, untested = NA_integer_) {
+  # The GSEA seed the run recorded for this comparison (the index column), blank for ORA.
+  seed_from <- function(index_row, col) {
+    v <- if (col %in% names(index_row)) as.character(index_row[[col]][[1]]) else NA_character_
+    if (is.na(v) || !grepl("^[0-9]+$", v)) {
+      stop("The enrichment index records no GSEA seed (", col, ") for ", cmp, call. = FALSE)
+    }
+    v
+  }
+  block <- function(analysis, ontology, query_list, role, n, recorded, untested = NA_integer_,
+                    seed = NA_character_) {
     data.frame(canonical_comparison = cmp, analysis = analysis, ontology = ontology,
                query_list = query_list, analysis_role = role, rows_exported = n,
                term_count_recorded_by_run = recorded, gsea_untested_gene_sets = untested,
-               stringsAsFactors = FALSE, check.names = FALSE)
+               gsea_seed = seed, stringsAsFactors = FALSE, check.names = FALSE)
   }
   ora_blocks <- function(tbl, variants, ontology, index_row) {
     do.call(rbind, lapply(variants, function(variant) {
@@ -699,28 +882,34 @@ coverage <- do.call(rbind, lapply(comparisons, function(cmp) {
   rbind(
     block("GSEA", "GO_BP", NA_character_, "canonical",
           rows_in(gsea_go_tbl, canonical_comparison = cmp),
-          count_from(ix, "go_gsea_term_count"), untested_n_block(cmp, "GO_BP_GSEA")),
+          count_from(ix, "go_gsea_term_count"), untested_n_block(cmp, "GO_BP_GSEA"),
+          seed_from(ix, "go_gsea_seed")),
     # KEGG: the 20261124 run's GO_BP folder.
     block("GSEA", "KEGG", NA_character_, "canonical",
           rows_in(gsea_kegg_tbl, canonical_comparison = cmp),
-          count_from(ixk, "kegg_gsea_term_count"), untested_n_block(cmp, "KEGG_GSEA")),
+          count_from(ixk, "kegg_gsea_term_count"), untested_n_block(cmp, "KEGG_GSEA"),
+          seed_from(ixk, "kegg_gsea_seed")),
     block("GSEA", "GO_BP", NA_character_, "sensitivity",
           rows_in(sens_tbl, canonical_comparison = cmp, ontology = "GO_BP"),
           count_from(ix, "sensitivity_go_gsea_term_count"),
-          untested_n_block(cmp, "GO_BP_GSEA_log2fc_sensitivity")),
+          untested_n_block(cmp, "GO_BP_GSEA_log2fc_sensitivity"),
+          seed_from(ix, "sensitivity_go_gsea_seed")),
     block("GSEA", "KEGG", NA_character_, "sensitivity",
           rows_in(sens_tbl, canonical_comparison = cmp, ontology = "KEGG"),
           count_from(ixk, "sensitivity_kegg_gsea_term_count"),
-          untested_n_block(cmp, "KEGG_GSEA_log2fc_sensitivity")),
+          untested_n_block(cmp, "KEGG_GSEA_log2fc_sensitivity"),
+          seed_from(ixk, "sensitivity_kegg_gsea_seed")),
     ora_blocks(ora_tbl, ORA_VARIANTS, "GO_BP", ix),
     # GO-CC run: its index keeps the generic go_* column names.
     block("GSEA", "GO_CC", NA_character_, "canonical",
           rows_in(gsea_cc_tbl, canonical_comparison = cmp),
-          count_from(ixc, "go_gsea_term_count"), untested_n_block(cmp, "GO_CC_GSEA")),
+          count_from(ixc, "go_gsea_term_count"), untested_n_block(cmp, "GO_CC_GSEA"),
+          seed_from(ixc, "go_gsea_seed")),
     block("GSEA", "GO_CC", NA_character_, "sensitivity",
           rows_in(sens_tbl, canonical_comparison = cmp, ontology = "GO_CC"),
           count_from(ixc, "sensitivity_go_gsea_term_count"),
-          untested_n_block(cmp, "GO_CC_GSEA_log2fc_sensitivity")),
+          untested_n_block(cmp, "GO_CC_GSEA_log2fc_sensitivity"),
+          seed_from(ixc, "sensitivity_go_gsea_seed")),
     ora_blocks(ora_cc_tbl, ORA_VARIANTS_CC, "GO_CC", ixc)
   )
 }))

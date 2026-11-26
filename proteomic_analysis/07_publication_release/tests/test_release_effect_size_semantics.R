@@ -118,21 +118,17 @@ expect(!any(grepl("fold", da$effect_size_units, ignore.case = TRUE)),
        "the units string contains no fold-change wording")
 expect(all(grepl("NOT a log2 fold change", ds$effect_size_definition, fixed = TRUE)),
        "the definition states that it is not a log2 fold change")
-expect(!any(grepl("standardis(ed|ed) mean difference", ds$effect_size_definition)) &&
-         !any(grepl("standardised mean difference", ds$effect_size_definition,
-                    fixed = TRUE)) &&
-         !any(grepl("standardized mean difference", ds$effect_size_definition,
-                    fixed = TRUE)),
-       "it is not called a standardised mean difference without qualification")
+expect(!any(grepl("standardi[sz]ed mean difference", ds$effect_size_definition)),
+       "it is not called a standardized mean difference without qualification")
 
 PUBLIC_DOCS <- c("README_DATA.md",
                  "metadata/data_dictionary.tsv",
                  "metadata/primary_contrast_manifest.tsv",
                  "metadata/secondary_analysis_manifest.tsv",
                  "differential_analysis/primary_differential_summary.tsv",
-                 "editor_source_data/REVISION_PROTEOMICS_DATA_CHANGELOG.md",
-                 "editor_source_data/MANUSCRIPT_TERMINOLOGY_ACTIONS.md",
-                 "editor_source_data/figure_source_map.tsv",
+                 "provenance/REVISION_PROTEOMICS_DATA_CHANGELOG.md",
+                 "provenance/MANUSCRIPT_TERMINOLOGY_ACTIONS.md",
+                 "provenance/figure_source_map.tsv",
                  "pride/README_PRIDE.md",
                  "pride/SDRF_MISSING_METADATA.md",
                  "provenance/UPSTREAM_PREPROCESSING_GAP.md")
@@ -165,17 +161,17 @@ expect(!grepl("z-score", RELEASE_EFFECT_SIZE$methods_sentence, fixed = TRUE) &&
          !grepl("z-scored", RELEASE_EFFECT_SIZE$methods_sentence, fixed = TRUE),
        "the methods sentence does not claim z-scoring")
 
-# The standardisation claim must match what the matrix actually shows.
+# The standardization claim must match what the matrix actually shows.
 meas_path <- file.path(OUT_ROOT, "processed_data",
                        "protein_abundance_measurement_level.tsv.gz")
 if (!file.exists(meas_path)) {
-  cat("  [skip]  measurement-level matrix not built; standardisation not re-measured\n")
+  cat("  [skip]  measurement-level matrix not built; standardization not re-measured\n")
 } else {
   m <- read_tsv(meas_path)
   mat <- as.matrix(m[, setdiff(names(m), "protein_group_id"), drop = FALSE])
   std <- release_standardization_evidence(mat)
   expect(isTRUE(std$approximately_standardized),
-         sprintf("the matrix is per-protein standardised (max |row mean| %.2g, max |sd-1| %.2g)",
+         sprintf("the matrix is per-protein standardized (max |row mean| %.2g, max |sd-1| %.2g)",
                  std$max_abs_row_mean, std$max_abs_row_sd_minus_1))
   expect(isFALSE(std$exact_zscore),
          "it is NOT exactly z-scored, which is why the release does not say so")

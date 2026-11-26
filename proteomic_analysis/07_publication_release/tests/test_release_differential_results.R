@@ -59,7 +59,7 @@ expect(all(as.integer(da$n_numerator_animals) == 3L),
        "no row claims more than 3 animals in the numerator")
 expect(all(as.integer(da$n_denominator_animals) == 3L),
        "no row claims more than 3 animals in the denominator")
-expect(all(da$primary_or_secondary == "primary"), "every row is labelled primary")
+expect(all(da$primary_or_secondary == "primary"), "every row is labeled primary")
 
 cat("\n=== field naming is not misleading ===\n")
 expect(!release_column_is_misleading_gene_symbol(da$gene_symbol),
@@ -117,6 +117,45 @@ expect(all(as.integer(ds$n_proteins_tested_mapped_only) == inv$n_proteins_mapped
 expect(all(as.integer(ds$n_significant_fdr_0_05) >=
              as.integer(ds$n_significant_fdr_0_05_mapped_only)),
        "the mapped-only significant count never exceeds the full-set count")
+
+cat("\n=== significant_proteins.tsv (table 2d) ===\n")
+sig_path <- file.path(OUT_ROOT, "differential_analysis", "significant_proteins.tsv")
+if (!file.exists(sig_path)) {
+  expect(FALSE, "significant_proteins.tsv exists")
+} else {
+  sig <- read.delim(sig_path, sep = "\t", quote = "", stringsAsFactors = FALSE,
+                    check.names = FALSE)
+  expect(identical(names(sig), c("canonical_comparison", "sample_class", "numerator_condition",
+                                 "denominator_condition", "gene_symbol", "protein_description",
+                                 "uniprot_accession", "protein_group_id", "direction",
+                                 "effect_size_sd_units", "moderated_t", "P.Value", "adj.P.Val")),
+         "the 13 expected columns, in order")
+  want <- da[as.logical(da$significant_fdr_0_05) %in% TRUE & da$id_mapping_status == "mapped", ,
+             drop = FALSE]
+  m <- match(paste(sig$canonical_comparison, sig$protein_group_id),
+             paste(want$canonical_comparison, want$protein_group_id))
+  expect(nrow(sig) == nrow(want) && !anyNA(m) && !anyDuplicated(m),
+         sprintf("exactly the FDR < 0.05 annotated rows of the protein table (%d)", nrow(sig)))
+  expect(nrow(sig) == sum(as.integer(ds$n_significant_fdr_0_05_mapped_only)),
+         "the row count equals the summary's annotated FDR < 0.05 count")
+  same <- !anyNA(m) && all(vapply(c("sample_class", "numerator_condition",
+                                    "denominator_condition", "gene_symbol",
+                                    "protein_description", "uniprot_accession",
+                                    "effect_size_sd_units", "moderated_t", "P.Value",
+                                    "adj.P.Val"), function(cn) {
+    identical(sig[[cn]], want[[cn]][m])
+  }, logical(1)))
+  expect(same, "every copied value is identical to the protein table")
+  expect(identical(sig$direction,
+                   paste0("higher_in_", ifelse(sig$effect_size_sd_units > 0,
+                                               sig$numerator_condition,
+                                               sig$denominator_condition))),
+         "direction follows the sign of the effect size")
+  unmapped_sig <- sum(as.logical(da$significant_fdr_0_05) %in% TRUE &
+                        da$id_mapping_status != "mapped")
+  expect(sum(as.integer(ds$n_significant_fdr_0_05)) - nrow(sig) == unmapped_sig,
+         sprintf("the %d unmapped FDR < 0.05 groups stay in the full table only", unmapped_sig))
+}
 
 cat("\n=== every protein group is annotated ===\n")
 expect(!any(is.na(da$protein_group_id)) && all(nzchar(da$protein_group_id)),

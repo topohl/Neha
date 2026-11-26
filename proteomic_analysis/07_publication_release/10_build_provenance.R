@@ -234,7 +234,7 @@ lineage <- rbind(
   lin("A05_sample_annotation", "sample annotation",
       p_sample_annotation, "A02_acquisition_raw", "acquisition-to-sample mapping",
       "manual / spreadsheet", UNKNOWN, "acquisition run", hash_or(p_sample_annotation), "yes",
-      paste("The only artefact carrying original `.d` acquisition paths. Sheet is named",
+      paste("The only artifact carrying original `.d` acquisition paths. Sheet is named",
             "`report.stats_`. Supplies the explicit _left/_right hemisphere labels.")),
   lin("A06_sample_info", "sample metadata",
       p_sample_info, "A05_sample_annotation", "legacy 2024 metadata schema",
@@ -262,8 +262,8 @@ lineage <- rbind(
              "metadata/sample_class_corrections.tsv.")),
   lin("A07_processed_matrix", "processed protein abundance matrix",
       p_processed, "A04_protein_group_matrix_prefilter",
-      paste("filtering, imputation and per-protein standardisation (measured on the values);",
-            "log2 transformation, median centring and PCA adjustment are described for this",
+      paste("filtering, imputation and per-protein standardization (measured on the values);",
+            "log2 transformation, median centering and PCA adjustment are described for this",
             "file but not recorded -- PRODUCING CODE NOT IN REPOSITORY:", UNRESOLVED),
       UNKNOWN, UNKNOWN, "acquisition run", processed_sha, "yes",
       paste("5,349 x 96. The reproducible pipeline STARTS here. See",
@@ -281,9 +281,9 @@ lineage <- rbind(
       paste("5,349 x 106 (96 samples + 10 annotation/ANOVA columns), dated Feb 2025.",
             "VERIFIED: identical protein identifiers in identical order, the same 96 sample",
             "columns, and values agreeing with A07 to a maximum absolute difference of",
-            "0.005 -- the signature of a 2-decimal serialisation, not of a further",
+            "0.005 -- the signature of a 2-decimal serialization, not of a further",
             "transformation. This makes it a strong candidate ancestor and it is the only",
-            "artefact whose name is consistent with what A07's numbers actually show",
+            "artifact whose name is consistent with what A07's numbers actually show",
             "(per-protein z-scoring). A filename is not a processing record, so the edge",
             "is recorded as a candidate and remains", UNRESOLVED)),
   lin("A08_animal_level_matrix", "animal-level abundance matrix",
@@ -291,14 +291,14 @@ lineage <- rbind(
       "equal-weight mean of Left and Right within AnimalID x sample_class",
       "R + 01_preprocessing/02a_prepare_animal_level_protigy_input.r",
       paste("R", R.version.string), "animal", hash_or(p_animal_gct), "yes",
-      paste("5,349 x 48. LOCKED artefact. No transformation, normalisation, filtering,",
+      paste("5,349 x 48. LOCKED artifact. No transformation, normalization, filtering,",
             "imputation or remapping is applied at this step.")),
   lin("A09_differential_statistics", "differential statistics GCT",
       p_stat_gct, "A08_animal_level_matrix", RELEASE_PRIMARY_MODEL$label,
       paste("R + limma +", RELEASE_PRIMARY_MODEL$script),
       paste0("limma ", stat_run$limma_version, "; R ", stat_run$r_version), "animal",
       hash_or(p_stat_gct), "yes",
-      paste0("LOCKED artefact, written ", stat_run$run_timestamp_utc, " in the ProTigy GCT",
+      paste0("LOCKED artifact, written ", stat_run$run_timestamp_utc, " in the ProTigy GCT",
              " layout so the split, identifier-mapping and enrichment stages run unchanged.",
              " Versions, residual df, variance priors and input/output SHA256 are recorded",
              " per contrast in ", basename(p_stat_manifest), " (also LOCKED). Primary since ",
@@ -368,7 +368,7 @@ lineage <- rbind(
             permutations$sentence, RELEASE_GO_CC_PROVENANCE_NOTE,
             RELEASE_ENRICHMENT_SEED_HANDLING, RELEASE_KEGG_VERSION_NOTE,
             "The effect-size-ranked GSEA in the same runs is a",
-            "SENSITIVITY analysis only; its ranking statistic is the standardised-abundance",
+            "SENSITIVITY analysis only; its ranking statistic is the standardized-abundance",
             "effect size recorded upstream as log2fc, not a log2 fold change. Indexes:",
             "GO_BP/indexEnrichmentComparisons.csv (hashed here),",
             paste0("GO_CC/indexEnrichmentComparisons.csv (SHA256 ", hash_or(p_enrich_index_cc),
@@ -405,8 +405,8 @@ lineage <- rbind(
       paste("Source of the panels that do not depend on the differential statistics (PCA,",
             "rank abundance, acquisition QC, EWCE, the secondary within-animal model). Its",
             "Fig. 2 D, F, G, H, I and Supp. Fig. 4 F were drawn from the superseded pooled",
-            "statistics and are replaced by A16c. Per-panel source data copied into",
-            "editor_source_data/figure_source_data/.")),
+            "statistics and are replaced by A16c. Per-panel source data written as",
+            "reader-facing CSV files into editor_source_data/figure_source_data/.")),
   lin("A16c_figure_panels_within_compartment",
       "manuscript figure panels and source data (per-sample-class statistics)",
       REBUILD_ROOT, "A12_mapped_differential_tables;A13_enrichment",
@@ -422,16 +422,19 @@ lineage <- rbind(
       paste("Fig. 2 D, F, G, H, I and Supp. Fig. 4 F (internal names Fig3*, SuppF). Fig. 2 G",
             "is now moderated-t-ranked GSEA of GO-BP and GO-CC terms instead of an ORA",
             "lollipop; the ORA results of the same comparison are quoted in",
-            "figure_source_map.tsv. Per-panel source data copied into",
-            "editor_source_data/figure_source_data/ under manuscript-numbered names and",
-            "pinned by SHA256 in figure_source_map.tsv.")),
+            "figure_source_map.tsv. Per-panel source data written as reader-facing CSV",
+            "files into editor_source_data/figure_source_data/ under manuscript-numbered",
+            "names; the canonical files are pinned by SHA256 in figure_source_map.tsv.")),
   lin("A16b_acquisition_qc_counts", "acquisition QC source data",
       p_protein_count, "A03_search_quantification",
       "protein and peptide identification counts per acquisition",
       UNKNOWN, UNKNOWN, "acquisition run", NA_character_, "yes",
       paste("Source of Supp. Fig. 4 A. Lives outside the clusterProfiler tree.",
-            "Producing step is", UNRESOLVED, "-- not hashed here; the copied panel source",
-            "data in editor_source_data/ carries its hash.")),
+            paste0("Producing step is ", UNRESOLVED, "; protein_count.xlsx is not hashed."),
+            "The panel's source workbook (SuppA_protein_peptide_counts_source_data.xlsx) is",
+            "pinned by SHA256 in provenance/figure_source_map.tsv, and",
+            "editor_source_data/figure_source_data/SuppFig4A_source_data.csv holds its",
+            "per-acquisition counts.")),
   lin("A17_publication_release", "publication / deposition package",
       "this release", paste("A00_experimenter_metadata;A00_sample_preparation_protocol;",
                             "A05_sample_annotation;A06_sample_info;A04_protein_group_matrix_prefilter;",
@@ -447,7 +450,7 @@ lineage <- rbind(
 )
 
 n_unresolved <- sum(grepl(UNRESOLVED, paste(lineage$processing_stage, lineage$notes)))
-release_log("  lineage: ", nrow(lineage), " artefacts, ", n_unresolved,
+release_log("  lineage: ", nrow(lineage), " artifacts, ", n_unresolved,
             " carrying an UNRESOLVED edge")
 
 # --------------------------------------------------------------------------------------
@@ -480,7 +483,7 @@ gap <- c(
   "| Question | Answer | Evidence |",
   "|---|---|---|",
   paste0("| Direct parent input | `pg.matrix_raw.txt`, 5,747 protein groups x 96 quantitative",
-         " columns + 7 annotation columns | The 5,349 analysed protein groups are a strict",
+         " columns + 7 annotation columns | The 5,349 analyzed protein groups are a strict",
          " subset: all 5,349 `id` values match `T: Protein.Names` in `pg.matrix_raw.txt`",
          " (verified at build time by stage 03) |"),
   paste0("| Is that the file the journal received? | Yes | It has exactly the 5,747 rows x 96",
@@ -501,7 +504,7 @@ gap <- c(
          " `max_missing: 70` field of `neha_proteome_parameters.yaml` (the pooled ProTigy",
          " run's parameter export). **The exact",
          " application to THIS file is not independently recorded.** |"),
-  paste0("| A 2025 ProTigy session's settings | log transform none, normalisation none,",
+  paste0("| A 2025 ProTigy session's settings | log transform none, normalization none,",
          " filter none, NA filter 75, SD filter 10, two-sample moderated t, adj.p 0.05 |",
          " `", protigy_params_2025, "` (2025-11-07 session, ProTigy v1.1.8) |"),
   paste0("| ...but they are not the only ones | a second surviving session",
@@ -516,10 +519,10 @@ gap <- c(
   "|---|---|---|",
   paste0("| Producing script | ", UNRESOLVED, " | No script in this repository produces `",
          basename(p_processed), "`. |"),
-  paste0("| Log transformation | ", UNRESOLVED, " | The values are standardised per protein",
+  paste0("| Log transformation | ", UNRESOLVED, " | The values are standardized per protein",
          " (see below), so they are not on a log2 scale. Whether a log transformation and",
-         " per-sample median centring came before that step is not recorded for this file. |"),
-  paste0("| Normalisation | ", UNRESOLVED, " | The filename says `unnormalized`; the",
+         " per-sample median centering came before that step is not recorded for this file. |"),
+  paste0("| Normalization | ", UNRESOLVED, " | The filename says `unnormalized`; the",
          " 2025-11-07 hemisphere-level ProTigy session applied `norm.data none`, and the",
          " per-sample-class limma statistics fit the matrix as given. What, if anything, was",
          " applied upstream is not recorded. |"),
@@ -537,7 +540,7 @@ gap <- c(
   "",
   "Two things were measured directly from the matrix rather than read off its name:",
   "",
-  paste0("1. **It is standardised per protein.** Each of the 5,349 proteins is standardised",
+  paste0("1. **It is standardized per protein.** Each of the 5,349 proteins is standardized",
          " separately across the 96 acquisitions: row means are approximately 0 and row",
          " standard deviations approximately 1. So the values are neither log2 abundance nor",
          " raw intensity, and the token `unnormalized` in the filename is not a description",
@@ -546,15 +549,15 @@ gap <- c(
          " animal-level units, and its average over the four sample classes stays close to",
          " zero (largest absolute value over all proteins ",
          format(signif(ave$max_abs_mean_over_classes, 3), scientific = FALSE),
-         ", checked by 13_validate_release.R), which requires a per-protein centred input.",
+         ", checked by 13_validate_release.R), which requires a per-protein centered input.",
          " The values carry only 2 decimals, so on these bytes no row is exactly mean 0 /",
          " sd 1 -- the residual deviations are the size that 2-decimal rounding produces --",
-         " and the release therefore does not claim a specific standardisation formula. See",
+         " and the release therefore does not claim a specific standardization formula. See",
          " the reporting note below."),
   paste0("2. **A sibling file matches it to within rounding.** `",
          basename(p_perseus), "` at the project root (Feb 2025, 5,349 x 106) has identical",
          " protein identifiers in identical order, the same 96 sample columns, and values",
-         " differing by at most 0.005 -- exactly what a 2-decimal serialisation of the same",
+         " differing by at most 0.005 -- exactly what a 2-decimal serialization of the same",
          " matrix looks like. Its name encodes a 70% one-group valid-value filter,",
          " imputation, ANOVA and z-scoring, which is consistent with what the numbers show."),
   "",
@@ -564,12 +567,12 @@ gap <- c(
   "",
   paste0("**Consequence for reporting.** The effect size the canonical tables call `log2fc`",
          " (and the statistical GCT stores as `logFC`) is a difference of group means on this",
-         " standardised scale -- a ", RELEASE_EFFECT_SIZE$public_term, ", not a log2 ratio."),
+         " standardized scale -- a ", RELEASE_EFFECT_SIZE$public_term, ", not a log2 ratio."),
   "",
   paste0("The publication release publishes it as `", RELEASE_EFFECT_SIZE$public_field,
          "` and records `source_statistic_field = \"", RELEASE_EFFECT_SIZE$source_field,
          "\"` alongside it. No value was changed; only the label. It is not",
-         " called a \"standardised mean difference\" unqualified (that reads as Cohen's d,",
+         " called a \"standardized mean difference\" unqualified (that reads as Cohen's d,",
          " which scales by a pooled within-group SD) and not called \"z-scored\" (see above:",
          " the operation is unresolved and the bytes are rounded)."),
   "",
@@ -584,7 +587,7 @@ gap <- c(
   "tree is named `pg.matrix_filtered_pcaAdjusted_unnormalized`. Both are 5,349 x 96. The",
   "dimensions match, but **the names disagree about which dimensionality-reduction method",
   "was used to adjust the data**, and nothing in the project resolves the disagreement.",
-  "This is recorded as a discrepancy rather than harmonised. Until the producing",
+  "This is recorded as a discrepancy rather than harmonized. Until the producing",
   "workflow is recovered, neither name should be taken as a description of the operation",
   "actually applied.",
   "",
@@ -620,8 +623,8 @@ gap <- c(
   "A seed was **not** added and the matrix was **not** regenerated. Stochastic imputation",
   "without a recorded seed cannot be reproduced after the fact; re-running it would produce",
   "a numerically different matrix and therefore a new analysis generation, invalidating",
-  "every validated downstream artefact and the locked GCT hashes. That is out of scope for",
-  "a packaging task.",
+  "every validated downstream artifact and the locked GCT hashes. That is outside the scope",
+  "of this release.",
   "",
   "## Consequence for the deposition",
   "",
@@ -636,7 +639,7 @@ gap <- c(
   "",
   "| Missing item | Would resolve |",
   "|---|---|",
-  "| The script or notebook that produced the 5,349 x 96 matrix | filtering, log, normalisation, imputation, PCA adjustment, software, seed |",
+  "| The script or notebook that produced the 5,349 x 96 matrix | filtering, log, normalization, imputation, PCA adjustment, software, seed |",
   paste0("| The original search/quantification software run log or configuration",
          " (e.g. DIA-NN `report.log.txt`, if DIA-NN was used) | search software identity",
          " and version, enzyme, modifications, tolerances, acquisition method |"),
@@ -651,8 +654,8 @@ release_log("  wrote UPSTREAM_PREPROCESSING_GAP.md (01_impute.r: set.seed presen
 # software and database versions
 # --------------------------------------------------------------------------------------
 
-# Built by the shared helper so the editor workbook's Software_Versions sheet and this
-# table are the same rows from the same derivation. See R/release_software_versions.R.
+# Built by the shared helper, so table 2q (Software) of the workbook takes its versions from
+# these rows. See R/release_software_versions.R.
 software_versions <- release_build_software_versions(DATA_ROOT, REPO_ROOT)
 rownames(software_versions) <- NULL
 n_unknown <- sum(software_versions$version == UNKNOWN)
@@ -706,12 +709,12 @@ enrich_kegg_tbl <- do.call(rbind, lapply(seq_len(nrow(run_parameters_kegg)), fun
 }))
 # Not recorded by run_parameters.csv. The seed handling is taken from what the run produced:
 # a rerun with the recorded seeds and DOSE seed = FALSE reproduces the stored NES. The script
-# in the repository is later than the locked runs, so its hash is labelled as such. The
+# in the repository is later than the locked runs, so its hash is labeled as such. The
 # features it adds are checked against the KEGG run, which predates them; the GO runs record
 # them.
 p_enrich_script <- file.path(REPO_ROOT, "04_differential_expression_enrichment",
                              "01_clusterProfiler.r")
-fmt_e <- function(x) format(signif(as.numeric(x), 2), scientific = TRUE)
+fmt_e <- function(x) toupper(format(signif(as.numeric(x), 2), scientific = TRUE))
 later_features <- c(
   if (!"gsea_n_perm_simple" %in% run_parameters_kegg$parameter)
     "sets fgsea nPermSimple",
@@ -819,7 +822,7 @@ impute_tbl <- rbind(
      impute_script, "KNOWN_BUT_NEEDS_STANDARDIZATION",
      "Read from the script, not from a run record. See UPSTREAM_PREPROCESSING_GAP.md."),
   ap("historical imputation (01_impute.r, NOT the producer of the canonical matrix)",
-     "transformation", "log2 then per-sample median centring", "script source",
+     "transformation", "log2 then per-sample median centering", "script source",
      impute_script, "KNOWN_BUT_NEEDS_STANDARDIZATION", NA_character_),
   ap("historical imputation (01_impute.r, NOT the producer of the canonical matrix)",
      "imputation", "downshifted normal: mean - 1.8 * sd, sd = 0.3 * sd, per column",
@@ -831,7 +834,7 @@ impute_tbl <- rbind(
      "No set.seed anywhere in the imputation path."),
   ap("upstream processed matrix", "pca_adjustment", UNRESOLVED, "no record exists", "NONE",
      "MISSING_UNKNOWN", "Filename says pcaAdjusted; no script or parameter documents it."),
-  ap("upstream processed matrix", "normalisation", UNRESOLVED, "no record exists", "NONE",
+  ap("upstream processed matrix", "normalization", UNRESOLVED, "no record exists", "NONE",
      "MISSING_UNKNOWN", "Filename says unnormalized; not independently recorded.")
 )
 

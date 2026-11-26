@@ -121,13 +121,15 @@ release_project_root <- function() {
 #' Defaults to the real shared-drive release root. Always point this at scratch while
 #' testing: PROTEOMICS_RELEASE_OUTPUT_ROOT=<scratch>.
 #'
-#' The default moved on 2026-11-25 with the primary statistics. The pooled-run release
-#' of 2026-09-07 stays frozen in 03_output/publication_release (a protected root).
+#' The default moved on 2026-11-25 with the primary statistics, and on 2026-11-26 with the
+#' Supplementary Table 2 layout. Earlier releases stay frozen (protected roots): the
+#' pooled-run release of 2026-09-07 in 03_output/publication_release and the first
+#' per-compartment release in 03_output/release_within_compartment_20261125.
 release_output_root <- function() {
   release_option_or_env(
     "proteomics.release_output_root", "PROTEOMICS_RELEASE_OUTPUT_ROOT",
     file.path(release_data_root(), "03_output",
-              "release_within_compartment_20261125")
+              "release_within_compartment_20261126")
   )
 }
 
@@ -171,6 +173,9 @@ RELEASE_STATISTICS_RUN <- list(
   pooled_enrichment_relative = c("03_output", "enrichment",
                                  "enrichment_t_rank_validation_20260825"),
   pooled_release_relative = c("03_output", "publication_release"),
+  # First per-compartment release (deployed 2026-11-26 with the old workbook layout),
+  # superseded by release_within_compartment_20261126 and never rebuilt in place.
+  superseded_release_relative = c("03_output", "release_within_compartment_20261125"),
   # The GO GSEA rerun with a larger fgsea nPermSimple (enrichment_relative above) was adopted
   # on 2026-11-25. The sensitivity analyses (interaction, leave-one-animal-out, rank
   # robustness) were not rerun: they stay at the fgsea default and are compared with the
@@ -225,9 +230,10 @@ release_inferential_root <- function(data_root = release_data_root()) {
 #' Roots this layer must never write into.
 #'
 #' 03_output is not protected as a whole, because the release root lives
-#' inside it (03_output/release_within_compartment_20261125). The individual
-#' canonical analysis branches under 03_output are protected by name instead, and so is
-#' the frozen pooled-run release (03_output/publication_release). Overlap is tested on
+#' inside it (03_output/release_within_compartment_20261126). The individual
+#' canonical analysis branches under 03_output are protected by name instead, and so are
+#' the frozen earlier releases (03_output/publication_release and
+#' 03_output/release_within_compartment_20261125). Overlap is tested on
 #' whole path components, so the new root's name does not collide with the frozen one.
 release_protected_roots <- function(data_root = release_data_root()) {
   c(
@@ -248,7 +254,9 @@ release_protected_roots <- function(data_root = release_data_root()) {
     release_rel_path(RELEASE_STATISTICS_RUN$figure_rebuild_relative, data_root),
     release_rel_path(RELEASE_STATISTICS_RUN$superseded_figure_rebuild_relative, data_root),
     # pooled-run release of 2026-09-07: superseded, frozen, never rebuilt in place
-    release_rel_path(RELEASE_STATISTICS_RUN$pooled_release_relative, data_root)
+    release_rel_path(RELEASE_STATISTICS_RUN$pooled_release_relative, data_root),
+    # first per-compartment release: superseded, frozen, never rebuilt in place
+    release_rel_path(RELEASE_STATISTICS_RUN$superseded_release_relative, data_root)
   )
 }
 
@@ -316,7 +324,7 @@ release_assert_shared_drive_opt_in <- function(output_root,
   invisible(TRUE)
 }
 
-#' Create (if needed) and validate the release root, then return it normalised.
+#' Create (if needed) and validate the release root, then return it normalized.
 #'
 #' Both checks run before the directory is created, so a refused target leaves no empty
 #' folder.
@@ -647,6 +655,15 @@ release_log <- function(...) cat(..., "\n", sep = "")
 
 release_banner <- function(stage) cat("\n=== ", stage, " ===\n", sep = "")
 
+#' Reader text: a count with thousands separators, and a P value to 2 significant digits
+#' with an upper-case exponent (3.2E-06), as the workbook writes them.
+release_format_count <- function(x) {
+  format(as.numeric(x), big.mark = ",", scientific = FALSE, trim = TRUE)
+}
+release_format_p <- function(x) {
+  vapply(as.numeric(x), function(v) toupper(format(signif(v, 2))), character(1))
+}
+
 #' Canonical pairing/treatment decomposition of a condition label.
 release_split_condition <- function(condition) {
   condition <- as.character(condition)
@@ -663,7 +680,7 @@ release_sample_class_alias <- function(sample_class) {
   ifelse(as.character(sample_class) == "neuropil", "bg", as.character(sample_class))
 }
 
-#' Normalise the 2024 acquisition-annotation group labels to canonical sample classes.
+#' Normalize the 2024 acquisition-annotation group labels to canonical sample classes.
 #'
 #' sample_annotation.xlsx uses `Background`, `cFosN`, `mCherryN`, `Neuron` (and `N`).
 #' normalize_sample_class() in R/analysis_labels.R returns NA for `cFosN` and `mCherryN`,

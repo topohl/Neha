@@ -5,7 +5,7 @@ old roots; this file says where the current results are.
 
 Data root: `S:/Lab_Member/Tobi/Experiments/Collabs/Neha/clusterProfiler/`
 
-Its folder layout and the 2026-08-26 reorganisation are described in `README.md` (Data on the
+Its folder layout and the 2026-08-26 reorganization are described in `README.md` (Data on the
 shared drive).
 
 ## Primary statistics: within-compartment model (2026-11-24)
@@ -57,8 +57,11 @@ The biological synthesis has not been rebuilt and still uses the pooled run. The
 design-identifiability and collection-plate audits in `final_inferential_checks_20260826/` do not
 depend on the statistics and stay current, as do the figure panels that do not use them (PCA,
 rank abundance, the per-acquisition protein and peptide counts of Supp. Fig. 4 A, EWCE, the secondary within-animal model).
-The release package is rebuilt on this run and will be deployed as
-`03_output/release_within_compartment_20261125/`; the pooled-run release stays frozen.
+The release package is built on this run into
+`03_output/release_within_compartment_20261126/` (Supplementary Table 2 layout; not yet deployed
+to the shared drive). Until it is, the deployed per-compartment release is
+`release_within_compartment_20261125/` (old workbook layout); it and the pooled-run release stay
+frozen.
 
 ### Rerunning the per-compartment chain
 
@@ -116,11 +119,10 @@ record.
 ## What the `Plate1`/`Plate2` token records
 
 The `Plate1`/`Plate2` token in the sample identifier is the collection plate: the plate the
-sample was collected onto. It is not a preparation, digestion, LC-MS, acquisition or instrument
-batch, and no technical proteomics artefact has been shown. No technical batch metadata exist
-for this dataset. When a contrast is described below as associated with collection plate, that
-is a statement about the design, not an observed batch effect; wording such as "confirmed plate
-confound", "driven by plate" or "technical plate effect" is not supported.
+sample was collected onto. No technical batch metadata exist for this dataset. When a contrast
+is described below as associated with collection plate, that is a statement about the design,
+not an observed batch effect; wording such as "confirmed plate confound", "driven by plate" or
+"technical plate effect" is not supported.
 
 ## Caveats
 
@@ -146,7 +148,7 @@ confound", "driven by plate" or "technical plate effect" is not supported.
   Exp9 code this repository was started from. The Exp9 file has the same 33 columns, but none of its
   326 rows is one of this project's 96 acquisitions (instrument `Bluto` vs `Olive`, acquired 2025-07-03 vs 2024-12-17), so it
   cannot stand in. Acquisition-level QC (MS1/MS2 signal, mass accuracy,
-  normalisation instability) has therefore never been run. To run it, re-export the QC report
+  normalization instability) has therefore never been run. To run it, re-export the QC report
   for this acquisition and point `PROTEOMICS_QC_QUICKSEARCH_STATS` at it.
 - **`03_qc_exploration/01_qc_protein_peptide_plot.r` plots instrument QC metrics, not protein
   abundance.** Its PCA is a PCA *of acquisition QC metrics*. For protein-abundance PCA use

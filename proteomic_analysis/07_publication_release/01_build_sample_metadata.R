@@ -216,11 +216,11 @@ release_log("    sha256 ", correction_ref$observed_sha256)
 release_log("    mtime  ", correction_ref$observed_mtime,
             " (audit recorded ", correction_ref$expected_mtime, ")")
 
-# Record 1: the acquisition-era annotation, normalised to the canonical vocabulary.
+# Record 1: the acquisition-era annotation, normalized to the canonical vocabulary.
 original_sample_class <- release_normalize_annotation_label(
   raw_by_sample$historical_group_label[match(measurement$sample_id, raw_by_sample$sample_id)])
 if (anyNA(original_sample_class)) {
-  stop("Could not normalise every sample_annotation.xlsx group_label to a canonical ",
+  stop("Could not normalize every sample_annotation.xlsx group_label to a canonical ",
        "sample class: ",
        paste(unique(raw_by_sample$historical_group_label[
          match(measurement$sample_id[is.na(original_sample_class)], raw_by_sample$sample_id)]),
@@ -251,7 +251,7 @@ corrected_idx <- which(measurement$sample_class_corrected)
 # record 3: the retained UMAP correction table
 # --------------------------------------------------------------------------------------
 # Parsed for the pre-correction class it recorded per run. Its `potential_switch_celltype`
-# column is the UMAP nearest-class-centre SUGGESTION and is not used as the
+# column is the UMAP nearest-class-center SUGGESTION and is not used as the
 # corrected class: for N60 the suggestion was cFosN while the correction actually applied
 # was neuron. UMAP identified the switch; it is not treated as ground truth for what the
 # switch was. The applied classes come from the validated analysis assignment, and the
@@ -510,7 +510,7 @@ field_provenance <- rbind(
       "explicit _left/_right suffix on the annotation label; numeric ReplicateGroup 1/2 agrees one-to-one (asserted in this stage)",
       "The 2024 acquisition run names contain no L/R token; hemisphere is NOT inferred from sample_id."),
   fld("sample_class", "KNOWN_VERIFIED", paths$source_assignment,
-      paste0("4 classes; historical labels cFosN/Background/mCherryN/neuron normalise ",
+      paste0("4 classes; historical labels cFosN/Background/mCherryN/neuron normalize ",
              "through R/analysis_labels.R. Analysis-time class agrees with the ",
              "pre-correction records for ", n_unchanged, " of ", nrow(measurement),
              " measurements; the remaining ", n_corrected, " were corrected during ",
@@ -523,7 +523,7 @@ field_provenance <- rbind(
              "laser-capture microdissection provenance are in the checked-in experimenter ",
              "metadata record.")),
   fld("original_sample_class", "KNOWN_VERIFIED", paths$sample_annotation,
-      paste0("sample_annotation.xlsx group_label normalised to the canonical vocabulary, ",
+      paste0("sample_annotation.xlsx group_label normalized to the canonical vocabulary, ",
              "independently reproduced for all 96 measurements by the autosampler ",
              "plate layout and, for the ", n_corrected, " corrected rows, by the retained ",
              "UMAP correction table (asserted in this stage)."),
@@ -546,8 +546,7 @@ field_provenance <- rbind(
       NA_character_),
   fld("collection_plate", "KNOWN_VERIFIED", paths$plate_provenance,
       "Plate1/Plate2 token parsed from the acquisition run name; agrees with sample_info plate",
-      paste("Collection plate only. NOT a proteomics preparation, digestion, LC-MS,",
-            "acquisition or instrument batch.")),
+      paste("Plate the sample was collected onto.", release_plate_injection_sentence())),
   fld("well_position / plate_set_token / injection_index", "KNOWN_VERIFIED", paths$plate_provenance,
       "S4/S5 set token, well A1..H7 and running index 1..96 parsed from the acquisition run name",
       NA_character_),
@@ -595,7 +594,7 @@ field_provenance <- rbind(
   fld("sample collection method", "KNOWN_VERIFIED", experimenter_source,
       release_metadata_value(experimenter_metadata, "collection_method"),
       "Applies to all four marker-defined sample classes."),
-  fld("proteomics labelling", "KNOWN_VERIFIED", experimenter_source,
+  fld("proteomics labeling", "KNOWN_VERIFIED", experimenter_source,
       release_metadata_value(experimenter_metadata, "labeling_strategy"),
       "Verified as experimenter metadata; not inferred from run counts."),
   fld("sample preparation", "KNOWN_VERIFIED", protocol_source,
@@ -613,6 +612,12 @@ field_provenance <- rbind(
       "Left/Right are anatomical subsamples of one animal, not technical replicates.")
 )
 release_assert_metadata_status(field_provenance$status)
+
+# The collection-plate wording of the release states the injection block of each plate.
+if (!release_plate_injection_blocks_hold(measurement)) {
+  stop("Collection plate and injection order no longer follow RELEASE_PLATE_INJECTION_BLOCKS ",
+       "(R/release_validation.R); update it and the collection-plate wording.", call. = FALSE)
+}
 
 # --------------------------------------------------------------------------------------
 # write
@@ -635,7 +640,7 @@ release_register("metadata/animal_level_sample_metadata.tsv",
 w3 <- release_write_table(field_provenance,
                           release_path("metadata", "metadata_field_provenance.tsv"))
 release_register("metadata/metadata_field_provenance.tsv",
-                 "per-field metadata status: verified / needs standardisation / missing",
+                 "per-field metadata status: verified / needs standardization / missing",
                  c(canonical_sources, experimenter_source, protocol_source),
                  c(canonical_hashes, release_sha256(experimenter_source),
                    release_sha256(protocol_source)), STAGE, "tsv")

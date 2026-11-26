@@ -62,7 +62,7 @@ if (!file.exists(sdrf_path)) {
   released_protocol <- rd(file.path(out_root, "metadata", "sample_preparation_protocol.tsv"))
   field_status <- rd(file.path(out_root, "pride", "sdrf_field_status.tsv"))
 
-  cat("\n=== generated SDRF and PRIDE artefacts ===\n")
+  cat("\n=== generated SDRF and PRIDE artifacts ===\n")
   expect(identical(released_metadata, metadata),
          "released experimenter metadata is byte-semantically identical to source")
   expect(identical(released_protocol, protocol),

@@ -58,11 +58,11 @@ read_release <- function(path, ...) {
 inv <- RELEASE_DESIGN_INVARIANTS
 
 # --------------------------------------------------------------------------------------
-cat("\n=== locked canonical artefacts ===\n")
+cat("\n=== locked canonical artifacts ===\n")
 # --------------------------------------------------------------------------------------
 locked <- release_verify_locked_artefacts(DATA_ROOT)
 for (i in seq_len(nrow(locked))) {
-  expect("locked artefacts", paste0(locked$artefact[i], " SHA256 matches the locked value"),
+  expect("locked artifacts", paste0(locked$artefact[i], " SHA256 matches the locked value"),
          locked$matches[i], substr(locked$observed_sha256[i], 1, 16))
 }
 
@@ -93,6 +93,10 @@ expect("design", "every measurement maps to an animal-level unit",
 expect("design", "raw acquisition filenames unique and complete",
        !anyDuplicated(sm$raw_file_basename) && all(nzchar(sm$raw_file_basename)) &&
          all(grepl("[.]d$", sm$raw_file_basename)))
+plate_layout <- tryCatch(release_plate_layout_sentence(sm), error = function(e) NA_character_)
+expect("design", "collection plate and injection order are as the release states them",
+       release_plate_injection_blocks_hold(sm) && !is.na(plate_layout),
+       paste(release_plate_injection_sentence(), plate_layout))
 
 experimenter_path <- rel("metadata", "experimenter_metadata.tsv")
 protocol_path <- rel("metadata", "sample_preparation_protocol.tsv")
@@ -167,9 +171,9 @@ if (!file.exists(corr_path)) {
   # the changelog.
   readme_txt <- paste(readLines(rel("README_DATA.md"), warn = FALSE), collapse = " ")
   changelog_txt <- paste(readLines(
-    rel("editor_source_data", "REVISION_PROTEOMICS_DATA_CHANGELOG.md"), warn = FALSE),
+    rel("provenance", "REVISION_PROTEOMICS_DATA_CHANGELOG.md"), warn = FALSE),
     collapse = " ")
-  documented <- grepl("SAMPLE-CLASS CORRECTION", readme_txt, fixed = TRUE) &&
+  documented <- grepl("Sample-class correction", readme_txt, fixed = TRUE) &&
     grepl("sample-class assignments corrected during historical sample-identity",
           readme_txt, fixed = TRUE) &&
     grepl("A sample-class correction, resolved", changelog_txt, fixed = TRUE)
@@ -184,7 +188,7 @@ if (!file.exists(corr_path)) {
                 "; affected animal-level unit(s): ",
                 paste(sort(unique(corr$animal_level_unit_affected)), collapse = ", ")))
 
-  # The reader-facing documents must not describe it as unresolved or as a mislabelling.
+  # The reader-facing documents must not describe it as unresolved or as a mislabeling.
   forbidden <- c("UNRESOLVED SAMPLE-CLASS", "unresolved sample-class",
                  "unresolved metadata discrepancy", "requires an experimenter decision",
                  "requires a decision from the experimenter", "mislabelled samples",
@@ -224,7 +228,7 @@ expect("contrasts", "every primary contrast is 3 vs 3 animals",
 expect("contrasts", "primary manifest reproduces the canonical helper",
        identical(sort(pc$canonical_comparison),
                  sort(primary_contrast_manifest()$canonical_comparison)))
-expect("contrasts", "every primary row is labelled primary",
+expect("contrasts", "every primary row is labeled primary",
        all(pc$primary_or_secondary == "primary"))
 expect("contrasts", "no secondary analysis appears in the primary manifest",
        !any(sec$analysis_id %in% pc$canonical_comparison) &&
@@ -303,6 +307,42 @@ expect("differential", "summary counts agree with the exported rows",
          sum(as.logical(sub$significant_fdr_0_05), na.rm = TRUE) ==
            as.integer(da_sum$n_significant_fdr_0_05[i])
        }, logical(1))))
+
+# Table 2d: the significant annotated proteins, copied from the protein table by its own
+# significance flag and mapping status.
+sig_p <- read_release(rel("differential_analysis", "significant_proteins.tsv"))
+SIG_PROTEIN_COLUMNS <- c("canonical_comparison", "sample_class", "numerator_condition",
+                         "denominator_condition", "gene_symbol", "protein_description",
+                         "uniprot_accession", "protein_group_id", "direction",
+                         "effect_size_sd_units", "moderated_t", "P.Value", "adj.P.Val")
+sig_expected <- da[as.logical(da$significant_fdr_0_05) %in% TRUE &
+                     da$id_mapping_status == "mapped", , drop = FALSE]
+sig_m <- match(paste(sig_p$canonical_comparison, sig_p$protein_group_id),
+               paste(sig_expected$canonical_comparison, sig_expected$protein_group_id))
+expect("differential", "significant_proteins.tsv has the expected columns in order",
+       identical(names(sig_p), SIG_PROTEIN_COLUMNS), paste(ncol(sig_p), "columns"))
+expect("differential",
+       "significant_proteins.tsv holds exactly the FDR < 0.05 annotated rows of the protein table",
+       nrow(sig_p) == nrow(sig_expected) && !anyNA(sig_m) && !anyDuplicated(sig_m) &&
+         nrow(sig_p) == sum(as.integer(da_sum$n_significant_fdr_0_05_mapped_only)),
+       paste(nrow(sig_p), "rows;", sum(as.logical(da$significant_fdr_0_05) %in% TRUE &
+                                          da$id_mapping_status != "mapped"),
+             "unmapped FDR < 0.05 groups stay in the full table only"))
+expect("differential", "significant_proteins.tsv values are identical to the protein table",
+       !anyNA(sig_m) &&
+         all(vapply(setdiff(SIG_PROTEIN_COLUMNS, c("canonical_comparison", "protein_group_id",
+                                                   "direction")), function(cn) {
+           identical(sig_p[[cn]], sig_expected[[cn]][sig_m])
+         }, logical(1))))
+expect("differential", "significant_proteins.tsv direction follows the sign of the effect size",
+       identical(sig_p$direction,
+                 paste0("higher_in_", ifelse(sig_p$effect_size_sd_units > 0,
+                                             sig_p$numerator_condition,
+                                             sig_p$denominator_condition))))
+expect("differential", "significant_proteins.tsv is sorted by comparison, then adjusted P",
+       !anyDuplicated(rle(sig_p$canonical_comparison)$values) &&
+         all(vapply(split(sig_p$adj.P.Val, sig_p$canonical_comparison),
+                    function(p) !is.unsorted(p), logical(1))))
 
 # --------------------------------------------------------------------------------------
 cat("\n=== the differential statistics are the per-sample-class model ===\n")
@@ -411,7 +451,7 @@ expect("enrichment", "EWCE differential rows map to the 12 primary comparisons",
        paste(sum(!ewce_cmp_missing), "differential rows"))
 expect("enrichment", "only EWCE baseline rows lack a comparison",
        all(ewce$ewce_analysis_type[ewce_cmp_missing] == "Baseline"))
-expect("enrichment", "EWCE baseline rows are labelled secondary",
+expect("enrichment", "EWCE baseline rows are labeled secondary",
        all(ewce$primary_or_secondary[ewce$ewce_analysis_type == "Baseline"] == "secondary"))
 
 check_gsea_equal <- function(tbl, root, file) {
@@ -452,6 +492,66 @@ for (blk in list(
   }
 }
 
+# Gene members are labeled with their namespace: UniProt accessions for GO, NCBI Gene IDs
+# for KEGG (the KEGG run maps proteins to Entrez IDs before testing).
+go_tables <- list(gsea_go, gsea_cc, ora, ora_cc, sens[sens$ontology != "KEGG", , drop = FALSE])
+kegg_tables <- list(gsea_kegg, sens[sens$ontology == "KEGG", , drop = FALSE])
+namespace_ok <- function(tables, type) {
+  all(vapply(tables, function(d) {
+    all(d$gene_identifier_type == type) &&
+      release_members_in_namespace(release_gene_members(d$core_enrichment), type)
+  }, logical(1)))
+}
+expect("enrichment", "KEGG rows are labeled ENTREZID and their members are NCBI Gene IDs",
+       nrow(gsea_kegg) > 0L && namespace_ok(kegg_tables, "ENTREZID"),
+       paste(nrow(gsea_kegg), "primary and", sum(sens$ontology == "KEGG"), "sensitivity rows"))
+expect("enrichment", "GO rows are labeled UNIPROT and their members are UniProt accessions",
+       namespace_ok(go_tables, "UNIPROT"),
+       paste(sum(vapply(go_tables, nrow, integer(1))), "rows"))
+dict_ns <- read_release(rel("metadata", "data_dictionary.tsv"))
+dict_ns <- dict_ns$description[dict_ns$column == "gene_identifier_type"]
+expect("enrichment", "the data dictionary says KEGG members are NCBI Gene IDs",
+       length(dict_ns) > 0L && all(grepl("ENTREZID (NCBI Gene ID) for KEGG", dict_ns, fixed = TRUE)),
+       paste(length(dict_ns), "entries"))
+
+# Table 2f: the primary GSEA rows with adjusted P < 0.05, with leading edges as symbols.
+sig_sets <- read_release(rel("enrichment", "significant_gene_sets.tsv.gz"))
+SIG_SET_COLUMNS <- c("canonical_comparison", "sample_class", "numerator_condition",
+                     "denominator_condition", "ontology", "term_id", "term_name", "direction",
+                     "NES", "set_size", "n_core_enrichment_genes", "p_value", "adjusted_p_value",
+                     "core_enrichment_gene_symbols")
+set_cols <- setdiff(SIG_SET_COLUMNS, "core_enrichment_gene_symbols")
+sets_expected <- do.call(rbind, lapply(list(gsea_go, gsea_cc, gsea_kegg), function(d) {
+  d[d$adjusted_p_value < 0.05, c(set_cols, "analysis_role", "core_enrichment"), drop = FALSE]
+}))
+sets_m <- match(paste(sig_sets$canonical_comparison, sig_sets$ontology, sig_sets$term_id),
+                paste(sets_expected$canonical_comparison, sets_expected$ontology,
+                      sets_expected$term_id))
+expect("enrichment", "significant_gene_sets.tsv.gz has the expected columns in order",
+       identical(names(sig_sets), SIG_SET_COLUMNS), paste(ncol(sig_sets), "columns"))
+expect("enrichment",
+       "significant_gene_sets.tsv.gz holds exactly the primary GSEA rows with adjusted P < 0.05",
+       nrow(sig_sets) == nrow(sets_expected) && !anyNA(sets_m) && !anyDuplicated(sets_m) &&
+         all(sets_expected$analysis_role == "canonical"),
+       paste0(nrow(sig_sets), " rows (",
+              paste(names(table(sig_sets$ontology)), table(sig_sets$ontology), collapse = ", "),
+              ")"))
+expect("enrichment", "significant_gene_sets.tsv.gz values are identical to the GSEA tables",
+       !anyNA(sets_m) &&
+         all(vapply(set_cols, function(cn) {
+           identical(sig_sets[[cn]], sets_expected[[cn]][sets_m])
+         }, logical(1))))
+expect("enrichment", "every leading edge has n_core_enrichment_genes members, one per source member",
+       !anyNA(sets_m) &&
+         identical(lengths(release_gene_members(sig_sets$core_enrichment_gene_symbols)),
+                   as.integer(sig_sets$n_core_enrichment_genes)) &&
+         identical(lengths(release_gene_members(sig_sets$core_enrichment_gene_symbols)),
+                   lengths(release_gene_members(sets_expected$core_enrichment[sets_m]))))
+expect("enrichment", "significant gene-set direction follows the sign of NES",
+       identical(sig_sets$direction,
+                 paste0("enriched_toward_", ifelse(sig_sets$NES > 0, sig_sets$numerator_condition,
+                                                   sig_sets$denominator_condition))))
+
 # The gene sets fgsea could not test: the released list equals the runs' own lists, and the
 # coverage table counts the same sets.
 untested_src <- tryCatch(release_fgsea_untested_sets(pc$canonical_comparison, DATA_ROOT),
@@ -483,18 +583,21 @@ expect("enrichment", "the coverage table counts the same untested GO sets",
 expect("enrichment", "every GSEA block records its untested gene sets",
        !anyNA(suppressWarnings(as.integer(coverage$gsea_untested_gene_sets[
          coverage$analysis == "GSEA"]))))
-# The adopted enrichment is described as decided, with the settings read from the runs.
-perm_docs <- c("README_DATA.md", "editor_source_data/REVISION_PROTEOMICS_DATA_CHANGELOG.md",
-               "editor_source_data/MANUSCRIPT_TERMINOLOGY_ACTIONS.md",
-               "editor_source_data/figure_source_map.tsv", "enrichment/enrichment_run_parameters.tsv",
+# The adopted enrichment carries no provisional or pending wording, and its settings are read
+# from the runs.
+perm_docs <- c("README_DATA.md", "provenance/REVISION_PROTEOMICS_DATA_CHANGELOG.md",
+               "provenance/MANUSCRIPT_TERMINOLOGY_ACTIONS.md",
+               "provenance/figure_source_map.tsv", "enrichment/enrichment_run_parameters.tsv",
                "metadata/secondary_analysis_manifest.tsv")
 perm_text <- unlist(lapply(perm_docs[file.exists(rel(perm_docs))], function(f) {
   readLines(rel(f), warn = FALSE, encoding = "UTF-8")
 }))
-expect("enrichment", "the published documents describe the GO enrichment as decided",
-       !any(grepl("provisional|pending", perm_text, ignore.case = TRUE) &
-              !grepl("PRIDE_READY_PENDING_RAW_UPLOAD|pending raw upload", perm_text,
-                     ignore.case = TRUE)),
+expect("enrichment",
+       "the GO enrichment is recorded as adopted and the published documents contain no provisional or pending wording",
+       identical(RELEASE_STATISTICS_RUN$enrichment_rerun_status, "adopted") &&
+         !any(grepl("provisional|pending", perm_text, ignore.case = TRUE) &
+                !grepl("PRIDE_READY_PENDING_RAW_UPLOAD|pending raw upload", perm_text,
+                       ignore.case = TRUE)),
        paste(length(perm_docs), "documents scanned"))
 perm <- tryCatch(release_enrichment_permutations(DATA_ROOT), error = function(e) NULL)
 if (is.null(perm)) {
@@ -539,11 +642,8 @@ expect("effect_size", "the summary carries the full effect-size definition",
          all(ds_eff$effect_size_definition == RELEASE_EFFECT_SIZE$definition))
 expect("effect_size", "the definition states that it is not a log2 fold change",
        all(grepl("NOT a log2 fold change", ds_eff$effect_size_definition, fixed = TRUE)))
-expect("effect_size", "the effect size is not called a standardised mean difference alone",
-       !any(grepl("standardised mean difference", ds_eff$effect_size_definition,
-                  fixed = TRUE)) &&
-         !any(grepl("standardized mean difference", ds_eff$effect_size_definition,
-                    fixed = TRUE)))
+expect("effect_size", "the effect size is not called a standardized mean difference alone",
+       !any(grepl("standardi[sz]ed mean difference", ds_eff$effect_size_definition)))
 
 # Canonical GSEA ranking must still be the moderated t, and the sensitivity rows must still
 # be separated. Terminology changed; the statistic did not.
@@ -559,7 +659,7 @@ expect("effect_size", "the sensitivity ranking keeps its canonical `log2fc` toke
 
 # The terminology audit, then a scan of every reader-facing document (not the builder
 # sources, which hold the claim list and the audit rows).
-audit_path <- rel("editor_source_data", "EFFECT_SIZE_TERMINOLOGY_AUDIT.tsv")
+audit_path <- rel("provenance", "EFFECT_SIZE_TERMINOLOGY_AUDIT.tsv")
 if (!file.exists(audit_path)) {
   record("effect_size", "the terminology audit is published", "FAIL",
          "EFFECT_SIZE_TERMINOLOGY_AUDIT.tsv missing")
@@ -585,9 +685,9 @@ PUBLIC_DOCS <- c(
   "metadata/sample_class_corrections.tsv",
   "metadata/sample_metadata.tsv",
   "differential_analysis/primary_differential_summary.tsv",
-  "editor_source_data/REVISION_PROTEOMICS_DATA_CHANGELOG.md",
-  "editor_source_data/MANUSCRIPT_TERMINOLOGY_ACTIONS.md",
-  "editor_source_data/figure_source_map.tsv",
+  "provenance/REVISION_PROTEOMICS_DATA_CHANGELOG.md",
+  "provenance/MANUSCRIPT_TERMINOLOGY_ACTIONS.md",
+  "provenance/figure_source_map.tsv",
   "pride/README_PRIDE.md",
   "pride/SDRF_MISSING_METADATA.md",
   "provenance/UPSTREAM_PREPROCESSING_GAP.md",
@@ -620,7 +720,7 @@ readme_lines <- readLines(rel("README_DATA.md"), warn = FALSE)
 expect("effect_size", "README_DATA.md carries the methods-safe definition",
        any(grepl(RELEASE_EFFECT_SIZE$methods_sentence, readme_lines, fixed = TRUE)))
 expect("effect_size", "the manuscript action note lists the out-of-repo corrections",
-       file.exists(rel("editor_source_data", "MANUSCRIPT_TERMINOLOGY_ACTIONS.md")))
+       file.exists(rel("provenance", "MANUSCRIPT_TERMINOLOGY_ACTIONS.md")))
 
 # --------------------------------------------------------------------------------------
 cat("\n=== no hemisphere-level inference presented as animal-level ===\n")
@@ -640,10 +740,10 @@ expect("statistical unit", "no inferential row claims 6 replicates per arm",
        !any(as.integer(da$n_numerator_animals) > 3L, na.rm = TRUE) &&
          !any(as.integer(gsea_go$n_numerator_animals) > 3L, na.rm = TRUE))
 
-fm <- read_release(rel("editor_source_data", "figure_source_map.tsv"))
+fm <- read_release(rel("provenance", "figure_source_map.tsv"))
 acq_unit <- grepl("hemisphere|acquisition", fm$statistical_unit, ignore.case = TRUE)
 expect("statistical unit",
-       "panels drawn at acquisition level are labelled technical QC",
+       "panels drawn at acquisition level are labeled technical QC",
        all(fm$primary_or_secondary[acq_unit] == "technical_qc"),
        paste(sum(acq_unit), "acquisition-level panel(s)"))
 expect("figures", "all required manuscript panels are mapped (manuscript numbering)",
@@ -657,22 +757,98 @@ expect("figures", "the panels that use the differential statistics come from the
          all(grepl(paste(RELEASE_STATISTICS_RUN$figure_rebuild_relative, collapse = "/"),
                    rebuilt$panel_source_data_canonical_path, fixed = TRUE)),
        paste(nrow(rebuilt), "rebuilt panel(s)"))
-panel_hash_ok <- vapply(seq_len(nrow(fm)), function(i) {
-  rp <- fm$panel_source_data_release_path[i]
-  if (is.na(rp) || !nzchar(rp)) return(TRUE)
-  files <- strsplit(rp, ";", fixed = TRUE)[[1]]
-  hashes <- strsplit(as.character(fm$panel_source_data_sha256[i]), ";", fixed = TRUE)[[1]]
-  length(files) == length(hashes) &&
+# The published panel files are reader-facing CSVs written by stage 06 from the canonical
+# panel files. The canonical files are not copied: the map names each one with its pinned
+# SHA256, and the registry records that file and hash as the source of the published CSV.
+split_cell <- function(x) {
+  x <- as.character(x)
+  if (is.na(x) || !nzchar(x)) character(0) else strsplit(x, ";", fixed = TRUE)[[1]]
+}
+registry <- release_registry_read(OUT_ROOT)
+panel_rows <- which(!is.na(fm$panel_source_data_release_path) &
+                      nzchar(fm$panel_source_data_release_path))
+panel_published_ok <- vapply(panel_rows, function(i) {
+  files <- split_cell(fm$panel_source_data_release_path[i])
+  canon <- split_cell(fm$panel_source_data_canonical_path[i])
+  hashes <- split_cell(fm$panel_source_data_sha256[i])
+  length(files) > 0L && length(files) == length(canon) && length(canon) == length(hashes) &&
+    all(grepl("^editor_source_data/figure_source_data/[^/]+[.]csv$", files)) &&
+    all(file.exists(file.path(OUT_ROOT, files))) &&
     all(vapply(seq_along(files), function(j) {
-      p <- file.path(OUT_ROOT, files[j])
-      file.exists(p) && identical(release_sha256(p), hashes[j])
+      r <- registry[registry$relative_path == files[[j]], , drop = FALSE]
+      nrow(r) == 1L && identical(r$canonical_source_sha256, hashes[[j]]) &&
+        identical(basename(r$source_artifact), basename(canon[[j]]))
     }, logical(1)))
 }, logical(1))
-expect("figures", "every copied panel source file matches the SHA256 the map records",
-       all(panel_hash_ok),
-       if (all(panel_hash_ok)) paste(sum(nzchar(fm$panel_source_data_release_path)),
-                                     "panels checked") else
-         paste(fm$panel_label[!panel_hash_ok], collapse = "; "))
+expect("figures",
+       "every published panel file exists and is registered with its canonical source and pinned hash",
+       length(panel_rows) > 0L && all(panel_published_ok),
+       if (all(panel_published_ok)) paste(length(panel_rows), "panels") else
+         paste(fm$panel_label[panel_rows][!panel_published_ok], collapse = "; "))
+canon_files <- unique(data.frame(
+  path = unlist(lapply(fm$panel_source_data_canonical_path[panel_rows], split_cell)),
+  sha256 = unlist(lapply(fm$panel_source_data_sha256[panel_rows], split_cell)),
+  stringsAsFactors = FALSE))
+if (!all(file.exists(canon_files$path))) {
+  record("figures", "every canonical panel file still matches the SHA256 the map records",
+         "SKIP", "canonical panel files unreachable")
+} else {
+  canon_ok <- vapply(seq_len(nrow(canon_files)), function(i) {
+    identical(release_sha256(canon_files$path[[i]]), canon_files$sha256[[i]])
+  }, logical(1))
+  expect("figures", "every canonical panel file still matches the SHA256 the map records",
+         all(canon_ok),
+         if (all(canon_ok)) paste(nrow(canon_files), "canonical files") else
+           paste(basename(canon_files$path[!canon_ok]), collapse = "; "))
+}
+fsd_dir <- rel("editor_source_data", "figure_source_data")
+fsd_files <- list.files(fsd_dir)
+fsd_named <- basename(unlist(lapply(fm$panel_source_data_release_path[panel_rows], split_cell)))
+expect("figures", "the panel source-data folder holds only the mapped CSV files (no .xlsx)",
+       length(fsd_files) > 0L && all(grepl("[.]csv$", fsd_files)) &&
+         setequal(fsd_files, fsd_named),
+       paste(length(fsd_files), "files"))
+fsd <- lapply(stats::setNames(file.path(fsd_dir, fsd_files), fsd_files),
+              release_read_published_csv)
+fsd_headers <- unlist(lapply(fsd, names), use.names = FALSE)
+expect("figures", "panel source-data headers are plain (no underscores, log2fc, pval, padj or alias)",
+       all(nzchar(fsd_headers)) &&
+         !any(grepl("_|log2fc|logfc|pval|padj|alias", fsd_headers, ignore.case = TRUE)),
+       paste(length(fsd_headers), "headers in", length(fsd), "files"))
+# Quantities that are also in Supplementary Table 2 carry its display headers (README_DATA
+# section 12): every file has exactly the headers pinned in RELEASE_FIGURE_CSV_HEADERS, and no
+# header is a workbook header written differently (case, spaces, hyphens, punctuation).
+fsd_bad <- names(fsd)[!vapply(names(fsd), function(f) {
+  identical(names(fsd[[f]]), RELEASE_FIGURE_CSV_HEADERS[[f]])
+}, logical(1))]
+fsd_wb_inv <- read_release(rel("editor_source_data", "workbook_sheet_inventory.tsv"),
+                           colClasses = "character", na.strings = character(0))
+fsd_variants <- release_figure_header_variants(
+  fsd_headers, unlist(strsplit(fsd_wb_inv$display_columns, ";", fixed = TRUE)))
+expect("figures",
+       "panel source-data headers are the pinned set, with the workbook display header for every workbook quantity",
+       setequal(names(fsd), names(RELEASE_FIGURE_CSV_HEADERS)) && !length(fsd_bad) &&
+         !length(fsd_variants),
+       if (length(fsd_bad) || length(fsd_variants)) {
+         paste(c(fsd_bad, fsd_variants), collapse = "; ")
+       } else paste(length(unique(fsd_headers)), "distinct headers in", length(fsd), "files"))
+foreign <- "RFID|Exp9|ActivityIndex|AnimalPos"
+foreign_hits <- names(fsd)[vapply(fsd, function(d) {
+  any(grepl(foreign, c(names(d), unlist(d, use.names = FALSE))))
+}, logical(1))]
+expect("figures", "no panel source-data file holds data of another project",
+       length(foreign_hits) == 0L,
+       if (length(foreign_hits)) paste(foreign_hits, collapse = "; ") else
+         paste(length(fsd), "files scanned"))
+supp_a <- fsd[["SuppFig4A_source_data.csv"]]
+expect("figures", "Supp. Fig. 4 A source data are this project's 96 acquisitions, by the Sample IDs of table 2a",
+       !is.null(supp_a) && nrow(supp_a) == inv$n_measurement_records &&
+         !anyDuplicated(supp_a[["Sample ID"]]) &&
+         setequal(supp_a[["Sample ID"]], sm$sample_id) &&
+         identical(names(supp_a), RELEASE_FIGURE_CSV_HEADERS[["SuppFig4A_source_data.csv"]]) &&
+         all(supp_a[["Animal ID"]] == sm$AnimalID[match(supp_a[["Sample ID"]], sm$sample_id)]),
+       if (is.null(supp_a)) "file missing" else
+         paste(nrow(supp_a), "rows x", ncol(supp_a), "columns"))
 expect("figures", "every data-bearing panel names a final revision script",
        all(nzchar(fm$final_revision_script[fm$primary_or_secondary != "not_applicable"])))
 released_panel_files <- basename(unlist(strsplit(
@@ -688,61 +864,244 @@ expect("figures", "no rebuilt panel describes its effect size as moderated or as
                   ignore.case = TRUE)))
 
 # --------------------------------------------------------------------------------------
-cat("\n=== editor workbook hygiene ===\n")
+cat("\n=== Supplementary Table 2 workbook ===\n")
 # --------------------------------------------------------------------------------------
-wb_inv <- read_release(rel("editor_source_data", "workbook_sheet_inventory.tsv"))
-sheet_cols <- stats::setNames(
-  lapply(strsplit(wb_inv$columns, ";", fixed = TRUE), identity), wb_inv$sheet)
+# The inventory (written by stage 07) is checked against the expected layout, and the built
+# .xlsx against the inventory and the release tables.
+wb_inv <- read_release(rel("editor_source_data", "workbook_sheet_inventory.tsv"),
+                       colClasses = "character", na.strings = character(0))
+sheet_cols <- stats::setNames(strsplit(wb_inv$columns, ";", fixed = TRUE), wb_inv$sheet)
+display_cols <- stats::setNames(strsplit(wb_inv$display_columns, ";", fixed = TRUE),
+                                wb_inv$sheet)
 hygiene <- release_check_workbook_hygiene(sheet_cols)
 expect("workbook", "no duplicate or unnamed workbook columns", length(hygiene) == 0L,
        if (length(hygiene)) paste(head(hygiene, 2), collapse = "; ") else
          paste(nrow(wb_inv), "sheets"))
-
-# The same check on the display headers the reader sees. A release built before display
-# headers existed has no display_columns column; record a FAIL instead of letting
-# strsplit() abort the run.
-if (!all(c("display_columns", "title", "supplementary_table") %in% names(wb_inv))) {
-  expect("workbook", "workbook inventory carries the display-header check", FALSE,
-         "inventory predates it; rebuild the release with stage 07")
-} else {
-  display_cols <- stats::setNames(
-    lapply(strsplit(as.character(wb_inv$display_columns), ";", fixed = TRUE), identity),
-    wb_inv$sheet)
-  hygiene_display <- release_check_workbook_hygiene(display_cols)
-  expect("workbook", "no duplicate or unnamed workbook DISPLAY headers",
-         length(hygiene_display) == 0L,
-         if (length(hygiene_display)) paste(head(hygiene_display, 2), collapse = "; ") else
-           "display headers unique and named on every sheet")
-  expect("workbook", "every sheet has as many display headers as machine columns",
-         all(lengths(display_cols) == lengths(sheet_cols)) &&
-           all(lengths(display_cols) == as.integer(wb_inv$n_columns)))
-  expect("workbook", "no display header leaks a snake_case machine name",
-         !any(grepl("_", unlist(display_cols, use.names = FALSE), fixed = TRUE)),
-         paste(length(unlist(display_cols, use.names = FALSE)), "headers checked"))
-  expect("workbook", "every data sheet has an assigned supplementary-table number",
-         all(nzchar(wb_inv$supplementary_table[wb_inv$sheet != "README"])) &&
-           !anyDuplicated(wb_inv$supplementary_table[nzchar(wb_inv$supplementary_table)]))
-  expect("workbook", "every sheet has a title", all(nzchar(wb_inv$title)))
-}
-expect("workbook", "required sheets present",
-       all(c("README", "Sample_Metadata", "Animal_Level_Metadata", "Primary_Contrasts",
-             "Differential_Proteins", "GSEA_GO_BP", "GSEA_GO_CC", "GSEA_KEGG", "ORA_GO_BP",
-             "ORA_GO_CC", "EWCE", "Secondary_Analyses", "Figure_Source_Map",
-             "Software_Versions") %in% wb_inv$sheet))
-if ("supplementary_table" %in% names(wb_inv)) {
-  expect("workbook", "GO-CC sheets are appended as S17 and S18; S1-S16 keep their numbers",
-         identical(wb_inv$supplementary_table[match(c("GSEA_GO_CC", "ORA_GO_CC"), wb_inv$sheet)],
-                   c("S17", "S18")) &&
-           identical(wb_inv$supplementary_table[match("Software_Versions", wb_inv$sheet)], "S16"))
-  expect("workbook", "the untested GO gene sets are appended as S19",
-         identical(wb_inv$supplementary_table[match("GSEA_Untested_Sets", wb_inv$sheet)], "S19"))
-}
-expect("workbook", "workbook file exists",
-       file.exists(rel("editor_source_data", "Proteomics_Source_Data_Animal_Level.xlsx")))
+hygiene_display <- release_check_workbook_hygiene(display_cols)
+expect("workbook", "no duplicate or unnamed workbook DISPLAY headers",
+       length(hygiene_display) == 0L,
+       if (length(hygiene_display)) paste(head(hygiene_display, 2), collapse = "; ") else
+         "display headers unique and named on every sheet")
+expect("workbook", "every sheet has as many display headers as machine columns",
+       all(lengths(display_cols) == lengths(sheet_cols)) &&
+         all(lengths(display_cols) == as.integer(wb_inv$n_columns)))
+expect("workbook", "no display header leaks a snake_case machine name",
+       !any(grepl("_", unlist(display_cols, use.names = FALSE), fixed = TRUE)),
+       paste(length(unlist(display_cols, use.names = FALSE)), "headers checked"))
+layout <- RELEASE_WORKBOOK_LAYOUT
+expect("workbook",
+       "the sheets are README, Column definitions and sub-tables 2a to 2q, in that order",
+       identical(wb_inv$sheet_key, layout$sheet_key) &&
+         identical(wb_inv$supplementary_table, layout$letter),
+       paste(wb_inv$supplementary_table[nzchar(wb_inv$supplementary_table)], collapse = " "))
+expect("workbook", "every sheet has a title", all(nzchar(wb_inv$title)))
+xlsx_path <- rel(RELEASE_WORKBOOK_REL)
+xlsx_found <- list.files(rel("editor_source_data"), pattern = "[.]xlsx$")
+expect("workbook", paste("the workbook is", RELEASE_WORKBOOK_REL, "and no other workbook is released"),
+       file.exists(xlsx_path) && identical(xlsx_found, basename(RELEASE_WORKBOOK_REL)),
+       paste(xlsx_found, collapse = "; "))
+# The revision records and the figure map are in provenance/, not next to the table.
+editor_files <- list.files(rel("editor_source_data"))
+expect("workbook", "editor_source_data holds only Supplementary Table 2, its inventory and the figure source data",
+       setequal(editor_files, c(basename(RELEASE_WORKBOOK_REL), "workbook_sheet_inventory.tsv",
+                                "figure_source_data")),
+       paste(editor_files, collapse = "; "))
 expect("workbook", "no sheet carries a misleading public gene_symbol field",
        !any(vapply(sheet_cols, function(cs) {
          "gene_symbol" %in% cs && !"uniprot_accession" %in% cs
        }, logical(1))))
+internal_cols <- unique(grep(RELEASE_WORKBOOK_INTERNAL_COLUMNS, unlist(sheet_cols), value = TRUE))
+expect("workbook", "no contrast, alias, path, hash, curation or revision column reaches the workbook",
+       length(internal_cols) == 0L, paste(internal_cols, collapse = ", "))
+keyed <- vapply(sheet_cols, function(cs) "canonical_comparison" %in% cs, logical(1))
+expect("workbook", "comparison-keyed sheets show Comparison first and Comparison key last",
+       sum(keyed) > 0L &&
+         all(vapply(names(which(keyed)), function(s) {
+           cs <- sheet_cols[[s]]; ds <- display_cols[[s]]
+           cs[[1]] == "comparison_label" && cs[[length(cs)]] == "canonical_comparison" &&
+             ds[[1]] == "Comparison" && ds[[length(ds)]] == "Comparison key"
+         }, logical(1))),
+       paste(sum(keyed), "sheets"))
+inv_rows <- stats::setNames(as.integer(wb_inv$n_rows), wb_inv$sheet_key)
+expected_rows <- c(
+  Samples = nrow(sm), Animal_Profiles = nrow(al), Comparisons = nrow(pc),
+  Significant_Proteins = sum(as.integer(da_sum$n_significant_fdr_0_05_mapped_only)),
+  All_Proteins = nrow(da),
+  Significant_Gene_Sets = sum(c(gsea_go$adjusted_p_value, gsea_cc$adjusted_p_value,
+                                gsea_kegg$adjusted_p_value) < 0.05),
+  GSEA_GO_BP = nrow(gsea_go), GSEA_GO_CC = nrow(gsea_cc), GSEA_KEGG = nrow(gsea_kegg),
+  ORA_GO_BP = sum(ora$analysis_role == "canonical"),
+  ORA_GO_CC = sum(ora_cc$analysis_role == "canonical"),
+  GSEA_Untested_Sets = sum(untested_rel$analysis_role == "canonical"), EWCE = nrow(ewce))
+row_diff <- names(expected_rows)[inv_rows[names(expected_rows)] != expected_rows]
+expect("workbook",
+       "sheet row counts equal their release tables (2j, 2k and 2l: primary analysis only)",
+       length(row_diff) == 0L,
+       if (length(row_diff)) paste(row_diff, collapse = ", ") else
+         paste(sum(expected_rows), "rows on", length(expected_rows), "sheets"))
+
+if (!file.exists(xlsx_path)) {
+  record("workbook", "the workbook file can be read", "FAIL", "file missing")
+} else {
+  wbx <- release_read_workbook_xml(xlsx_path)
+  record("workbook", "workbook size", "PASS",
+         sprintf("%.1f MB, %d tabs", file.info(xlsx_path)$size / 1024^2, length(wbx$tabs)))
+  expect("workbook", "tabs are Contents, then the inventory sheets in order",
+         identical(wbx$tabs, c("Contents", wb_inv$sheet)), paste(wbx$tabs, collapse = " | "))
+  tabs_all <- c("Contents", wb_inv$sheet)
+  if (all(tabs_all %in% names(wbx$sheets))) {
+    row_cells <- function(tab, r) {
+      v <- unname(wbx$sheets[[tab]]$rows[[r]])
+      v[!is.na(v)]
+    }
+    titles <- c(paste0("Supplementary Table ", RELEASE_WORKBOOK_TABLE_NUMBER, " | Contents"),
+                paste0("Supplementary Table ", RELEASE_WORKBOOK_TABLE_NUMBER,
+                       sub("^[0-9]+", "", wb_inv$supplementary_table), " | ", wb_inv$title))
+    bad_title <- tabs_all[!vapply(seq_along(tabs_all), function(i) {
+      identical(row_cells(tabs_all[[i]], 1L), titles[[i]])
+    }, logical(1))]
+    expect("workbook", "row 1 of every sheet reads 'Supplementary Table 2<letter> | <title>'",
+           length(bad_title) == 0L, paste(bad_title, collapse = "; "))
+    headers <- c(list(c("Table", "Sheet", "Title", "Rows", "Columns", "Description")),
+                 unname(display_cols))
+    bad_header <- tabs_all[!vapply(seq_along(tabs_all), function(i) {
+      identical(row_cells(tabs_all[[i]], RELEASE_WORKBOOK_HEADER_ROW), headers[[i]])
+    }, logical(1))]
+    expect("workbook", "the header is on row 4 of every sheet and matches the inventory",
+           length(bad_header) == 0L, paste(bad_header, collapse = "; "))
+    n_data <- c(nrow(wb_inv), as.integer(wb_inv$n_rows))
+    bad_rows <- tabs_all[vapply(seq_along(tabs_all), function(i) {
+      wbx$sheets[[tabs_all[[i]]]]$last_row - RELEASE_WORKBOOK_HEADER_ROW != n_data[[i]]
+    }, logical(1))]
+    expect("workbook", "every sheet holds as many data rows as the inventory records",
+           length(bad_rows) == 0L, paste(bad_rows, collapse = "; "))
+    bad_layout <- tabs_all[!vapply(tabs_all, function(tab) {
+      s <- wbx$sheets[[tab]]
+      identical(s$frozen_at, "B5") && "A2:H2" %in% s$merges
+    }, logical(1))]
+    expect("workbook", "panes frozen below the header and right of column 1; caption merged over A2:H2",
+           length(bad_layout) == 0L, paste(bad_layout, collapse = "; "))
+    # The Sheet column holds the names as text, each with a hyperlink element to its sheet.
+    contents_x <- wbx$sheets[["Contents"]]
+    link_targets <- sub("^'([^']*)'!A1$", "\\1", contents_x$hyperlinks)
+    contents_sheet <- openxlsx::read.xlsx(xlsx_path, sheet = "Contents",
+                                          startRow = RELEASE_WORKBOOK_HEADER_ROW,
+                                          check.names = FALSE)
+    expect("workbook", "the Contents sheet links every sheet name (text, not a formula) to its sheet",
+           identical(link_targets, wb_inv$sheet) &&
+             identical(as.character(contents_sheet$Sheet), wb_inv$sheet) &&
+             identical(contents_x$hyperlink_refs,
+                       paste0("B", RELEASE_WORKBOOK_HEADER_ROW + seq_len(nrow(wb_inv)))) &&
+             !length(contents_x$formulas),
+           paste(length(link_targets), "links"))
+  } else {
+    record("workbook", "every inventory sheet is in the workbook", "FAIL",
+           paste(setdiff(tabs_all, names(wbx$sheets)), collapse = "; "))
+  }
+  expect("workbook", "every text cell is a shared string, so the text scan covers it",
+         !any(vapply(wbx$sheets, `[[`, logical(1), "inline_strings")))
+  wb_text <- c(wbx$tabs, wbx$shared_strings,
+               unlist(lapply(wbx$sheets, `[[`, "formulas"), use.names = FALSE))
+  internal_hits <- release_internal_text_hits(wb_text)
+  expect("workbook",
+         "no workbook cell holds a drive path (S:/, D:\\, C:/), a hash, a script or folder name, 'Figure3' or the name Fabian",
+         nrow(internal_hits) == 0L,
+         if (nrow(internal_hits)) paste0(internal_hits$kind[1], ": ",
+                                         substr(internal_hits$text[1], 1, 80)) else
+           paste(length(wb_text), "strings scanned"))
+  wb_term_names <- release_workbook_term_names(xlsx_path, wb_inv)
+  british_hits <- release_british_spelling_hits(wbx$shared_strings, wb_term_names)
+  expect("workbook",
+         "no workbook text uses British spelling (GO and KEGG term names in tables 2f to 2l excepted)",
+         length(british_hits) == 0L,
+         if (length(british_hits)) paste0(length(british_hits), " string(s), e.g. ",
+                                          substr(british_hits[1], 1, 80)) else
+           paste(length(wbx$shared_strings), "strings scanned,", length(wb_term_names),
+                 "term names excepted"))
+
+  read_sheet <- function(key) {
+    i <- match(key, wb_inv$sheet_key)
+    d <- openxlsx::read.xlsx(xlsx_path, sheet = wb_inv$sheet[[i]],
+                             startRow = RELEASE_WORKBOOK_HEADER_ROW, check.names = FALSE,
+                             sep.names = " ")
+    if (!identical(names(d), display_cols[[i]])) {
+      stop("Sheet ", wb_inv$sheet[[i]], " does not have the inventory headers.", call. = FALSE)
+    }
+    names(d) <- sheet_cols[[i]]
+    d
+  }
+  same_num <- release_same_numbers
+
+  readme_sheet <- read_sheet("README")
+  readme_flat <- paste(readme_sheet$statement, collapse = " ")
+  readme_forbidden <- c("submission", "reviewer", "editor", "changelog", "superseded",
+                        "canonical", "03_output")
+  readme_bad <- readme_forbidden[vapply(readme_forbidden, grepl, logical(1), x = readme_flat,
+                                        ignore.case = TRUE)]
+  expect("workbook", "the README sheet is written for the reader and ends with the release version",
+         length(readme_bad) == 0L &&
+           grepl("^Release of [0-9]{4}-[0-9]{2}-[0-9]{2}[.]$",
+                 readme_sheet$statement[readme_sheet$item == "Version"]),
+         if (length(readme_bad)) paste("found:", paste(readme_bad, collapse = ", ")) else
+           paste(nrow(readme_sheet), "items"))
+
+  coldef <- read_sheet("Column_Definitions")
+  lettered <- nzchar(wb_inv$supplementary_table)
+  shown <- unlist(lapply(which(lettered), function(i) {
+    paste(wb_inv$supplementary_table[[i]], display_cols[[i]])
+  }), use.names = FALSE)
+  expect("workbook", "Column definitions has exactly one defined row per header of 2a to 2q",
+         setequal(paste(coldef$table, coldef$column), shown) &&
+           !anyDuplicated(paste(coldef$table, coldef$column)) &&
+           all(nzchar(coldef$definition) & !is.na(coldef$definition)),
+         paste(nrow(coldef), "definitions"))
+
+  cmp_sheet <- read_sheet("Comparisons")
+  m <- match(cmp_sheet$canonical_comparison, da_sum$canonical_comparison)
+  count_cols <- intersect(c("n_proteins_tested", "n_significant_fdr_0_05",
+                            "n_significant_higher_in_numerator",
+                            "n_significant_higher_in_denominator",
+                            "n_proteins_tested_mapped_only", "n_significant_fdr_0_05_mapped_only",
+                            "n_significant_higher_in_numerator_mapped_only",
+                            "n_significant_higher_in_denominator_mapped_only"),
+                          names(cmp_sheet))
+  expect("workbook", "2c counts equal the differential summary",
+         nrow(cmp_sheet) == inv$n_primary_contrasts && !anyNA(m) && length(count_cols) == 8L &&
+           all(vapply(count_cols, function(cn) {
+             identical(as.integer(cmp_sheet[[cn]]), as.integer(da_sum[[cn]][m]))
+           }, logical(1))),
+         paste(nrow(cmp_sheet), "comparisons,", length(count_cols), "counts"))
+
+  sig_sheet <- read_sheet("Significant_Proteins")
+  expected_sig <- da[as.logical(da$significant_fdr_0_05) %in% TRUE &
+                       da$id_mapping_status == "mapped", , drop = FALSE]
+  m <- match(paste(sig_sheet$canonical_comparison, sig_sheet$protein_group_id),
+             paste(expected_sig$canonical_comparison, expected_sig$protein_group_id))
+  expect("workbook", "2d holds exactly the FDR < 0.05 annotated rows of the protein table, values unchanged",
+         nrow(sig_sheet) == nrow(expected_sig) && !anyNA(m) && !anyDuplicated(m) &&
+           same_num(sig_sheet$effect_size_sd_units, expected_sig$effect_size_sd_units[m]) &&
+           same_num(sig_sheet$moderated_t, expected_sig$moderated_t[m]) &&
+           same_num(sig_sheet$P.Value, expected_sig$P.Value[m]) &&
+           same_num(sig_sheet$adj.P.Val, expected_sig$adj.P.Val[m]) &&
+           all(grepl("^higher in ", sig_sheet$direction)),
+         paste(nrow(sig_sheet), "rows"))
+
+  sets_sheet <- read_sheet("Significant_Gene_Sets")
+  gsea_all <- do.call(rbind, lapply(list(gsea_go, gsea_cc, gsea_kegg), function(d) {
+    d[d$adjusted_p_value < 0.05, c("canonical_comparison", "term_id", "NES", "p_value",
+                                   "adjusted_p_value", "n_core_enrichment_genes")]
+  }))
+  m <- match(paste(sets_sheet$canonical_comparison, sets_sheet$term_id),
+             paste(gsea_all$canonical_comparison, gsea_all$term_id))
+  expect("workbook", "2f holds exactly the primary GSEA rows with adjusted P < 0.05, values unchanged",
+         nrow(sets_sheet) == nrow(gsea_all) && !anyNA(m) && !anyDuplicated(m) &&
+           same_num(sets_sheet$NES, gsea_all$NES[m]) &&
+           same_num(sets_sheet$p_value, gsea_all$p_value[m]) &&
+           same_num(sets_sheet$adjusted_p_value, gsea_all$adjusted_p_value[m]) &&
+           identical(lengths(release_gene_members(sets_sheet$core_enrichment_gene_symbols)),
+                     as.integer(gsea_all$n_core_enrichment_genes[m])),
+         paste(nrow(sets_sheet), "rows"))
+}
 
 # --------------------------------------------------------------------------------------
 cat("\n=== data dictionary and wording ===\n")
@@ -762,12 +1121,14 @@ expect("documentation", "required no-batch-effect sentence present verbatim",
        grepl(paste("No downstream proteomics batch effect attributable to collection plate",
                    "has been demonstrated."), flat_readme, fixed = TRUE))
 prose_files <- c(rel("README_DATA.md"),
-                 rel("editor_source_data", "REVISION_PROTEOMICS_DATA_CHANGELOG.md"),
+                 rel("provenance", "REVISION_PROTEOMICS_DATA_CHANGELOG.md"),
                  rel("pride", "README_PRIDE.md"),
                  rel("pride", "SDRF_MISSING_METADATA.md"),
-                 rel("provenance", "UPSTREAM_PREPROCESSING_GAP.md"))
-forbidden <- c("plate artefact", "plate artifact", "confirmed batch confound",
-               "driven by plate", "technical plate effect")
+                 rel("provenance", "UPSTREAM_PREPROCESSING_GAP.md"),
+                 rel("metadata", "data_dictionary.tsv"),
+                 rel("metadata", "metadata_field_provenance.tsv"),
+                 rel("pride", "sdrf_field_status.tsv"))
+forbidden <- c(tolower(FORBIDDEN_PLATE_WORDING), tolower(RELEASE_PLATE_RETIRED_WORDING))
 prose_hits <- unlist(lapply(prose_files, function(f) {
   if (!file.exists(f)) return(character(0))
   txt <- tolower(paste(readLines(f, warn = FALSE), collapse = " "))
@@ -780,6 +1141,18 @@ expect("documentation", "no forbidden collection-plate wording in release prose"
 expect("documentation", "release prose never calls a processed matrix raw MS data",
        !grepl("raw mass[- ]spectrometry data\\b(?![^.]*not)", flat_readme, perl = TRUE) ||
          grepl("is \\*\\*not\\*\\* raw mass-spectrometry data", flat_readme))
+# The reader documents are written in US spelling, like the workbook.
+us_docs <- c("README_DATA.md", "metadata/data_dictionary.tsv", "pride/README_PRIDE.md")
+us_doc_hits <- unlist(lapply(us_docs, function(f) {
+  if (!file.exists(rel(f))) return(paste(f, "missing"))
+  h <- release_british_spelling_hits(readLines(rel(f), warn = FALSE, encoding = "UTF-8"))
+  if (length(h)) paste0(f, ": ", substr(h, 1, 80))
+}))
+expect("documentation",
+       "README_DATA.md, data_dictionary.tsv and README_PRIDE.md use no British spelling",
+       length(us_doc_hits) == 0L,
+       if (length(us_doc_hits)) paste(head(us_doc_hits, 2), collapse = "; ") else
+         paste(length(us_docs), "documents scanned"))
 
 # --------------------------------------------------------------------------------------
 cat("\n=== data lineage ===\n")
@@ -794,8 +1167,8 @@ expect("lineage", "lineage covers acquisition through release",
 unresolved <- lineage$artifact_id[grepl("UNRESOLVED",
                                         paste(lineage$processing_stage, lineage$notes))]
 record("lineage", "unproven lineage edges are marked UNRESOLVED, not inferred", "PASS",
-       paste(length(unresolved), "artefact(s):", paste(unresolved, collapse = ", ")))
-expect("lineage", "the locked artefacts appear with their hashes",
+       paste(length(unresolved), "artifact(s):", paste(unresolved, collapse = ", ")))
+expect("lineage", "the locked artifacts appear with their hashes",
        any(lineage$sha256 == RELEASE_LOCKED_ARTEFACTS$animal_level_input_gct$sha256,
            na.rm = TRUE) &&
          any(lineage$sha256 == RELEASE_LOCKED_ARTEFACTS$stat_gct$sha256, na.rm = TRUE))
@@ -983,7 +1356,7 @@ expect("pride", "all 96 SDRF rows describe Mus musculus C57BL/6J samples",
          all(sdrf_v[["characteristics[strain or breed]"]] == "C57BL/6J"))
 expect("pride", "AnimalID-level sex is not invented",
        all(sdrf_v[["characteristics[sex]"]] == "not available"))
-expect("pride", "age at experiment start is not relabelled as age at tissue collection",
+expect("pride", "age at experiment start is not relabeled as age at tissue collection",
        all(sdrf_v[["characteristics[age]"]] == "not available") &&
          !any(grepl("7-10", sdrf_v[["characteristics[age]"]], fixed = TRUE)))
 expect("pride", "label-free proteomics is encoded with the SDRF term",

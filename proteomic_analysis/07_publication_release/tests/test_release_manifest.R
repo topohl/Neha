@@ -137,14 +137,17 @@ for (f in c("README_DATA.md", "metadata/sample_metadata.tsv",
             "processed_data/protein_abundance_animal_level.tsv.gz",
             "processed_data/protein_feature_annotation.tsv.gz",
             "differential_analysis/primary_differential_proteins.tsv.gz",
+            "differential_analysis/significant_proteins.tsv",
             "enrichment/primary_GSEA_GO_BP.tsv.gz", "enrichment/primary_GSEA_GO_CC.tsv.gz",
             "enrichment/primary_GSEA_KEGG.tsv.gz", "enrichment/primary_ORA_GO_BP.tsv.gz",
             "enrichment/primary_ORA_GO_CC.tsv.gz",
             "enrichment/GSEA_log2FC_sensitivity.tsv.gz", "enrichment/primary_EWCE.tsv.gz",
             "enrichment/gsea_untested_gene_sets.tsv",
-            "editor_source_data/Proteomics_Source_Data_Animal_Level.xlsx",
-            "editor_source_data/REVISION_PROTEOMICS_DATA_CHANGELOG.md",
-            "editor_source_data/figure_source_map.tsv",
+            "enrichment/significant_gene_sets.tsv.gz",
+            RELEASE_WORKBOOK_REL,
+            "editor_source_data/workbook_sheet_inventory.tsv",
+            "provenance/REVISION_PROTEOMICS_DATA_CHANGELOG.md",
+            "provenance/figure_source_map.tsv",
             "pride/sdrf.tsv", "pride/SDRF_MISSING_METADATA.md", "pride/README_PRIDE.md",
             "pride/SAMPLE_PREPARATION_PROTOCOL.md",
             "provenance/data_lineage.tsv", "provenance/software_versions.tsv",
@@ -154,47 +157,118 @@ for (f in c("README_DATA.md", "metadata/sample_metadata.tsv",
   expect(f %in% man$relative_path, sprintf("manifest lists %s", f))
 }
 
-cat("\n=== editor workbook hygiene ===\n")
+cat("\n=== Supplementary Table 2 workbook ===\n")
 inv_path <- file.path(OUT_ROOT, "editor_source_data", "workbook_sheet_inventory.tsv")
-if (!file.exists(inv_path)) {
-  expect(FALSE, "workbook_sheet_inventory.tsv exists")
+xlsx_path <- file.path(OUT_ROOT, RELEASE_WORKBOOK_REL)
+if (!file.exists(inv_path) || !file.exists(xlsx_path)) {
+  expect(FALSE, "the workbook and workbook_sheet_inventory.tsv exist")
 } else {
-  wb <- rd(inv_path)
+  wb <- utils::read.delim(inv_path, sep = "\t", quote = "", stringsAsFactors = FALSE,
+                          check.names = FALSE, colClasses = "character",
+                          na.strings = character(0))
   sheet_cols <- stats::setNames(strsplit(wb$columns, ";", fixed = TRUE), wb$sheet)
   problems <- release_check_workbook_hygiene(sheet_cols)
   expect(length(problems) == 0L,
          sprintf("no duplicate or unnamed workbook columns across %d sheets%s", nrow(wb),
                  if (length(problems)) paste0(" -- ", problems[[1]]) else ""))
-
-  # Same checks on the display headers, which must also contain no underscores. An older
-  # release has no display_columns column; fail with a message instead of a strsplit() error.
-  if (!all(c("display_columns", "title", "supplementary_table") %in% names(wb))) {
-    expect(FALSE, paste("workbook inventory predates the display-header check",
-                        "(no display_columns/title/supplementary_table);",
-                        "rebuild the release with stage 07"))
-  } else {
-    display_cols <- stats::setNames(strsplit(as.character(wb$display_columns), ";",
-                                             fixed = TRUE), wb$sheet)
-    problems_display <- release_check_workbook_hygiene(display_cols)
-    expect(length(problems_display) == 0L,
-           sprintf("no duplicate or unnamed DISPLAY headers%s",
-                   if (length(problems_display)) paste0(" -- ", problems_display[[1]]) else ""))
-    expect(all(lengths(display_cols) == lengths(sheet_cols)),
-           "each sheet has one display header per machine column")
-    expect(!any(grepl("_", unlist(display_cols, use.names = FALSE), fixed = TRUE)),
-           "no display header leaks a snake_case machine name")
-    expect(all(nzchar(wb$title)) &&
-             all(nzchar(wb$supplementary_table[wb$sheet != "README"])),
-           "every sheet has a title and every data sheet a supplementary-table number")
-  }
-  expect(all(c("README", "Sample_Metadata", "Animal_Level_Metadata", "Primary_Contrasts",
-               "Differential_Proteins", "GSEA_GO_BP", "GSEA_GO_CC", "GSEA_KEGG", "ORA_GO_BP",
-               "ORA_GO_CC", "EWCE",
-               "Secondary_Analyses", "Figure_Source_Map", "Software_Versions") %in%
-               wb$sheet),
-         "every required sheet is present")
+  display_cols <- stats::setNames(strsplit(wb$display_columns, ";", fixed = TRUE), wb$sheet)
+  problems_display <- release_check_workbook_hygiene(display_cols)
+  expect(length(problems_display) == 0L,
+         sprintf("no duplicate or unnamed DISPLAY headers%s",
+                 if (length(problems_display)) paste0(" -- ", problems_display[[1]]) else ""))
+  expect(all(lengths(display_cols) == lengths(sheet_cols)),
+         "each sheet has one display header per machine column")
+  expect(!any(grepl("_", unlist(display_cols, use.names = FALSE), fixed = TRUE)),
+         "no display header leaks a snake_case machine name")
+  expect(all(nzchar(wb$title)), "every sheet has a title")
+  expect(identical(wb$sheet_key, RELEASE_WORKBOOK_LAYOUT$sheet_key),
+         "the sheets are README, Column definitions, then 2a to 2q in the expected order")
+  expect(identical(wb$supplementary_table, RELEASE_WORKBOOK_LAYOUT$letter),
+         sprintf("lettered 2a to 2q; README and Column definitions carry no letter (%s)",
+                 paste(wb$supplementary_table[nzchar(wb$supplementary_table)], collapse = " ")))
+  expect(!any(c("GSEA_log2FC_sensitivity", "Metadata_Field_Status") %in% wb$sheet_key),
+         "the effect-size-ranked GSEA and the metadata field status stay out of the workbook")
+  keyed <- vapply(sheet_cols, function(cs) "canonical_comparison" %in% cs, logical(1))
+  expect(sum(keyed) > 0L &&
+           all(vapply(sheet_cols[keyed], function(cs) {
+             cs[[1]] == "comparison_label" && cs[[length(cs)]] == "canonical_comparison"
+           }, logical(1))),
+         sprintf("comparison-keyed sheets show the comparison first and its key last (%d sheets)",
+                 sum(keyed)))
+  internal_cols <- grep(RELEASE_WORKBOOK_INTERNAL_COLUMNS, unlist(sheet_cols), value = TRUE)
+  expect(length(internal_cols) == 0L,
+         sprintf("no contrast, alias, path, hash or curation column in the workbook%s",
+                 if (length(internal_cols)) paste0(" -- ", paste(unique(internal_cols),
+                                                                 collapse = ", ")) else ""))
   expect(all(as.integer(wb$n_rows) > 0L), "no sheet is empty")
   expect(all(nchar(wb$sheet) <= 31L), "no sheet name exceeds the Excel limit")
+
+  wbx <- release_read_workbook_xml(xlsx_path)
+  expect(identical(wbx$tabs, c("Contents", wb$sheet)),
+         "the workbook tabs are Contents, then the inventory sheets in order")
+  expect(!any(vapply(wbx$sheets, `[[`, logical(1), "inline_strings")),
+         "every text cell is a shared string, so the scan below sees all text")
+  hits <- release_internal_text_hits(c(wbx$tabs, wbx$shared_strings,
+                                       unlist(lapply(wbx$sheets, `[[`, "formulas"))))
+  expect(nrow(hits) == 0L,
+         sprintf("no cell holds a drive path, hash, script or folder name, 'Figure3' or Fabian%s",
+                 if (nrow(hits)) paste0(" -- ", hits$kind[1], ": ", substr(hits$text[1], 1, 80))
+                 else ""))
+  expect(all(vapply(wbx$sheets, function(s) identical(s$frozen_at, "B5"), logical(1))),
+         "every sheet is frozen below the row-4 header and right of column 1")
+  british <- release_british_spelling_hits(wbx$shared_strings,
+                                           release_workbook_term_names(xlsx_path, wb))
+  expect(length(british) == 0L,
+         sprintf("no workbook text uses British spelling, GO and KEGG term names of 2f to 2l excepted%s",
+                 if (length(british)) paste0(" -- ", substr(british[1], 1, 80)) else ""))
+}
+us_docs <- file.path(OUT_ROOT, c("README_DATA.md", "metadata/data_dictionary.tsv",
+                                 "pride/README_PRIDE.md"))
+us_doc_hits <- unlist(lapply(us_docs[file.exists(us_docs)], function(f) {
+  release_british_spelling_hits(readLines(f, warn = FALSE, encoding = "UTF-8"))
+}))
+expect(all(file.exists(us_docs)) && length(us_doc_hits) == 0L,
+       sprintf("README_DATA.md, data_dictionary.tsv and README_PRIDE.md use no British spelling%s",
+               if (length(us_doc_hits)) paste0(" -- ", substr(us_doc_hits[1], 1, 80)) else ""))
+
+cat("\n=== panel source data ===\n")
+fsd_dir <- file.path(OUT_ROOT, "editor_source_data", "figure_source_data")
+fsd_files <- list.files(fsd_dir)
+expect(length(fsd_files) > 0L && all(grepl("[.]csv$", fsd_files)),
+       sprintf("the panel source data are CSV files only (%d files)", length(fsd_files)))
+supp_a_path <- file.path(fsd_dir, "SuppFig4A_source_data.csv")
+sm_path <- file.path(OUT_ROOT, "metadata", "sample_metadata.tsv")
+if (!file.exists(supp_a_path) || !file.exists(sm_path)) {
+  expect(FALSE, "SuppFig4A_source_data.csv and the sample metadata exist")
+} else {
+  supp_a <- release_read_published_csv(supp_a_path)
+  sm <- rd(sm_path)
+  expect(nrow(supp_a) == RELEASE_DESIGN_INVARIANTS$n_measurement_records &&
+           setequal(supp_a[["Sample ID"]], sm$sample_id) &&
+           !anyDuplicated(supp_a[["Sample ID"]]),
+         "Supp. Fig. 4 A holds the 96 acquisitions of this project, by their table 2a Sample IDs")
+  foreign <- unlist(lapply(file.path(fsd_dir, fsd_files), function(p) {
+    d <- release_read_published_csv(p)
+    if (any(grepl("RFID|Exp9|ActivityIndex|AnimalPos", c(names(d), unlist(d))))) basename(p)
+  }))
+  expect(length(foreign) == 0L,
+         sprintf("no panel source-data file carries data of another project%s",
+                 if (length(foreign)) paste0(" -- ", paste(foreign, collapse = ", ")) else ""))
+  fsd_header_list <- lapply(stats::setNames(file.path(fsd_dir, fsd_files), fsd_files),
+                            function(p) names(release_read_published_csv(p)))
+  bad <- fsd_files[!vapply(fsd_files, function(f) {
+    identical(fsd_header_list[[f]], RELEASE_FIGURE_CSV_HEADERS[[f]])
+  }, logical(1))]
+  inv_path <- file.path(OUT_ROOT, "editor_source_data", "workbook_sheet_inventory.tsv")
+  wb_display <- if (file.exists(inv_path)) {
+    unlist(strsplit(rd(inv_path)$display_columns, ";", fixed = TRUE))
+  } else character(0)
+  variants <- release_figure_header_variants(unlist(fsd_header_list), wb_display)
+  expect(setequal(fsd_files, names(RELEASE_FIGURE_CSV_HEADERS)) && !length(bad) &&
+           length(wb_display) > 0L && !length(variants),
+         sprintf("every panel source-data file has the pinned headers, with the workbook display header for every workbook quantity%s",
+                 if (length(bad) || length(variants))
+                   paste0(" -- ", paste(c(bad, variants), collapse = ", ")) else ""))
 }
 
 cat("\n=== SDRF ===\n")

@@ -46,7 +46,7 @@ rd <- function(p) read.delim(p, sep = "\t", quote = "", stringsAsFactors = FALSE
                              check.names = FALSE)
 lineage <- rd(lin_path); sw <- rd(sw_path); ap <- rd(ap_path)
 
-cat("=== the locked artefacts still hash as locked ===\n")
+cat("=== the locked artifacts still hash as locked ===\n")
 if (!file.exists(release_locked_artefact_path("animal_level_input_gct", DATA_ROOT))) {
   cat("  [skip]  shared data root unreachable; locked hashes not verified\n")
 } else {
@@ -56,7 +56,7 @@ if (!file.exists(release_locked_artefact_path("animal_level_input_gct", DATA_ROO
            sprintf("%s SHA256 matches the locked value", locked$artefact[i]))
   }
   expect(all(locked$expected_sha256 == locked$observed_sha256),
-         "every locked artefact hash is unchanged")
+         "every locked artifact hash is unchanged")
 }
 
 cat("\n=== the lineage covers the whole chain ===\n")
@@ -74,10 +74,10 @@ expect(length(missing) == 0L,
                if (length(missing)) paste0(" (missing: ", paste(missing, collapse = ", "), ")")
                else ""))
 expect(all(nzchar(lineage$processing_stage)),
-       "every artefact records how it was produced")
-expect(all(nzchar(lineage$analysis_unit)), "every artefact records its analysis unit")
+       "every artifact records how it was produced")
+expect(all(nzchar(lineage$analysis_unit)), "every artifact records its analysis unit")
 expect(all(lineage$canonical %in% c("yes", "no")),
-       "every artefact is marked canonical or not")
+       "every artifact is marked canonical or not")
 em_path <- release_experimenter_metadata_source_path(repo_root)
 protocol_path <- release_sample_preparation_source_path(repo_root)
 expect(any(lineage$artifact_id == "A00_experimenter_metadata" &
@@ -154,7 +154,7 @@ claim_files <- c(
 )
 claim_files <- unique(claim_files[file.exists(claim_files)])
 expect(length(claim_files) > 0L,
-       sprintf("release narrative artefacts are present to audit (%d files)",
+       sprintf("release narrative artifacts are present to audit (%d files)",
                length(claim_files)))
 for (f in claim_files) {
   txt <- paste(readLines(f, warn = FALSE), collapse = "\n")
@@ -215,7 +215,7 @@ if (nrow(usq) == 1L) {
 expect(!any(grepl("DIA-?NN", sw$component, ignore.case = TRUE)),
        "no software component asserts a specific upstream search-software identity")
 expect(!any(grepl("DIA-?NN", lineage$software, ignore.case = TRUE)),
-       "no lineage row attributes an artefact to a specific upstream search software")
+       "no lineage row attributes an artifact to a specific upstream search software")
 
 # Since 2026-11-24 the canonical statistics are limma, one model per sample class; its
 # versions are read from that run's manifest. The ProTigy version of the superseded pooled
@@ -256,7 +256,7 @@ if (nrow(prot_animal) == 1L) {
   expect(nzchar(as.character(prot_animal$evidence_sha256)) &&
            !is.na(prot_animal$evidence_sha256) &&
            as.character(prot_animal$evidence_sha256) != "NONE",
-         "the recovered version cites a hashed evidence artefact")
+         "the recovered version cites a hashed evidence artifact")
 }
 prot_2025 <- sw[grepl("hemisphere-level runs", sw$component, fixed = TRUE), , drop = FALSE]
 if (nrow(prot_2025) == 1L) {

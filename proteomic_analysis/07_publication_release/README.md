@@ -1,7 +1,7 @@
 # Publication release layer
 
-Builds the release package from the validated analysis: editor source data, PRIDE metadata,
-provenance and checksums.
+Builds the release package from the validated analysis: Supplementary Table 2, figure source
+data, PRIDE metadata, provenance and checksums.
 
 This layer computes no statistics. It reads the analysis outputs and repackages them: no model
 is fitted, no enrichment is run, no PCA is recomputed and no P value is adjusted.
@@ -41,8 +41,8 @@ record the locked GCT hash.
 **What changed from the pooled release (2026-09-07).** That release used the ProTigy 2.4.1
 export, one model over all 48 animal-level columns. Effect sizes agree to floating-point
 rounding; t, P, adjusted P, B and AveExpr (now the sample-class mean) differ.
-GO-CC is a primary output again (workbook S17 and S18; S1-S16 keep their numbers); the GO
-gene sets fgsea could not test are S19 (`enrichment/gsea_untested_gene_sets.tsv`). Fig. 2
+GO-CC is a primary output again (tables 2h and 2k of the workbook); the GO gene sets fgsea
+could not test are table 2l (`enrichment/gsea_untested_gene_sets.tsv`). Fig. 2
 D, F, G, H, I and Supp. Fig. 4 F come from the per-compartment figure rebuild, the other
 panels from the 2026-08-27 revision. The pooled release stays frozen in
 `03_output/publication_release`, and the pooled statistics are listed in the secondary
@@ -62,8 +62,9 @@ PROTEOMICS_RELEASE_OUTPUT_ROOT="<that same root>" \
 ```
 
 With no override the release root defaults to
-`S:/…/clusterProfiler/03_output/release_within_compartment_20261125`. The
-pooled-model release in `03_output/publication_release` is frozen and protected. To publish,
+`S:/…/clusterProfiler/03_output/release_within_compartment_20261126`. The earlier
+releases (`03_output/publication_release`, pooled model; `03_output/release_within_compartment_20261125`,
+old workbook layout) are frozen and protected. To publish,
 commit first, then rebuild and validate on the shared drive with
 `PROTEOMICS_RELEASE_ALLOW_SHARED_DRIVE=true`; never copy a scratch build there.
 
@@ -81,7 +82,8 @@ _migration_backup_20260826/
            reviewer_revision_animal_level_20260827,manuscript_curation_20260827,
            figure_rebuild_within_compartment_20261124, figure_rebuild_within_compartment_20261125,
            inferential_checks/within_compartment_20261124,
-           publication_release}            (the frozen pooled-model release)
+           publication_release,                    (the frozen pooled-model release)
+           release_within_compartment_20261125}    (the frozen first per-compartment release)
 ```
 
 `03_output/` is not protected as a whole because the release root lives inside it; the
@@ -101,30 +103,43 @@ holds `sample_annotation.xlsx`, `pg.matrix_raw.txt` and `protein_count.xlsx`.
 
 Each table ships twice:
 
-| Artefact | Names | For |
+| Artifact | Names | For |
 |---|---|---|
 | `*.tsv`, `*.tsv.gz` | machine (`adj.P.Val`, `canonical_comparison`, `mcherry`) | scripts and the data dictionary |
-| `Proteomics_Source_Data_Animal_Level.xlsx` | display (`Adjusted P value (BH)`, `Comparison`, `mCherry`) | editors and reviewers |
+| `Supplementary_Table_2_proteomics.xlsx` | display (`Adjusted P value (BH)`, `Comparison`, `mCherry+`) | readers of the paper |
+
+The workbook is Supplementary Table 2: a Contents sheet, a README, Column definitions and the
+sub-tables 2a–2q (samples, animal profiles, comparisons, significant proteins, all proteins,
+significant gene sets, GSEA, ORA, gene sets without a P value, enrichment settings, EWCE,
+secondary analyses, figure panels, software). It holds what a reader needs; the complete
+tables (the sensitivity GSEA, the alternative ORA list, gene members as identifiers, the
+metadata field status) stay in the release files that the README sheet names.
 
 `R/release_presentation.R` holds the name mapping and the workbook layout rules (no data, no
-statistics):
+statistics); `R/release_dictionary.R` holds the column definitions shared by the data
+dictionary and the Column definitions sheet:
 
-- a column with the same value on every row moves into the sheet caption (five columns on the
-  64,188-row differential sheet); the `.tsv` keeps it, and the inventory lists it under
-  `table_level_constants`;
-- columns run from what identifies the row, to the result, to supporting values, to
-  provenance;
-- number formats follow the values in each column, so a P-value column reaching 1e-30 is shown
-  in scientific notation and one spanning 0.05–1 as a decimal.
+- every sheet has its title on row 1, the caption on row 2 and the header on row 4; row 3
+  ("Applies to every row") holds the values that are the same on every row, either from a
+  constant column that the sheet does not show (the `.tsv` keeps it) or, for 2m, from the run
+  parameters; the inventory lists them under `table_level_constants`;
+- cells show display labels (`mCherry+: paired VEH vs unpaired VEH`); the machine key is
+  kept as the last column, `Comparison key`, so the sheets can still be joined to the `.tsv`
+  files;
+- each sheet lists the columns it shows and the ones it drops, and stage 07 stops on a column
+  that is in neither list or has no definition;
+- number formats follow the values in each column: P values below 0.001 in scientific
+  notation, the rest as decimals; GSEA P values at fgsea's lower bound show as `<=1E-10` and
+  EWCE P values of 0 as `<0.0001`.
 
-Supplementary-table numbers (S1–S19) are set in `RELEASE_SHEET_META`, not taken from sheet
-order, so adding a sheet cannot renumber a table that has already been cited; the GO-CC and
-untested-gene-set sheets were appended as S17–S19 for that reason. Display headers must be
-unique and non-blank, like the machine names, and contain no underscores.
+The sub-table letters are set in `RELEASE_SHEET_META` and pinned for the checks in
+`RELEASE_WORKBOOK_LAYOUT` (`R/release_validation.R`), so they cannot change by accident.
+Display headers must be unique and non-blank, like the machine names, and contain no
+underscores.
 
-Prose and Markdown tables use display names ("cFos: paired-CNO vs paired-VEH", not
-`cfos_paired_cno_over_cfos_paired_veh`); data cells keep the controlled vocabulary because the
-tables are joined on it. `README_DATA.md` lists both.
+Prose and Markdown tables use display names ("c-Fos+: paired CNO vs paired VEH", not
+`cfos_paired_cno_over_cfos_paired_veh`); the `.tsv` files keep the controlled vocabulary
+because the tables are joined on it. `README_DATA.md` lists both.
 
 ## Stages
 
@@ -133,11 +148,11 @@ tables are joined on it. `README_DATA.md` lists both.
 | `01_build_sample_metadata.R` | `metadata/sample_metadata.tsv` (96), `animal_level_sample_metadata.tsv` (48), `metadata_field_provenance.tsv`, `sample_class_corrections.tsv` (6), checked-in experimenter metadata and protocol records |
 | `02_build_contrast_manifest.R` | `metadata/primary_contrast_manifest.tsv` (12), `secondary_analysis_manifest.tsv` |
 | `03_build_processed_data_exports.R` | `processed_data/` abundance matrices and feature annotation |
-| `04_build_differential_results.R` | `differential_analysis/` long-format statistics and summary |
-| `05_build_enrichment_exports.R` | `enrichment/` GSEA, ORA, EWCE, sensitivity, coverage, parameters |
-| `06_build_figure_source_data.R` | `editor_source_data/figure_source_map.tsv` and the copied panel data |
-| `07_build_editor_source_workbook.R` | `editor_source_data/Proteomics_Source_Data_Animal_Level.xlsx` |
-| `08_build_editor_changelog.R` | `editor_source_data/REVISION_PROTEOMICS_DATA_CHANGELOG.md`, `EFFECT_SIZE_TERMINOLOGY_AUDIT.tsv`, `MANUSCRIPT_TERMINOLOGY_ACTIONS.md` |
+| `04_build_differential_results.R` | `differential_analysis/` long-format statistics, summary and `significant_proteins.tsv` |
+| `05_build_enrichment_exports.R` | `enrichment/` GSEA, ORA, EWCE, sensitivity, coverage, parameters, `significant_gene_sets.tsv.gz` and `gsea_untested_gene_sets.tsv` |
+| `06_build_figure_source_data.R` | `editor_source_data/figure_source_data/` (one or two CSVs per panel, with plain headers; the canonical panel files are checked against pinned hashes, not copied) and `provenance/figure_source_map.tsv` |
+| `07_build_editor_source_workbook.R` | `editor_source_data/Supplementary_Table_2_proteomics.xlsx`, `workbook_sheet_inventory.tsv` |
+| `08_build_editor_changelog.R` | `provenance/REVISION_PROTEOMICS_DATA_CHANGELOG.md`, `EFFECT_SIZE_TERMINOLOGY_AUDIT.tsv`, `MANUSCRIPT_TERMINOLOGY_ACTIONS.md` |
 | `09_build_pride_sdrf.R` | `pride/sdrf.tsv`, field status, sample-preparation protocol, missing-metadata and deposition notes |
 | `10_build_provenance.R` | `provenance/` lineage, upstream gap, versions, parameters, sessionInfo |
 | `11_build_readme_and_dictionary.R` | `README_DATA.md`, `metadata/data_dictionary.tsv` |
@@ -208,7 +223,7 @@ release, but it keeps the deposition from being called `PRIDE_READY`.
 
 | Variable | Default |
 |---|---|
-| `PROTEOMICS_RELEASE_OUTPUT_ROOT` | `<data root>/03_output/release_within_compartment_20261125` |
+| `PROTEOMICS_RELEASE_OUTPUT_ROOT` | `<data root>/03_output/release_within_compartment_20261126` |
 | `PROTEOMICS_PROJECT_DATA_ROOT` | `S:/…/Collabs/Neha/clusterProfiler` |
 | `PROTEOMICS_RELEASE_PROJECT_ROOT` | `S:/…/Collabs/Neha` |
 | `PROTEOMICS_RELEASE_RAW_FILE_ROOT` | unset; set it to the store holding the 96 `.d` directories to re-evaluate PRIDE readiness |
@@ -247,7 +262,7 @@ the 96 acquisitions the sample class used in the analysis differs from every ear
 audit found that this was an intentional correction made during sample-identity QC: the left
 hemispheres of C46 and C47 were reassigned in a cycle, `neuropil -> mcherry -> neuron ->
 neuropil`. Only the labels changed. The acquisitions and abundance profiles are the same, and
-the animal-level units were built from the corrected labels, so nothing needs to be reanalysed.
+the animal-level units were built from the corrected labels, so nothing needs to be reanalyzed.
 
 `RELEASE_SAMPLE_CLASS_CORRECTION` in [`R/release_validation.R`](R/release_validation.R) defines
 the correction. Stage 01 re-derives it from three earlier records (the `group_label` column of
@@ -258,16 +273,16 @@ measurements (`original_sample_class`, `analysis_sample_class`, `sample_class_co
 per-row provenance in `metadata/sample_class_corrections.tsv`.
 
 No written note of the reason survives; the correction table is the record, and the release says
-so. UMAP is not treated as ground truth: its nearest-class-centre suggestion agrees with the
+so. UMAP is not treated as ground truth: its nearest-class-center suggestion agrees with the
 applied class for five of the six and differs for N60 (suggested `cfos`, applied `neuron`), so
 the suggestion is released in `umap_nearest_class_suggestion` next to the applied class.
 
-**The effect size is not a log2 fold change.** The analysis matrix is standardised separately
+**The effect size is not a log2 fold change.** The analysis matrix is standardized separately
 for each protein across the measurement-level dataset, so the coefficient the statistics GCT
 stores as `logFC` (limma's name) is a standardized abundance difference in SD units, not a log2
 ratio. `RELEASE_EFFECT_SIZE` holds the definition that the builders and the validator read.
 
-Two phrasings are avoided: "standardised mean difference" on its own, which reads as Cohen's d
+Two phrasings are avoided: "standardized mean difference" on its own, which reads as Cohen's d
 (a pooled within-group SD, not the per-protein SD across the dataset used here); and "z-scored",
 because the released values have two decimals, no row is exactly mean 0 / SD 1, and the step
 that produced the scaling is UNRESOLVED in the lineage. `release_standardization_evidence()`
@@ -280,9 +295,9 @@ Internal names are kept so the link to the analysis run holds:
 time and again by
 [`tests/test_release_effect_size_semantics.R`](tests/test_release_effect_size_semantics.R).
 Every fold-change mention in the released documents is classified in
-`editor_source_data/EFFECT_SIZE_TERMINOLOGY_AUDIT.tsv`; what has to be fixed by hand outside this
+`provenance/EFFECT_SIZE_TERMINOLOGY_AUDIT.tsv`; what has to be fixed by hand outside this
 repository (figure axes, captions, manuscript text) is listed in
-`editor_source_data/MANUSCRIPT_TERMINOLOGY_ACTIONS.md`. That scan reads the built documents, not
+`provenance/MANUSCRIPT_TERMINOLOGY_ACTIONS.md`. That scan reads the built documents, not
 the builder sources, which necessarily contain the terms it classifies.
 
 ## Open item

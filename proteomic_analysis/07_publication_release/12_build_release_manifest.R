@@ -49,8 +49,17 @@ manifest_files <- setdiff(all_files, self_files)
 
 unregistered <- setdiff(manifest_files, registry$relative_path)
 if (length(unregistered)) {
+  # Files of the earlier layout (the workbook before it became Supplementary Table 2, the
+  # verbatim panel copies) are left behind when a release is rebuilt into an old folder.
+  old_layout <- unregistered[grepl("Proteomics_Source_Data_Animal_Level[.]xlsx$", unregistered) |
+                               grepl("^editor_source_data/figure_source_data/.*[.]xlsx$",
+                                     unregistered) |
+                               grepl("animal_level_blank_cells[.]csv$", unregistered)]
   stop("Release files present but not registered by any builder:\n",
-       paste("  -", unregistered, collapse = "\n"), call. = FALSE)
+       paste("  -", unregistered, collapse = "\n"),
+       if (length(old_layout)) paste0("\n", length(old_layout), " of them belong to the earlier",
+                                      " release layout; build into a new folder instead.") else "",
+       call. = FALSE)
 }
 missing <- setdiff(registry$relative_path, all_files)
 if (length(missing)) {

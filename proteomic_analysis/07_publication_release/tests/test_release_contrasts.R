@@ -79,7 +79,7 @@ expect(all(as.integer(pc$n_numerator_animals) == inv$n_animals_per_stratum),
 expect(all(as.integer(pc$n_denominator_animals) == inv$n_animals_per_stratum),
        "3 animals in every denominator arm")
 expect(all(pc$analysis_unit == "animal"), "analysis_unit is animal on every row")
-expect(all(pc$primary_or_secondary == "primary"), "every row is labelled primary")
+expect(all(pc$primary_or_secondary == "primary"), "every row is labeled primary")
 expect(all(pc$gsea_ranking_statistic == "moderated_t"),
        "the recorded GSEA ranking statistic is the moderated t")
 expect(all(pc$statistical_model == RELEASE_PRIMARY_MODEL$label) &&
@@ -111,7 +111,7 @@ expect(all(grepl("collection.plate", learning)),
 cat("\n=== secondary analyses are separated ===\n")
 expect(nrow(sec) > 0L, sprintf("secondary manifest is populated (%d entries)", nrow(sec)))
 expect(all(sec$primary_or_secondary == "secondary"),
-       "every secondary row is labelled secondary")
+       "every secondary row is labeled secondary")
 expect(all(toupper(sec$included_in_primary_contrast_manifest) == "FALSE"),
        "no secondary analysis claims membership of the primary manifest")
 expect(!any(sec$analysis_id %in% pc$canonical_comparison),
