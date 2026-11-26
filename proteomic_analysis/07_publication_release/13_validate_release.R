@@ -1390,11 +1390,15 @@ expect("pride", "the full sample-preparation protocol is published",
                     "95 degrees C", "4 ng Lys-C per sample", "6 ng trypsin per sample",
                     "TFA to 1%", "SpeedVac", "Evotip", "4.2 uL A buffer"),
                   function(x) grepl(x, protocol_txt, fixed = TRUE), logical(1))))
+expect("pride", "developmental stage comes from the experimenter record, the same for every sample",
+       all(sdrf_v[["characteristics[developmental stage]"]] ==
+             release_metadata_value(experimenter_metadata, "developmental_stage", TRUE)) &&
+         release_metadata_value(experimenter_metadata, "developmental_stage") == "adult" &&
+         any(fs$sdrf_field == "characteristics[developmental stage]" & fs$status == "READY"))
 expect("pride", "remaining required SDRF gaps are exact and evidence-backed",
        setequal(fs$sdrf_field[fs$status == "MISSING_REQUIRED_METADATA" &
                                 fs$sdrf_field %in% names(sdrf_v)],
-                c("characteristics[developmental stage]", "comment[instrument]",
-                  "comment[proteomics data acquisition method]")))
+                c("comment[instrument]", "comment[proteomics data acquisition method]")))
 expect("pride", "externally held raw acquisition directories remain a separate blocker",
        any(fs$sdrf_field == "raw acquisition FILES (not an SDRF column)" &
              fs$status == "MISSING_REQUIRED_METADATA"))

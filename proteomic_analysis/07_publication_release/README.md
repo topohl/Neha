@@ -26,7 +26,7 @@ describe the run, and builders, tests and documents read them from there:
   with its `split/` and `mapped/` tables, the GO-BP and GO-CC enrichment
   `03_output/enrichment/enrichment_within_compartment_20261125/{GO_BP,GO_CC}`, the KEGG
   enrichment in the `GO_BP/` folder of `enrichment_within_compartment_20261124`, the figure
-  rebuild `03_output/figure_rebuild_within_compartment_20261125` and the per-compartment
+  rebuild `03_output/figure_rebuild_within_compartment_20261126` and the per-compartment
   inferential checks. `release_enrichment_permutations()` reads the permutation settings from
   the runs and returns the sentence the documents quote.
 - `RELEASE_PRIMARY_MODEL` (`R/release_validation.R`) says what was fitted. The limma and R
@@ -62,9 +62,10 @@ PROTEOMICS_RELEASE_OUTPUT_ROOT="<that same root>" \
 ```
 
 With no override the release root defaults to
-`S:/…/clusterProfiler/03_output/release_within_compartment_20261126`. The earlier
+`S:/…/clusterProfiler/03_output/release_within_compartment_20261126b`. The earlier
 releases (`03_output/publication_release`, pooled model; `03_output/release_within_compartment_20261125`,
-old workbook layout) are frozen and protected. To publish,
+old workbook layout; `03_output/release_within_compartment_20261126`, figures from the 2026-11-25
+rebuild) are frozen and protected. To publish,
 commit first, then rebuild and validate on the shared drive with
 `PROTEOMICS_RELEASE_ALLOW_SHARED_DRIVE=true`; never copy a scratch build there.
 
@@ -81,9 +82,11 @@ _migration_backup_20260826/
 03_output/{enrichment,ewce,pca,synthesis,inferential_checks,qc,
            reviewer_revision_animal_level_20260827,manuscript_curation_20260827,
            figure_rebuild_within_compartment_20261124, figure_rebuild_within_compartment_20261125,
+           figure_rebuild_within_compartment_20261126,
            inferential_checks/within_compartment_20261124,
            publication_release,                    (the frozen pooled-model release)
-           release_within_compartment_20261125}    (the frozen first per-compartment release)
+           release_within_compartment_20261125,    (the frozen earlier per-compartment releases)
+           release_within_compartment_20261126}
 ```
 
 `03_output/` is not protected as a whole because the release root lives inside it; the
@@ -223,7 +226,7 @@ release, but it keeps the deposition from being called `PRIDE_READY`.
 
 | Variable | Default |
 |---|---|
-| `PROTEOMICS_RELEASE_OUTPUT_ROOT` | `<data root>/03_output/release_within_compartment_20261126` |
+| `PROTEOMICS_RELEASE_OUTPUT_ROOT` | `<data root>/03_output/release_within_compartment_20261126b` |
 | `PROTEOMICS_PROJECT_DATA_ROOT` | `S:/…/Collabs/Neha/clusterProfiler` |
 | `PROTEOMICS_RELEASE_PROJECT_ROOT` | `S:/…/Collabs/Neha` |
 | `PROTEOMICS_RELEASE_RAW_FILE_ROOT` | unset; set it to the store holding the 96 `.d` directories to re-evaluate PRIDE readiness |
@@ -303,10 +306,10 @@ the builder sources, which necessarily contain the terms it classifies.
 ## Open item
 
 The PRIDE deposition is `PRIDE_METADATA_INCOMPLETE` because metadata are missing, not because of
-formatting. Instrument model, acquisition mode and developmental stage are required and
-unresolved; search-software version, modification parameters, mass tolerances, AnimalID-level
+formatting. Instrument model and acquisition mode are required and unresolved; search-software version, modification parameters, mass tolerances, AnimalID-level
 sex and age at tissue collection are also unknown. The 96 `.d` acquisition files are known by
 name but held elsewhere. `pride/SDRF_MISSING_METADATA.md` lists what is missing and what would
 supply it. The checked-in records in `metadata/` resolve CeM, the C57BL/6J cohort, the
+developmental stage (adult, EFO:0001272; mice aged 7-10 weeks, manuscript Methods), the
 marker-defined LCM classes, label-free status and the 2024-11-28 Lys-C/trypsin preparation
 protocol.

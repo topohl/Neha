@@ -47,6 +47,11 @@ expect(release_metadata_value(metadata, "age_at_experiment_start") == "7-10 week
        "age at experiment start is distinct from age at tissue collection")
 expect(release_metadata_value(metadata, "search_modification_parameters") == "not available",
        "CAA/TCEP use does not fill search modification settings")
+dev_stage <- release_metadata_row(metadata, "developmental_stage")
+expect(dev_stage$value == "adult" && dev_stage$sdrf_value == "NT=adult;AC=EFO:0001272" &&
+         dev_stage$status == "KNOWN_VERIFIED" && grepl("^manuscript Methods: ", dev_stage$evidence_source) &&
+         grepl("^[0-9]{4}-[0-9]{2}-[0-9]{2}$", dev_stage$evidence_date),
+       "developmental stage is adult (EFO:0001272), verified from the manuscript Methods")
 
 out_root <- release_output_root()
 sdrf_path <- file.path(out_root, "pride", "sdrf.tsv")
@@ -99,11 +104,15 @@ if (!file.exists(sdrf_path)) {
            all(sdrf[["comment[instrument]"]] == "not available") &&
            all(sdrf[["comment[proteomics data acquisition method]"]] == "not available"),
          "search modifications, instrument and acquisition mode remain unresolved")
+  expect(all(sdrf[["characteristics[developmental stage]"]] ==
+               release_metadata_value(metadata, "developmental_stage", TRUE)) &&
+           any(field_status$sdrf_field == "characteristics[developmental stage]" &
+                 field_status$status == "READY"),
+         "the developmental stage reaches every SDRF row from the experimenter record")
   expect(setequal(field_status$sdrf_field[
                     field_status$status == "MISSING_REQUIRED_METADATA" &
                       field_status$sdrf_field %in% names(sdrf)],
-                  c("characteristics[developmental stage]", "comment[instrument]",
-                    "comment[proteomics data acquisition method]")),
+                  c("comment[instrument]", "comment[proteomics data acquisition method]")),
          "the remaining required-field gap is exact")
 
   protocol_text <- paste(readLines(file.path(out_root, "pride",

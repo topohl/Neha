@@ -1,8 +1,9 @@
 # Manuscript figure revision (animal-level correction, 2026-08-27)
 
 The scripts that regenerated the manuscript proteomics figures after the statistical unit was
-changed from hemisphere to animal: 20 scripts, about 3,600 lines. `within_compartment_20261124/`
-and `within_compartment_20261125/` hold the later per-compartment rebuilds (see below).
+changed from hemisphere to animal: 20 scripts, about 3,600 lines. `within_compartment_20261124/`,
+`within_compartment_20261125/` and `within_compartment_20261126/` hold the later per-compartment
+rebuilds (see below).
 
 Script and panel names use the 2026-08 figure numbering: Fig 3 here is Fig. 2 in the current
 manuscript, and Supp A–F are Supp. Fig. 4 A–F.
@@ -125,15 +126,17 @@ not one of the 12 primary within-compartment contrasts. Its outputs are isolated
 and it writes nothing into `02_data/animal_level/`, `03_output/enrichment/`, `03_output/ewce/` or
 `03_output/pca/`. All ten of its validation checks are recorded in `SuppE_validation.csv`.
 
-## Per-compartment rebuilds (2026-11-24 and 2026-11-25)
+## Per-compartment rebuilds (2026-11-24 to 2026-11-26)
 
-`within_compartment_20261124/` and `within_compartment_20261125/` are copies of the `scripts/`
-folders of `03_output/figure_rebuild_within_compartment_20261124/` and
-`03_output/figure_rebuild_within_compartment_20261125/` on the shared drive: the scripts above,
+`within_compartment_20261124/`, `within_compartment_20261125/` and `within_compartment_20261126/`
+are copies of the `scripts/` folders of the matching `03_output/figure_rebuild_within_compartment_*/`
+folders on the shared drive: the scripts above,
 re-pointed at the rebuild folder and the per-compartment statistics, plus
 `16b_final_Fig3G_gsea_lollipop.R`, which draws panel G as a GSEA lollipop in place of
-`16_final_Fig3G_lollipop.R`. The 2026-11-25 rebuild is current; the 2026-11-24 rebuild is
-superseded. The outputs are listed in `../CANONICAL_OUTPUTS.md`.
+`16_final_Fig3G_lollipop.R`. The 2026-11-26 rebuild is current; it differs from 2026-11-25 only
+in showing gene sets with identical members once (Fig. 2 I: 66 columns instead of 70; Supp.
+Fig. 4 F: 38 terms instead of 39; `identical_member_sets()` in `00_common.R`). The 2026-11-24 and
+2026-11-25 rebuilds are superseded. The outputs are listed in `../CANONICAL_OUTPUTS.md`.
 
 Only part of each folder ran:
 
@@ -145,7 +148,7 @@ Only part of each folder ran:
 
 Do not run the copied-only scripts. Their panels do not use the changed statistics, `16` is
 replaced by `16b`, `19` would rewrite panel manifests, and all of them would write into the
-rebuild folder on the shared drive. `within_compartment_20261125/run_rebuild.sh` runs the set
+rebuild folder on the shared drive. `within_compartment_20261126/run_rebuild.sh` runs the set
 above. The `notes` column of `SCRIPT_PROVENANCE.csv` records, per script, whether it ran and
 what changed. The copies keep the paths they ran with: `00_common.R` sets `REPO_ROOT` to the
 local checkout, and `run_rebuild.sh` calls a fixed Windows Rscript path and `powershell.exe`.

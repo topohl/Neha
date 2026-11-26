@@ -114,7 +114,7 @@ Each stops with an error that names the missing file and the variable that sets 
 
 ### Figure scripts
 
-`06_manuscript_figure_revision/` holds byte-identical copies of the figure scripts that were run from the shared drive, including the per-compartment rebuilds (`within_compartment_20261125/` is current; `run_rebuild.sh` runs it). They still read and write shared-drive paths, so keep them as a record and do not edit them: `SCRIPT_PROVENANCE.csv` holds the SHA-256 of each copy and of the script that ran. See its [README](06_manuscript_figure_revision/README.md).
+`06_manuscript_figure_revision/` holds byte-identical copies of the figure scripts that were run from the shared drive, including the per-compartment rebuilds (`within_compartment_20261126/` is current; `run_rebuild.sh` runs it). They still read and write shared-drive paths, so keep them as a record and do not edit them: `SCRIPT_PROVENANCE.csv` holds the SHA-256 of each copy and of the script that ran. See its [README](06_manuscript_figure_revision/README.md).
 
 ## Data on the shared drive
 
@@ -176,7 +176,7 @@ PROTEOMICS_RELEASE_OUTPUT_ROOT="<same root>" \
   Rscript 07_publication_release/13_validate_release.R
 ```
 
-Without the variable the release goes to `03_output/release_within_compartment_20261126/` on the shared drive. That needs `PROTEOMICS_RELEASE_ALLOW_SHARED_DRIVE=true` and a clean git tree, because the release records the commit that built it. The output folder may not overlap `01_input/`, `02_data/`, `99_historical/`, the analysis folders in `03_output/` or the frozen earlier releases (`03_output/publication_release/`, `03_output/release_within_compartment_20261125/`). The C46/C47 sample-class correction, the effect-size columns and the PRIDE metadata that is still missing are described in [`07_publication_release/README.md`](07_publication_release/README.md).
+Without the variable the release goes to `03_output/release_within_compartment_20261126b/` on the shared drive. That needs `PROTEOMICS_RELEASE_ALLOW_SHARED_DRIVE=true` and a clean git tree, because the release records the commit that built it. The output folder may not overlap `01_input/`, `02_data/`, `99_historical/`, the analysis folders in `03_output/` or the frozen earlier releases (`03_output/publication_release/`, `03_output/release_within_compartment_20261125/`, `03_output/release_within_compartment_20261126/`). The C46/C47 sample-class correction, the effect-size columns and the PRIDE metadata that is still missing are described in [`07_publication_release/README.md`](07_publication_release/README.md).
 
 ## License and citation
 

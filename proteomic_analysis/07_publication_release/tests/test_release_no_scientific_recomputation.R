@@ -103,11 +103,17 @@ for (p in c(file.path(data_root, "02_data", "animal_level", "input_gct"),
 }
 accepted <- !inherits(tryCatch(
   release_validate_output_root(file.path(data_root, "03_output",
-                                         "release_within_compartment_20261126"),
+                                         "release_within_compartment_20261126b"),
                                data_root),
   error = function(e) e), "error")
 expect(accepted,
-       "accepts the intended release root 03_output/release_within_compartment_20261126")
+       "accepts the intended release root 03_output/release_within_compartment_20261126b")
+saved_out_root <- Sys.getenv("PROTEOMICS_RELEASE_OUTPUT_ROOT", unset = NA)
+Sys.unsetenv("PROTEOMICS_RELEASE_OUTPUT_ROOT")
+default_root <- release_output_root()
+if (!is.na(saved_out_root)) Sys.setenv(PROTEOMICS_RELEASE_OUTPUT_ROOT = saved_out_root)
+expect(identical(basename(default_root), "release_within_compartment_20261126b"),
+       "the default release root is 03_output/release_within_compartment_20261126b")
 frozen_rejected <- inherits(tryCatch(
   release_validate_output_root(file.path(data_root, "03_output", "publication_release"),
                                data_root),
@@ -120,6 +126,21 @@ first_rejected <- inherits(tryCatch(
   error = function(e) e), "error")
 expect(first_rejected,
        "rejects the frozen first per-compartment release root 03_output/release_within_compartment_20261125")
+second_rejected <- inherits(tryCatch(
+  release_validate_output_root(file.path(data_root, "03_output",
+                                         "release_within_compartment_20261126"),
+                               data_root),
+  error = function(e) e), "error")
+expect(second_rejected,
+       "rejects the frozen second per-compartment release root 03_output/release_within_compartment_20261126")
+for (rebuild in c("figure_rebuild_within_compartment_20261124",
+                  "figure_rebuild_within_compartment_20261125",
+                  "figure_rebuild_within_compartment_20261126")) {
+  rebuild_rejected <- inherits(tryCatch(
+    release_validate_output_root(file.path(data_root, "03_output", rebuild), data_root),
+    error = function(e) e), "error")
+  expect(rebuild_rejected, paste0("rejects the figure rebuild root 03_output/", rebuild))
+}
 accepted_scratch <- !inherits(tryCatch(
   release_validate_output_root(tempdir(), data_root), error = function(e) e), "error")
 expect(accepted_scratch, "accepts a scratch root")
@@ -130,7 +151,7 @@ cat("\n=== writing to the shared drive requires an explicit opt-in ===\n")
 # and its existence must not make this write-guard fixture stateful or destructive.
 guard_data_root <- tempfile("amp_release_shared_guard_")
 shared_root <- file.path(guard_data_root, "03_output",
-                         "release_within_compartment_20261126")
+                         "release_within_compartment_20261126b")
 saved <- Sys.getenv("PROTEOMICS_RELEASE_ALLOW_SHARED_DRIVE", unset = NA)
 Sys.unsetenv("PROTEOMICS_RELEASE_ALLOW_SHARED_DRIVE")
 blocked <- inherits(tryCatch(release_prepare_output_root(shared_root, guard_data_root),

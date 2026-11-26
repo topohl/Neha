@@ -28,13 +28,17 @@
 #     (generating_script, final_revision_script).
 #   * Fig. 2 D, F, G, H, I and Supp. Fig. 4 F (keys Figure3 D/F/G/H/I and
 #     Supplementary_proteomics F) were rebuilt on the per-compartment statistics, last on
-#     2026-11-25 in 03_output/figure_rebuild_within_compartment_20261125 (GO GSEA at fgsea
+#     2026-11-26 in 03_output/figure_rebuild_within_compartment_20261126 (GO GSEA at fgsea
 #     nPermSimple = 100000, KEGG unchanged). REBUILT_PANELS overrides the manifest for these
 #     six; the rebuild has no manifest, so their numbers and notes are read from its
 #     source-data and audit files. G is now a GSEA lollipop of GO-BP and GO-CC terms instead
 #     of ORA. Changes of 2026-11-25: G rows ordered by adjusted P within each ontology,
 #     Supp. Fig. 4 F with all four sample classes, I with one column per term and sample
-#     class, D and H axes in SD units. The 2026-11-24 rebuild is superseded.
+#     class, D and H axes in SD units. Change of 2026-11-26: in I and Supp. Fig. 4 F, gene
+#     sets with identical members among the ranked proteins are shown once, under the
+#     shorter term name; the sets not drawn are read from the rebuild's identical-set
+#     tables. D, F, G and H source data are byte-identical to 2026-11-25. The 2026-11-24 and
+#     2026-11-25 rebuilds are superseded.
 #
 # panel_label and the released file names use the manuscript numbering (Figure 2,
 # Supplementary Figure 4: Fig2D_source_data.csv, SuppFig4F_source_data.csv). Internal keys
@@ -68,8 +72,9 @@ REBUILD_REL <- paste(RELEASE_STATISTICS_RUN$figure_rebuild_relative, collapse = 
 STATS_REL <- paste(RELEASE_STATISTICS_RUN$stats_relative, collapse = "/")
 ENRICH_REL <- paste(RELEASE_STATISTICS_RUN$enrichment_relative, collapse = "/")
 # generation_pass of the current rebuild in SCRIPT_PROVENANCE.csv; earlier rebuild passes
-# ("within_compartment_rebuild", 2026-11-24) are superseded and map no panel.
-REBUILD_PASS <- "within_compartment_rebuild_20261125"
+# ("within_compartment_rebuild" of 2026-11-24, "within_compartment_rebuild_20261125") are
+# superseded and map no panel.
+REBUILD_PASS <- RELEASE_STATISTICS_RUN$figure_rebuild_pass
 REBUILD_STYLE <- "figure_panels_style_matched/Figure3"
 
 paths <- list(
@@ -83,6 +88,11 @@ paths <- list(
   rebuild_record = release_figure_rebuild_record(DATA_ROOT),
   fig_h_audit = file.path(REBUILD_ROOT, REBUILD_STYLE, "Fig3H_interpretation_audit.csv"),
   fig_i_audit = file.path(REBUILD_ROOT, REBUILD_STYLE, "Fig3I_interpretation_audit.csv"),
+  # Gene sets with identical members among the ranked proteins, shown once (2026-11-26).
+  fig_i_identical = file.path(REBUILD_ROOT, "full_regenerated", "enrichment",
+                              "Fig3I_identical_sets_dropped.csv"),
+  supp_f_identical = file.path(REBUILD_ROOT, "full_regenerated", "enrichment",
+                               "Fig3F_SuppF_identical_sets.csv"),
   enrichment_index = file.path(release_enrichment_root("GO_BP", DATA_ROOT),
                                "indexEnrichmentComparisons.csv"),
   ora_learning_up = file.path(release_enrichment_root("GO_BP", DATA_ROOT), "per_comparison",
@@ -138,9 +148,9 @@ parse_panel_refs <- function(reference) {
 
 # Script names are given relative to 06_manuscript_figure_revision/, so the 2026-08-27
 # scripts read as before (e.g. 17_final_Fig3H_Fig3I.R) and the per-compartment rebuild
-# copies as within_compartment_20261125/<script>. The generations are mapped separately:
+# copies as within_compartment_20261126/<script>. The generations are mapped separately:
 # a rebuilt panel's script comes only from the current rebuild's rows, and the superseded
-# 2026-11-24 rebuild maps no panel.
+# 2026-11-24 and 2026-11-25 rebuilds map no panel.
 snapshot_name <- function(p) sub("^06_manuscript_figure_revision/", "", as.character(p))
 is_rebuild_row <- as.character(provenance$generation_pass) == REBUILD_PASS
 is_superseded_rebuild <- startsWith(as.character(provenance$generation_pass),
@@ -335,13 +345,16 @@ panel_unit <- function(key, manifest_unit) {
 }
 
 # --------------------------------------------------------------------------------------
-# panels rebuilt on the per-compartment statistics (2026-11-24; again 2026-11-25)
+# panels rebuilt on the per-compartment statistics (2026-11-24; again 2026-11-25 and
+# 2026-11-26)
 # --------------------------------------------------------------------------------------
 # Source data pinned by hash: a later regeneration of the rebuild folder must fail here
 # rather than be published unnoticed. A panel may have more than one file (G also publishes
 # the terms skipped as redundant, Supp. F the cells left blank because fgsea could not test
 # the set); paths and hashes are then ";"-separated, in order. D and H do not use the GO
-# enrichment, so their source data are byte-identical to the 2026-11-24 rebuild's.
+# enrichment, so their source data are byte-identical to the 2026-11-24 rebuild's. The
+# 2026-11-26 rebuild changed only the I and Supp. F source data (gene sets with identical
+# members shown once); the other pins are those of 2026-11-25.
 
 REBUILT_PANELS <- data.frame(
   key = c("Figure3|D", "Figure3|F", "Figure3|G", "Figure3|H", "Figure3|I",
@@ -362,8 +375,8 @@ REBUILT_PANELS <- data.frame(
     paste("e263647698b563f027367304116c6ebdfd49baa87766aabe13527880d1f08758",
           "3dd2c0e0ac90975581d8fff01de90c9eacf6a815fb2f8ea99b9e69fcd8e7b5b5", sep = ";"),
     "f56893b79a6a0e26d0776e3c2e4b5eb4ebd3578e6e7f2fa726155dff6d683bd5",
-    "72ac22401f8340ded04f4a01da1a0d649325b1e5931b05ffc6c81d37328d3286",
-    paste("5bbd23918ff8c5664d68609e7d925f8bf9d6e24a5454a96314f13273774f96ca",
+    "e910569a6e64b1fb917c4a0fc50d2f3707f4dff27a59aff0f17bf25a4678695f",
+    paste("cf667b9c96815bfd42d9d3189004d2db563275a5340ed648a1a955113b8b4b79",
           "7d737ae3cee2e99cafcf8a55f5b8eb10fcd6acae5ef19f713548bf50c4f59ada", sep = ";")),
   status = c("REBUILT_WITHIN_COMPARTMENT", "REBUILT_WITHIN_COMPARTMENT",
              "REBUILT_WITHIN_COMPARTMENT_GSEA_REPLACES_ORA",
@@ -490,6 +503,34 @@ untested_sentence <- function(families, ontologies = "GO_BP", classes = NULL) {
          " absent from its GSEA results rather than non-significant (", blocks, " sets). ",
          permutations$sentence)
 }
+# Gene sets with identical members among the ranked proteins are drawn once, under the
+# shorter term name (I and Supp. F, 2026-11-26). The sets not drawn are read from the
+# rebuild's identical-set tables; each must be absent from the panel's source data and the
+# set it duplicates present, in the same sample class.
+IDENTICAL_RULE <- paste("gene sets with identical members among the ranked proteins are",
+                        "shown once, under the shorter term name")
+identical_dropped <- function(path, panel = NULL) {
+  d <- release_read_csv(path)
+  need <- c("comparison", "sample_class", "ID", "Description", "n_members", "kept_ID",
+            "kept_Description", "dropped", if (!is.null(panel)) "panel")
+  if (!all(need %in% names(d))) {
+    stop("Identical-set table lacks column(s): ", paste(setdiff(need, names(d)), collapse = ", "),
+         " (", basename(path), ")", call. = FALSE)
+  }
+  if (!is.null(panel)) d <- d[as.character(d$panel) == panel, , drop = FALSE]
+  d <- d[toupper(as.character(d$dropped)) == "TRUE", , drop = FALSE]
+  if (any(d$ID == d$kept_ID) ||
+      any(nchar(d$Description) < nchar(d$kept_Description))) {
+    stop("Identical-set table drops a set it keeps, or keeps the longer name (",
+         basename(path), ").", call. = FALSE)
+  }
+  d
+}
+identical_pairs_text <- function(d) {
+  p <- unique(d[c("ID", "Description", "kept_ID", "kept_Description", "n_members")])
+  paste0(p$Description, " (", p$ID, ") has the same ", p$n_members, " proteins as ",
+         p$kept_Description, " (", p$kept_ID, ")", collapse = "; ")
+}
 fmt_r <- function(x) sprintf("%+.2f", as.numeric(x))
 audit_value <- function(audit, item) {
   v <- audit$value[audit$item == item]
@@ -525,6 +566,18 @@ s_key <- paste0("FDR<0.05 GO-BP terms per column: ", by_class_text(s_counts[s_sh
                          ")") else "",
                 "; ", length(unique(s_src$ID)), " distinct terms plotted")
 s_blank <- rebuilt_csv("Supplementary_proteomics|F", 2L)
+s_identical <- identical_dropped(paths$supp_f_identical, panel = "Supplementary F")
+if (nrow(s_identical)) {
+  s_cell <- paste(s_src$canonical_contrast, s_src$ID, sep = "\r")
+  if (any(paste(s_identical$comparison, s_identical$ID, sep = "\r") %in% s_cell) ||
+      !all(paste(s_identical$comparison, s_identical$kept_ID, sep = "\r") %in% s_cell)) {
+    stop("Supp. Fig. 4 F source data disagree with its identical-set table.", call. = FALSE)
+  }
+}
+s_identical_sentence <- if (nrow(s_identical)) paste0(
+  "Gene sets with identical members among the ranked proteins are shown once, under the",
+  " shorter term name: ", identical_pairs_text(s_identical), ", so ",
+  if (length(unique(s_identical$ID)) == 1L) "it is" else "they are", " not drawn. ") else ""
 s_note <- paste0("GSEA GO-BP ranked by the moderated t, paired CNO vs paired VEH. ",
                  if (nrow(s_blank)) paste0(
                    nrow(s_blank), " cell", if (nrow(s_blank) > 1L) "s are" else " is",
@@ -532,7 +585,10 @@ s_note <- paste0("GSEA GO-BP ranked by the moderated t, paired CNO vs paired VEH
                    paste0(release_sample_class_display(s_blank$sample_class), ": ",
                           s_blank$Description, collapse = "; "),
                    "); they are listed in the panel's second source-data file. ") else "",
+                 s_identical_sentence,
                  untested_sentence("paired_cno_vs_paired_veh", "GO_BP", s_shown))
+PANEL_ROW_FILTER[["Supplementary_proteomics|F"]] <- paste0(
+  PANEL_ROW_FILTER[["Supplementary_proteomics|F"]], "; ", IDENTICAL_RULE)
 
 # Fig. 2 G: GSEA lollipop of GO-BP and GO-CC terms; it replaced an ORA lollipop.
 g_src <- rebuilt_csv("Figure3|G", 1L)
@@ -619,6 +675,28 @@ i_key <- paste0(nrow(i_terms), " overlapping FDR terms: ",
                 if (length(i_conc_classes))
                   paste0(" (", paste(release_sample_class_display(i_conc_classes),
                                      collapse = ", "), ")") else "")
+# Columns not drawn because their gene set has the same members as a drawn one.
+i_identical <- identical_dropped(paths$fig_i_identical)
+i_drop_rule <- regmatches(audit_value(i_audit, "term_selection_rule"),
+                          regexec("\\(([0-9]+) columns? dropped\\)",
+                                  audit_value(i_audit, "term_selection_rule")))[[1]]
+if (nrow(i_identical)) {
+  if (length(i_drop_rule) != 2L || as.integer(i_drop_rule[[2]]) != nrow(i_identical) ||
+      any(paste(i_identical$sample_class, i_identical$Description, sep = "\r") %in% i_key_cols) ||
+      !all(paste(i_identical$sample_class, i_identical$kept_Description, sep = "\r") %in%
+             i_key_cols)) {
+    stop("Fig. 2 I source data, its audit and its identical-set table disagree.", call. = FALSE)
+  }
+}
+i_drop_by_class <- table(factor(i_identical$sample_class,
+                                levels = intersect(unique(as.character(i_src$sample_class)),
+                                                   unique(i_identical$sample_class))))
+i_identical_sentence <- if (nrow(i_identical)) paste0(
+  "Gene sets with identical members among the ranked proteins are shown once, under the",
+  " shorter term name, so ", nrow(i_identical), " column",
+  if (nrow(i_identical) == 1L) " is" else "s are", " not drawn (",
+  by_class_text(stats::setNames(as.integer(i_drop_by_class), names(i_drop_by_class))), "): ",
+  identical_pairs_text(i_identical), ". ") else ""
 i_note <- paste0(
   "Row 1 (paired_veh / unpaired_veh) and row 2 (paired_cno / paired_veh) share paired_veh on",
   " OPPOSITE sides. Of the ", nrow(i_terms), " terms FDR-significant in both rows within a",
@@ -630,8 +708,13 @@ i_note <- paste0(
              " concordant terms are in ",
            paste(release_sample_class_display(i_conc_classes), collapse = ", ")) else "",
   ". The opposition cannot be read as proof that CNO reverses a pairing-associated program. ",
+  i_identical_sentence,
   untested_sentence(c("paired_veh_vs_unpaired_veh", "paired_cno_vs_paired_veh"), "GO_BP",
                     unique(as.character(i_src$sample_class))))
+PANEL_ROW_FILTER[["Figure3|I"]] <- paste0(
+  PANEL_ROW_FILTER[["Figure3|I"]], "; ", IDENTICAL_RULE,
+  if (nrow(i_identical)) paste0(" (", nrow(i_identical), " column",
+                                if (nrow(i_identical) == 1L) "" else "s", " not drawn)") else "")
 
 REBUILT_PANELS$key_numbers <- c(d_key, f_key, g_key, h_key, i_key, s_key)
 PANEL_NOTE[["Figure3|F"]] <- f_note
@@ -1388,8 +1471,8 @@ if (length(a_row) == 1L && !is.null(supp_a_out)) {
 
 sources <- c(paths$regenerated, paths$original_map, paths$script_provenance,
              paths$retained_report, paths$rebuild_record, paths$fig_h_audit,
-             paths$fig_i_audit, paths$enrichment_index, paths$ora_learning_up,
-             paths$ora_learning_up_cc)
+             paths$fig_i_audit, paths$fig_i_identical, paths$supp_f_identical,
+             paths$enrichment_index, paths$ora_learning_up, paths$ora_learning_up_cc)
 hashes <- vapply(sources, release_sha256, character(1), USE.NAMES = FALSE)
 
 w <- release_write_table(figure_map,

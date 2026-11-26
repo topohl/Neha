@@ -97,8 +97,9 @@ retained_report <- file.path(REVISION_ROOT, "manifests",
 final_report <- file.path(REVISION_ROOT, "manifests", "FINAL_REPORT.md")
 
 # Fig. 2 D, F, G, H, I and Supp. Fig. 4 F were rebuilt on the per-sample-class statistics
-# (2026-11-25, on the nPermSimple = 100000 GO enrichment). Their numbers are read from the
-# rebuild's audit and source-data files; its run script is the record of the rebuild.
+# (2026-11-25, on the nPermSimple = 100000 GO enrichment; again 2026-11-26, showing gene sets
+# with identical members once in I and Supp. F). Their numbers are read from the rebuild's
+# audit, source-data and identical-set files; its run script is the record of the rebuild.
 REBUILD_ROOT <- release_figure_rebuild_root(DATA_ROOT)
 REBUILD_REL <- paste(RELEASE_STATISTICS_RUN$figure_rebuild_relative, collapse = "/")
 REBUILD_FIG <- file.path(REBUILD_ROOT, "figure_panels_style_matched", "Figure3")
@@ -108,10 +109,23 @@ fig_f_src_path <- file.path(REBUILD_FIG,
 fig_g_src_path <- file.path(REBUILD_FIG, "Fig3G_source_data.csv")
 fig_h_audit_path <- file.path(REBUILD_FIG, "Fig3H_interpretation_audit.csv")
 fig_i_audit_path <- file.path(REBUILD_FIG, "Fig3I_interpretation_audit.csv")
+fig_i_identical_path <- file.path(REBUILD_ROOT, "full_regenerated", "enrichment",
+                                  "Fig3I_identical_sets_dropped.csv")
+supp_f_identical_path <- file.path(REBUILD_ROOT, "full_regenerated", "enrichment",
+                                   "Fig3F_SuppF_identical_sets.csv")
 for (p in c(retained_report, final_report, rebuild_record, fig_f_src_path, fig_g_src_path,
-            fig_h_audit_path, fig_i_audit_path)) {
+            fig_h_audit_path, fig_i_audit_path, fig_i_identical_path, supp_f_identical_path)) {
   release_assert_exists(p, basename(p))
 }
+# Gene sets with identical members among the ranked proteins, shown once since 2026-11-26.
+is_dropped <- function(d) toupper(as.character(d$dropped)) == "TRUE"
+fig_i_identical <- release_read_csv(fig_i_identical_path)
+fig_i_identical <- fig_i_identical[is_dropped(fig_i_identical), , drop = FALSE]
+supp_f_identical <- release_read_csv(supp_f_identical_path)
+supp_f_identical <- supp_f_identical[is_dropped(supp_f_identical) &
+                                       supp_f_identical$panel == "Supplementary F", , drop = FALSE]
+n_i_identical <- nrow(fig_i_identical)
+n_sf_identical <- length(unique(supp_f_identical$ID))
 audit_value <- function(path, item) {
   a <- release_read_csv(path)
   v <- as.character(a$value[a$item == item])
@@ -390,8 +404,26 @@ supp_prefix <- sub(" A$", "", LBL$SA)   # e.g. "Supp. Fig. 4"
 # The sample classes Supp. Fig. 4 F shows, from its released source data (it omits one).
 sf_row <- figure_map[figure_map$figure == "Supplementary_proteomics" & figure_map$panel == "F", ,
                      drop = FALSE]
-sf_classes <- unique(as.character(release_read_csv(
-  strsplit(sf_row$panel_source_data_canonical_path, ";", fixed = TRUE)[[1]][[1]])$sample_class))
+sf_src <- release_read_csv(
+  strsplit(sf_row$panel_source_data_canonical_path, ";", fixed = TRUE)[[1]][[1]])
+sf_classes <- unique(as.character(sf_src$sample_class))
+sf_n_terms <- length(unique(sf_src$ID))
+# Gene sets with identical members, for the legend guidance and the superseded-files table.
+identical_legend <- function(n, what) {
+  if (n == 0L) return("")
+  paste0(" Say that gene sets with identical members among the ranked proteins are shown",
+         " once, under the shorter term name (", n, " ", what, " not drawn).")
+}
+identical_names <- function(d) {
+  pair <- paste(d$Description, d$kept_Description, sep = "\r")
+  p <- unique(d[c("Description", "kept_Description")])
+  classes <- vapply(paste(p$Description, p$kept_Description, sep = "\r"), function(k) {
+    x <- release_sample_class_display(unique(as.character(d$sample_class[pair == k])))
+    if (length(x) > 1L) paste(paste(x[-length(x)], collapse = ", "), "and", x[[length(x)]]) else x
+  }, character(1), USE.NAMES = FALSE)
+  paste0(p$Description, " (same members as ", p$kept_Description, ", in ", classes, ")",
+         collapse = "; ")
+}
 # Untested blocks for a panel, as text; "none" when fgsea tested every set.
 panel_untested <- function(...) {
   x <- untested_blocks(...)
@@ -614,7 +646,13 @@ paste0("- **", LBL$H, " and ", LBL$I, ".** Both remain, but neither can be read 
        " shared arm on the same side gives r = ", sprintf("%+.2f", fig_h_control_r), " on the",
        " same protein set. In ", LBL$I, ", ", fig_i_opposed, " of the ", fig_i_n,
        " overlapping terms are opposed in sign (", fig_i_concordant, " concordant), as the",
-       " shared arm biases them to be. ", LBL$I, " has been retitled neutrally."),
+       " shared arm biases them to be. ", LBL$I, " has been retitled neutrally.",
+       if (n_i_identical + n_sf_identical > 0L)
+         paste0(" Gene sets with identical members among the ranked proteins are shown once,",
+                " under the shorter term name (", LBL$I, ": ", n_i_identical,
+                " column", if (n_i_identical == 1L) "" else "s", " not drawn; ", LBL$SF,
+                ": ", n_sf_identical, " term", if (n_sf_identical == 1L) "" else "s",
+                " not drawn).") else ""),
 paste0("- **", LBL$SE, ".** The original four cross-compartment comparisons were invalid",
        " twice over: hemispheres were treated as independent, and both arms of every",
        " comparison came from the same three animals. It has been refitted as a secondary",
@@ -732,7 +770,7 @@ paste0("| Release of 2026-09-07 (`", paste(RELEASE_STATISTICS_RUN$pooled_release
 paste0("| First per-compartment release (folder `",
        utils::tail(RELEASE_STATISTICS_RUN$superseded_release_relative, 1),
        "`, deployed 2026-11-26; old workbook layout) | this package: same statistics (every",
-       " number identical); workbook renamed",
+       " statistic identical); workbook renamed",
        " `editor_source_data/Supplementary_Table_2_proteomics.xlsx` with lettered tables 2a-2q",
        " (the effect-size-ranked GSEA, the absolute-effect-size ORA lists, the superseded and",
        " excluded analyses, the metadata field status, the full software list and the",
@@ -748,6 +786,21 @@ paste0("| First per-compartment release (folder `",
        " reader headers and display labels (Supp. Fig. 4 F blank cells now",
        " `SuppFig4F_blank_cells.csv`); changelog, terminology files and figure source map moved",
        " to `provenance/`; collection plate described as an injection block | **Yes.** |"),
+paste0("| Second per-compartment release (folder `",
+       utils::tail(RELEASE_STATISTICS_RUN$previous_release_relative, 1),
+       "`, deployed 2026-11-26; figures from the 2026-11-25 rebuild) | this package: same",
+       " statistics and the same workbook layout (every statistic identical); figure source",
+       " data from `", utils::tail(RELEASE_STATISTICS_RUN$figure_rebuild_relative, 1), "`,",
+       " where gene sets with identical members among the ranked proteins are shown once,",
+       " under the shorter term name: ", LBL$I, " has ", fig_i_n, " columns instead of ",
+       fig_i_n + n_i_identical, " (", fig_i_opposed, " opposed, ", fig_i_concordant,
+       " concordant; not drawn: ", identical_names(fig_i_identical), ") and ", LBL$SF, " ",
+       sf_n_terms, " terms instead of ", sf_n_terms + n_sf_identical, " (not drawn: ",
+       identical_names(supp_f_identical), "), so their source data lose those rows; SDRF",
+       " `characteristics[developmental stage]` now `",
+       release_metadata_value(experimenter_metadata, "developmental_stage", standardized = TRUE),
+       "` (", release_metadata_value(experimenter_metadata, "developmental_stage"),
+       ", from the Methods) | **Yes.** |"),
 "",
 paste0("**How that mapping was established.** Crosswalk method for this build: **",
        crosswalk$method, "**."),
@@ -988,7 +1041,8 @@ release_write_lines(L, path)
 # The pooled-model indexes are inputs too: sections 7b and 4b are counted from the tables
 # they index, after the checks above.
 changelog_inputs <- c(retained_report, final_report, rebuild_record, fig_f_src_path,
-                      fig_g_src_path, fig_h_audit_path, fig_i_audit_path, loo_path,
+                      fig_g_src_path, fig_h_audit_path, fig_i_audit_path,
+                      fig_i_identical_path, supp_f_identical_path, loo_path,
                       inferential_report, stat_run$path, pooled_mapped_index_path,
                       pooled_enrich_index_path,
                       release_locked_artefact_path("enrichment_index_go_bp", DATA_ROOT),
@@ -1130,10 +1184,11 @@ applied <- rbind(
             "canonical column log2fc", "log2fc", "log2fc", "INTERNAL_PROVENANCE",
             "Canonical analysis artifact, outside this layer. Never modified."),
   audit_row(paste("06_manuscript_figure_revision/*.R,",
-                  "06_manuscript_figure_revision/within_compartment_20261124/*.R and",
-                  "06_manuscript_figure_revision/within_compartment_20261125/*.R"),
+                  "06_manuscript_figure_revision/within_compartment_20261124/*.R,",
+                  "06_manuscript_figure_revision/within_compartment_20261125/*.R and",
+                  "06_manuscript_figure_revision/within_compartment_20261126/*.R"),
             "frozen figure scripts", "log2FC", "log2FC", "LEGITIMATE_OTHER_CONTEXT",
-            paste("Frozen; not edited. The 2026-11-25 rebuild draws the",
+            paste("Frozen; not edited. The 2026-11-25 and 2026-11-26 rebuilds draw the",
                   "released Fig. 2 D and H axes in SD units; the log2FC that remains there is",
                   "in comments, file names and internal column names. The earlier scripts'",
                   "rendered axis labels and captions are listed in",
@@ -1260,11 +1315,15 @@ MA_PANEL_CAVEATS <- list(
                        " consequence of the two contrasts sharing the paired-vehicle reference",
                        " on opposite sides. Describe the pattern neutrally; it is not evidence",
                        " that CNO reverses a pairing-associated program.",
+                       identical_legend(n_i_identical,
+                                        if (n_i_identical == 1L) "column" else "columns"),
                        untested_legend(c("paired_veh_vs_unpaired_veh",
                                          "paired_cno_vs_paired_veh")))),
   list(panel = LBL$SF,
        legend = paste0("State that the grid shows GSEA ranked by the moderated t for paired",
                        " CNO versus paired VEH in each sample class shown.",
+                       identical_legend(n_sf_identical,
+                                        if (n_sf_identical == 1L) "term" else "terms"),
                        untested_legend("paired_cno_vs_paired_veh", "GO_BP", sf_classes))),
   list(panel = LBL$SE,
        legend = paste("Identify it as a secondary, within-animal paired cross-compartment",
@@ -1298,7 +1357,8 @@ MA_VERIFIED_METHODS <- {
     paste0("Organism and cohort: ", mv("organism"), ", ", mv("strain_or_breed"),
            ", supplied by ", mv("animal_supplier"), " (", mv("animal_supplier_location"),
            "); ", mv("cohort_sex_composition"), "; age at experiment start ",
-           mv("age_at_experiment_start"), "."),
+           mv("age_at_experiment_start"), "; developmental stage ", mv("developmental_stage"),
+           "."),
     paste0("Tissue and capture: ", mv("organism_part"), ", ", mv("collection_method"), "."),
     paste0("Sample classes: mCherry-positive, cFos-positive, NeuN-positive/cFos-negative/",
            "mCherry-negative neurons, and a neuropil compartment negative for all three.",
@@ -1315,7 +1375,6 @@ MA_VERIFIED_METHODS <- {
 }
 
 MA_UNRESOLVED_METHODS <- c(
-  "the exact developmental stage at tissue collection;",
   "the exact age at tissue collection (only age at experiment start is recorded);",
   "per-animal sex assignments (only the cohort composition is recorded);",
   "the MS instrument model -- the run-name token `Olive` is a local alias, not a model;",
@@ -1401,9 +1460,10 @@ MA <- c(
          " per-protein SD used here."),
   "",
   paste0("The frozen scripts under `06_manuscript_figure_revision/` (and their copies of",
-         " the per-sample-class rebuilds under `within_compartment_20261124/` and",
-         " `within_compartment_20261125/`) were **not** edited: they are the record of how the",
-         " figures were produced. The 2026-11-25 rebuild already labels the axes of ",
+         " the per-sample-class rebuilds under `within_compartment_20261124/`,",
+         " `within_compartment_20261125/` and `within_compartment_20261126/`) were **not**",
+         " edited: they are the record of how the figures were produced. The 2026-11-25 and",
+         " 2026-11-26 rebuilds already label the axes of ",
          LBL$D, " and ", LBL$H, " in SD units; panels kept from the earlier scripts still say",
          " `log2FC` on their axes and must be relabeled at the manuscript stage. The",
          " classification of every occurrence is in `EFFECT_SIZE_TERMINOLOGY_AUDIT.tsv`."),

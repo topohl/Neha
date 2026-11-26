@@ -31,7 +31,7 @@ c-Fos learning 6 → 0, c-Fos paired CNO 3 → 0.
 | Statistics | `02_data/animal_level/within_compartment_20261124/stat_results_within_compartment.gct` |
 | Split / ID mapping | `02_data/animal_level/within_compartment_20261124/split/`, `.../mapped/` |
 | Enrichment | GO-BP and GO-CC: `03_output/enrichment/enrichment_within_compartment_20261125/{GO_BP,GO_CC}/` (fgsea `nPermSimple = 100000`, adopted 2026-11-25; ORA byte-identical to 20261124). KEGG: `03_output/enrichment/enrichment_within_compartment_20261124/GO_BP/` (fgsea default, not rerun; its GO tables are superseded) |
-| Figure panels | `03_output/figure_rebuild_within_compartment_20261125/` (Fig. 2 D, F, G, H, I and Supp. Fig. 4 F, run by its `scripts/run_rebuild.sh`; repository copy in `06_manuscript_figure_revision/within_compartment_20261125/`). The 2026-11-24 rebuild is superseded; its README lists what was not rebuilt |
+| Figure panels | `03_output/figure_rebuild_within_compartment_20261126/` (Fig. 2 D, F, G, H, I and Supp. Fig. 4 F, run by its `scripts/run_rebuild.sh`; repository copy in `06_manuscript_figure_revision/within_compartment_20261126/`). Gene sets with identical members are shown once in Fig. 2 I (66 columns) and Supp. Fig. 4 F (38 terms); D, F, G and H are as on 2026-11-25. The 2026-11-24 and 2026-11-25 rebuilds are superseded |
 | Inferential checks | `03_output/inferential_checks/within_compartment_20261124/` (Pairing×CNO interaction per compartment; mCherry learning leave-one-animal-out, t- vs effect-ranked GSEA, CNO-arm opposition; written by `04_differential_expression_enrichment/05_pairing_cno_interaction.r` and `06_mcherry_learning_robustness.r`) |
 
 GSEA term counts near q = 0.05 move by a few terms with the permutation seed (5 base seeds at
@@ -58,9 +58,10 @@ design-identifiability and collection-plate audits in `final_inferential_checks_
 depend on the statistics and stay current, as do the figure panels that do not use them (PCA,
 rank abundance, the per-acquisition protein and peptide counts of Supp. Fig. 4 A, EWCE, the secondary within-animal model).
 The release package is built on this run in
-`03_output/release_within_compartment_20261126/` (Supplementary Table 2 layout). The first
-per-compartment release (`release_within_compartment_20261125/`, old workbook layout) and the
-pooled-run release stay frozen.
+`03_output/release_within_compartment_20261126b/` (Supplementary Table 2 layout, figures from the
+2026-11-26 rebuild). The earlier per-compartment releases (`release_within_compartment_20261125/`,
+old workbook layout; `release_within_compartment_20261126/`, figures from the 2026-11-25 rebuild)
+and the pooled-run release stay frozen.
 
 ### Rerunning the per-compartment chain
 

@@ -121,15 +121,17 @@ release_project_root <- function() {
 #' Defaults to the real shared-drive release root. Always point this at scratch while
 #' testing: PROTEOMICS_RELEASE_OUTPUT_ROOT=<scratch>.
 #'
-#' The default moved on 2026-11-25 with the primary statistics, and on 2026-11-26 with the
-#' Supplementary Table 2 layout. Earlier releases stay frozen (protected roots): the
-#' pooled-run release of 2026-09-07 in 03_output/publication_release and the first
-#' per-compartment release in 03_output/release_within_compartment_20261125.
+#' The default moved on 2026-11-25 with the primary statistics, on 2026-11-26 with the
+#' Supplementary Table 2 layout, and again on 2026-11-26 with the figure rebuild that shows
+#' gene sets with identical members once. Earlier releases stay frozen (protected roots):
+#' the pooled-run release of 2026-09-07 in 03_output/publication_release and the
+#' per-compartment releases in 03_output/release_within_compartment_20261125 and
+#' 03_output/release_within_compartment_20261126.
 release_output_root <- function() {
   release_option_or_env(
     "proteomics.release_output_root", "PROTEOMICS_RELEASE_OUTPUT_ROOT",
     file.path(release_data_root(), "03_output",
-              "release_within_compartment_20261126")
+              "release_within_compartment_20261126b")
   )
 }
 
@@ -158,11 +160,18 @@ RELEASE_STATISTICS_RUN <- list(
   kegg_enrichment_relative = c("03_output", "enrichment", "enrichment_within_compartment_20261124"),
   kegg_enrichment_date = "2026-11-24",
   kegg_run = "GO_BP",
-  figure_rebuild_relative = c("03_output", "figure_rebuild_within_compartment_20261125"),
+  # Rebuild of 2026-11-26: as 2026-11-25, but gene sets with identical members are shown
+  # once in Fig. 2 I and Supp. Fig. 4 F.
+  figure_rebuild_relative = c("03_output", "figure_rebuild_within_compartment_20261126"),
+  # generation_pass of this rebuild's rows in 06_manuscript_figure_revision/SCRIPT_PROVENANCE.csv
+  figure_rebuild_pass = "within_compartment_rebuild_20261126",
   # The record of the rebuild: the script that ran its R scripts, in order.
   figure_rebuild_record = c("scripts", "run_rebuild.sh"),
-  # Rebuild of 2026-11-24 on the 20261124 enrichment, superseded by the one above.
-  superseded_figure_rebuild_relative = c("03_output", "figure_rebuild_within_compartment_20261124"),
+  # Rebuild of 2026-11-25 on the nPermSimple = 100000 GO enrichment, superseded by the one
+  # above.
+  superseded_figure_rebuild_relative = c("03_output", "figure_rebuild_within_compartment_20261125"),
+  # Rebuild of 2026-11-24 on the 20261124 enrichment, superseded on 2026-11-25.
+  first_figure_rebuild_relative = c("03_output", "figure_rebuild_within_compartment_20261124"),
   inferential_relative = c("03_output", "inferential_checks", "within_compartment_20261124"),
   # Superseded pooled run (one fit over all 48 columns), retained for comparison. Read only
   # for the "what changed from the pooled release" tables; its mapped and enrichment indexes
@@ -176,6 +185,10 @@ RELEASE_STATISTICS_RUN <- list(
   # First per-compartment release (deployed 2026-11-26 with the old workbook layout),
   # superseded by release_within_compartment_20261126 and never rebuilt in place.
   superseded_release_relative = c("03_output", "release_within_compartment_20261125"),
+  # Second per-compartment release (deployed 2026-11-26 with the Supplementary Table 2
+  # layout and the 2026-11-25 figure rebuild), superseded by
+  # release_within_compartment_20261126b and never rebuilt in place.
+  previous_release_relative = c("03_output", "release_within_compartment_20261126"),
   # The GO GSEA rerun with a larger fgsea nPermSimple (enrichment_relative above) was adopted
   # on 2026-11-25. The sensitivity analyses (interaction, leave-one-animal-out, rank
   # robustness) were not rerun: they stay at the fgsea default and are compared with the
@@ -230,11 +243,12 @@ release_inferential_root <- function(data_root = release_data_root()) {
 #' Roots this layer must never write into.
 #'
 #' 03_output is not protected as a whole, because the release root lives
-#' inside it (03_output/release_within_compartment_20261126). The individual
+#' inside it (03_output/release_within_compartment_20261126b). The individual
 #' canonical analysis branches under 03_output are protected by name instead, and so are
-#' the frozen earlier releases (03_output/publication_release and
-#' 03_output/release_within_compartment_20261125). Overlap is tested on
-#' whole path components, so the new root's name does not collide with the frozen one.
+#' the three figure rebuilds and the frozen earlier releases (03_output/publication_release,
+#' 03_output/release_within_compartment_20261125 and
+#' 03_output/release_within_compartment_20261126). Overlap is tested on whole path
+#' components, so the new root's name does not collide with the frozen ones.
 release_protected_roots <- function(data_root = release_data_root()) {
   c(
     file.path(data_root, "01_input"),
@@ -253,10 +267,12 @@ release_protected_roots <- function(data_root = release_data_root()) {
     file.path(data_root, "03_output", "manuscript_curation_20260827"),
     release_rel_path(RELEASE_STATISTICS_RUN$figure_rebuild_relative, data_root),
     release_rel_path(RELEASE_STATISTICS_RUN$superseded_figure_rebuild_relative, data_root),
+    release_rel_path(RELEASE_STATISTICS_RUN$first_figure_rebuild_relative, data_root),
     # pooled-run release of 2026-09-07: superseded, frozen, never rebuilt in place
     release_rel_path(RELEASE_STATISTICS_RUN$pooled_release_relative, data_root),
-    # first per-compartment release: superseded, frozen, never rebuilt in place
-    release_rel_path(RELEASE_STATISTICS_RUN$superseded_release_relative, data_root)
+    # first and second per-compartment releases: superseded, frozen, never rebuilt in place
+    release_rel_path(RELEASE_STATISTICS_RUN$superseded_release_relative, data_root),
+    release_rel_path(RELEASE_STATISTICS_RUN$previous_release_relative, data_root)
   )
 }
 
