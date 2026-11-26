@@ -57,11 +57,10 @@ The biological synthesis has not been rebuilt and still uses the pooled run. The
 design-identifiability and collection-plate audits in `final_inferential_checks_20260826/` do not
 depend on the statistics and stay current, as do the figure panels that do not use them (PCA,
 rank abundance, the per-acquisition protein and peptide counts of Supp. Fig. 4 A, EWCE, the secondary within-animal model).
-The release package is built on this run into
-`03_output/release_within_compartment_20261126/` (Supplementary Table 2 layout; not yet deployed
-to the shared drive). Until it is, the deployed per-compartment release is
-`release_within_compartment_20261125/` (old workbook layout); it and the pooled-run release stay
-frozen.
+The release package is built on this run in
+`03_output/release_within_compartment_20261126/` (Supplementary Table 2 layout). The first
+per-compartment release (`release_within_compartment_20261125/`, old workbook layout) and the
+pooled-run release stay frozen.
 
 ### Rerunning the per-compartment chain
 
