@@ -1,10 +1,11 @@
 #!/usr/bin/env Rscript
 
-# Contract: the published sample metadata describes the validated animal-level design and
-# nothing else. 96 acquisitions, 48 animal-level units, 12 animals, 16 strata, n = 3.
+# Checks: the published sample metadata describes the validated animal-level design: 96
+# acquisitions, 48 animal-level units, 12 animals, 16 strata, n = 3. Repository sources in
+# the field provenance must be relative paths that resolve.
 #
-# Skips cleanly when no built release is reachable, so it is safe in CI. Point it at one
-# with PROTEOMICS_RELEASE_OUTPUT_ROOT.
+# Skips when no built release is reachable; point it at one with
+# PROTEOMICS_RELEASE_OUTPUT_ROOT.
 
 args <- commandArgs(trailingOnly = FALSE)
 file_arg <- grep("^--file=", args, value = TRUE)
@@ -37,7 +38,7 @@ al_path <- file.path(OUT_ROOT, "metadata", "animal_level_sample_metadata.tsv")
 if (!file.exists(sm_path) || !file.exists(al_path)) {
   cat("No built publication release at", OUT_ROOT, "\n")
   cat("  set PROTEOMICS_RELEASE_OUTPUT_ROOT and run 07_publication_release/run_release.R.\n")
-  cat("Skipping publication release sample-metadata contracts.\n")
+  cat("Skipping publication release sample-metadata checks.\n")
   quit(save = "no", status = 0L)
 }
 
@@ -118,18 +119,26 @@ if (!file.exists(fp_path)) {
   expect(all(fp$status %in% release_metadata_statuses),
          "every field carries a sanctioned status value")
   expect(any(fp$status == "MISSING_RECOVERABLE" | fp$status == "MISSING_UNKNOWN"),
-         "fields that are genuinely unknown are recorded as missing")
+         "fields that are unknown are recorded as missing")
   known <- fp[fp$status %in% c("KNOWN_VERIFIED", "KNOWN_BUT_NEEDS_STANDARDIZATION"), ,
               drop = FALSE]
   expect(all(nzchar(known$evidence)), "every KNOWN_* field cites its evidence")
   im <- fp[fp$field == "instrument_model", , drop = FALSE]
   expect(nrow(im) == 1L && im$status == "MISSING_RECOVERABLE",
          "instrument_model is recorded as missing, not guessed")
+  src <- unique(unlist(strsplit(fp$current_source[!is.na(fp$current_source)], ";",
+                                fixed = TRUE)))
+  repo_src <- src[release_is_repo_path(src, repo_root)]
+  expect(length(repo_src) > 0L &&
+           all(file.exists(release_repo_resolve(repo_src, repo_root))) &&
+           !any(grepl(tolower(repo_root), tolower(src), fixed = TRUE)),
+         sprintf("field sources in the repository are relative paths that resolve (%d)",
+                 length(repo_src)))
 }
 
 cat("\n=== RESULT ===\n")
 if (failures > 0L) {
-  stop(sprintf("Publication release sample-metadata contracts failed: %d", failures),
+  stop(sprintf("Publication release sample-metadata checks failed: %d", failures),
        call. = FALSE)
 }
-cat("All publication release sample-metadata contracts hold.\n")
+cat("All publication release sample-metadata checks hold.\n")

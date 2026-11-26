@@ -6,10 +6,8 @@
 #   provenance/release_manifest.tsv   one row per released file
 #   provenance/SHA256SUMS.txt         checksums for the whole package
 #
-# The manifest is built by WALKING the release tree, not by trusting the build registry.
-# Every file found must be registered, and every registered file must exist; either
-# mismatch is a hard error. That is what makes the manifest a completeness claim rather
-# than a list of the files someone remembered to add.
+# The manifest is built by listing the release folder and comparing it with the build
+# registry: every file found must be registered and every registered file must exist.
 #
 # Self-reference: release_manifest.tsv lists every file except itself and SHA256SUMS.txt.
 # SHA256SUMS.txt covers every file except itself, so the manifest's own integrity is
@@ -130,10 +128,7 @@ release_log("  total bytes: ", format(sum(manifest$bytes, na.rm = TRUE), big.mar
 
 release_write_table(manifest, release_path(MANIFEST_REL))
 
-# SHA256SUMS covers the manifest too, so the manifest's own integrity is verifiable.
-# The directory is re-listed here, AFTER the manifest has been written: the listing taken
-# at the top of this stage predates it, and using that one silently omitted the manifest
-# from its own checksum file on a first build.
+# List the folder again after writing the manifest, so SHA256SUMS.txt includes it.
 all_files <- gsub("\\\\", "/", list.files(OUT_ROOT, recursive = TRUE))
 sums_targets <- sort(setdiff(all_files, SUMS_REL))
 sums_lines <- vapply(sums_targets, function(rp) {

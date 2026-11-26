@@ -1,8 +1,8 @@
 #!/usr/bin/env Rscript
 
-# Contract: the release manifest is a completeness claim. Every file in the package is
-# listed, every listed hash validates, and the workbook and SDRF meet their own hygiene
-# rules.
+# Checks: every file in the package is in the release manifest, every listed hash matches,
+# repository sources are named by paths relative to proteomic_analysis/, and the workbook
+# and SDRF meet their own rules.
 
 args <- commandArgs(trailingOnly = FALSE)
 file_arg <- grep("^--file=", args, value = TRUE)
@@ -34,11 +34,11 @@ man_path <- file.path(OUT_ROOT, "provenance", "release_manifest.tsv")
 sums_path <- file.path(OUT_ROOT, "provenance", "SHA256SUMS.txt")
 if (!file.exists(man_path) || !file.exists(sums_path)) {
   cat("No built publication release at", OUT_ROOT, "\n")
-  cat("Skipping publication release manifest contracts.\n")
+  cat("Skipping publication release manifest checks.\n")
   quit(save = "no", status = 0L)
 }
 if (!requireNamespace("digest", quietly = TRUE)) {
-  cat("digest not installed; skipping publication release manifest contracts.\n")
+  cat("digest not installed; skipping publication release manifest checks.\n")
   quit(save = "no", status = 0L)
 }
 
@@ -101,6 +101,31 @@ bad_sums <- vapply(seq_along(sums), function(i) {
 }, logical(1))
 expect(!any(bad_sums), "every SHA256SUMS entry validates")
 
+cat("\n=== repository files are named by relative paths ===\n")
+repo_prefix <- tolower(paste0(sub("/+$", "", repo_root), "/"))
+text_files <- on_disk[grepl("[.](tsv|md|txt|csv)$|[.]tsv[.]gz$", on_disk)]
+local_hits <- text_files[vapply(text_files, function(f) {
+  txt <- gsub("\\\\", "/", readLines(file.path(OUT_ROOT, f), warn = FALSE), useBytes = TRUE)
+  txt <- tryCatch(tolower(txt), error = function(e) txt)
+  any(grepl(repo_prefix, txt, fixed = TRUE, useBytes = TRUE))
+}, logical(1))]
+expect(length(local_hits) == 0L,
+       sprintf("no release file names the local repository folder (%d text files%s)",
+               length(text_files),
+               if (length(local_hits)) paste0("; found in: ",
+                                              paste(head(local_hits, 3), collapse = "; "))
+               else ""))
+src <- unique(unlist(strsplit(man$source_artifact[!is.na(man$source_artifact)], ";",
+                              fixed = TRUE)))
+repo_src <- src[release_is_repo_path(src, repo_root)]
+missing_src <- repo_src[!file.exists(release_repo_resolve(repo_src, repo_root))]
+expect(length(repo_src) > 0L && length(missing_src) == 0L,
+       sprintf("repository sources in the manifest resolve under proteomic_analysis/ (%d%s)",
+               length(repo_src),
+               if (length(missing_src)) paste0("; not found: ",
+                                               paste(head(missing_src, 3), collapse = "; "))
+               else ""))
+
 cat("\n=== the expected package structure is present ===\n")
 for (f in c("README_DATA.md", "metadata/sample_metadata.tsv",
             "metadata/animal_level_sample_metadata.tsv",
@@ -112,9 +137,11 @@ for (f in c("README_DATA.md", "metadata/sample_metadata.tsv",
             "processed_data/protein_abundance_animal_level.tsv.gz",
             "processed_data/protein_feature_annotation.tsv.gz",
             "differential_analysis/primary_differential_proteins.tsv.gz",
-            "enrichment/primary_GSEA_GO_BP.tsv.gz", "enrichment/primary_GSEA_KEGG.tsv.gz",
-            "enrichment/primary_ORA_GO_BP.tsv.gz",
+            "enrichment/primary_GSEA_GO_BP.tsv.gz", "enrichment/primary_GSEA_GO_CC.tsv.gz",
+            "enrichment/primary_GSEA_KEGG.tsv.gz", "enrichment/primary_ORA_GO_BP.tsv.gz",
+            "enrichment/primary_ORA_GO_CC.tsv.gz",
             "enrichment/GSEA_log2FC_sensitivity.tsv.gz", "enrichment/primary_EWCE.tsv.gz",
+            "enrichment/gsea_untested_gene_sets.tsv",
             "editor_source_data/Proteomics_Source_Data_Animal_Level.xlsx",
             "editor_source_data/REVISION_PROTEOMICS_DATA_CHANGELOG.md",
             "editor_source_data/figure_source_map.tsv",
@@ -139,15 +166,10 @@ if (!file.exists(inv_path)) {
          sprintf("no duplicate or unnamed workbook columns across %d sheets%s", nrow(wb),
                  if (length(problems)) paste0(" -- ", problems[[1]]) else ""))
 
-  # The reader sees the display headers, so they carry the same hygiene contract as the
-  # machine names, and must not leak a snake_case name onto a published header.
-  #
-  # Guarded rather than assumed present: a release built before the display-header contract
-  # has no such column, and this test is routinely pointed at whatever release is at the
-  # default root. Without the guard the missing column reaches strsplit() and the test dies
-  # with a type error instead of saying what is actually wrong.
+  # Same checks on the display headers, which must also contain no underscores. An older
+  # release has no display_columns column; fail with a message instead of a strsplit() error.
   if (!all(c("display_columns", "title", "supplementary_table") %in% names(wb))) {
-    expect(FALSE, paste("workbook inventory predates the display-header contract",
+    expect(FALSE, paste("workbook inventory predates the display-header check",
                         "(no display_columns/title/supplementary_table);",
                         "rebuild the release with stage 07"))
   } else {
@@ -166,7 +188,8 @@ if (!file.exists(inv_path)) {
            "every sheet has a title and every data sheet a supplementary-table number")
   }
   expect(all(c("README", "Sample_Metadata", "Animal_Level_Metadata", "Primary_Contrasts",
-               "Differential_Proteins", "GSEA_GO_BP", "GSEA_KEGG", "ORA_GO_BP", "EWCE",
+               "Differential_Proteins", "GSEA_GO_BP", "GSEA_GO_CC", "GSEA_KEGG", "ORA_GO_BP",
+               "ORA_GO_CC", "EWCE",
                "Secondary_Analyses", "Figure_Source_Map", "Software_Versions") %in%
                wb$sheet),
          "every required sheet is present")
@@ -197,7 +220,7 @@ if (!file.exists(sdrf_path) || !file.exists(fs_path)) {
   req_missing <- fs$sdrf_field[fs$status == "MISSING_REQUIRED_METADATA"]
   expect(all(vapply(intersect(req_missing, names(sdrf)),
                     function(cn) all(sdrf[[cn]] == "not available"), logical(1))),
-         sprintf("every unfillable required field is explicitly 'not available' (%d fields)",
+         sprintf("every unfillable required field is 'not available' (%d fields)",
                  length(req_missing)))
   pr_path <- file.path(OUT_ROOT, "pride", "pride_readiness.tsv")
   if (file.exists(pr_path)) {
@@ -212,6 +235,6 @@ if (!file.exists(sdrf_path) || !file.exists(fs_path)) {
 
 cat("\n=== RESULT ===\n")
 if (failures > 0L) {
-  stop(sprintf("Publication release manifest contracts failed: %d", failures), call. = FALSE)
+  stop(sprintf("Publication release manifest checks failed: %d", failures), call. = FALSE)
 }
-cat("All publication release manifest contracts hold.\n")
+cat("All publication release manifest checks hold.\n")

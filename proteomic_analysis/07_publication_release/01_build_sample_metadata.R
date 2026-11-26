@@ -49,6 +49,8 @@ release_log("release root: ", OUT_ROOT)
 # canonical inputs
 # --------------------------------------------------------------------------------------
 
+# Only the two design tables are read from here (run-name tokens and the 48-row design);
+# neither depends on the statistics, so the 2026-11-24 model change leaves them valid.
 INFERENTIAL <- file.path(DATA_ROOT, "03_output", "inferential_checks",
                          "final_inferential_checks_20260826")
 INPUT_GCT_DIR <- file.path(DATA_ROOT, "02_data", "animal_level", "input_gct")
@@ -94,9 +96,8 @@ stopifnot(nrow(design48) == RELEASE_DESIGN_INVARIANTS$n_animal_level_units)
 # --------------------------------------------------------------------------------------
 # sample_annotation.xlsx `Name` holds the original acquisition path, e.g.
 #   D:\Proteomics\Fabian\Tobias\Olive_20241217_..._1_8782.d
-# Stripping the directory and the `.d` suffix must reproduce the sample id exactly --
-# that equality is what licenses publishing a raw_file_basename at all. It is asserted,
-# not assumed; if it ever fails the stage stops rather than emitting a plausible name.
+# Stripping the directory and the `.d` suffix must give the sample id; otherwise the stage
+# stops instead of publishing a raw_file_basename.
 
 annotation_name <- as.character(annotation$Name)
 raw_basename_no_ext <- sub("\\.d$", "", sub("^.*[\\\\/]", "", annotation_name), ignore.case = TRUE)
@@ -194,33 +195,21 @@ rownames(measurement) <- NULL
 # --------------------------------------------------------------------------------------
 # sample-class correction: both identities are preserved
 # --------------------------------------------------------------------------------------
-# Six acquisitions carry an analysis-time sample class that differs from every
-# pre-correction record. The forensic audit resolved what that is: a deliberate correction
-# applied during historical sample-identity QC, not a mislabelling and not an open
-# question. Only class METADATA was reassigned -- the acquisition identities and the
-# quantitative abundance profiles are the same bytes either way.
+# Six acquisitions have an analysis-time class that differs from the pre-correction records
+# (see RELEASE_SAMPLE_CLASS_CORRECTION). Both labels are published for all 96:
+# `sample_class` is the analysis-time class the locked GCTs were computed on, and
+# `original_sample_class` the pre-correction one.
 #
-# This block therefore publishes BOTH identities for all 96 measurements rather than
-# choosing one. `sample_class` stays the canonical analysis-time assignment, because that
-# is what the locked GCTs and every validated statistic were computed on; changing it
-# would desynchronise the published metadata from the results. `original_sample_class`
-# carries the pre-correction assignment, so nothing is discarded.
-#
-# Three independent pre-correction records exist and are compared here:
-#
-#   1. sample_annotation.xlsx `group_label`  -- the acquisition-era annotation (all 96)
-#   2. the autosampler plate layout          -- implied by the well row letter (all 96)
-#   3. the retained UMAP correction table    -- the six corrected rows only
-#
-# The correction is only accepted if all three agree with each other AND the resulting six
-# rows equal RELEASE_SAMPLE_CLASS_CORRECTION. Deriving it three ways and then requiring the
-# contract to match is the point: a single read would let a stale source pass unnoticed.
+# The pre-correction class comes from three records:
+#   1. sample_annotation.xlsx `group_label` (all 96)
+#   2. the autosampler plate layout, from the well row letter (all 96)
+#   3. the retained UMAP correction table (the six corrected rows)
+# All three must agree, and the six rows must equal RELEASE_SAMPLE_CLASS_CORRECTION.
 
 CORRECTION <- RELEASE_SAMPLE_CLASS_CORRECTION
 
-# The preserved correction record is cited by hash in the released provenance table, so the
-# hash is computed here and required to match what the forensic audit recorded. It is never
-# taken on trust from the narrative, and mtime alone is never treated as sufficient.
+# The correction table is cited by hash in the released provenance table, so its hash must
+# match the recorded value (the mtime is not checked).
 correction_ref <- release_verify_sample_class_correction_reference(DATA_ROOT)
 release_log("  correction reference verified: ", basename(correction_ref$path))
 release_log("    sha256 ", correction_ref$observed_sha256)
@@ -236,7 +225,7 @@ if (anyNA(original_sample_class)) {
        paste(unique(raw_by_sample$historical_group_label[
          match(measurement$sample_id[is.na(original_sample_class)], raw_by_sample$sample_id)]),
          collapse = ", "),
-       ". Refusing to run a comparison that would silently pass on NA.",
+       ". Refusing to run a comparison that would pass on NA without an error.",
        call. = FALSE)
 }
 
@@ -262,7 +251,7 @@ corrected_idx <- which(measurement$sample_class_corrected)
 # record 3: the retained UMAP correction table
 # --------------------------------------------------------------------------------------
 # Parsed for the pre-correction class it recorded per run. Its `potential_switch_celltype`
-# column is the UMAP nearest-class-centre SUGGESTION and is deliberately NOT used as the
+# column is the UMAP nearest-class-centre SUGGESTION and is not used as the
 # corrected class: for N60 the suggestion was cFosN while the correction actually applied
 # was neuron. UMAP identified the switch; it is not treated as ground truth for what the
 # switch was. The applied classes come from the validated analysis assignment, and the
@@ -282,7 +271,7 @@ release_log("  correction table lists ", nrow(correction_table),
             CORRECTION$expected$plate_sample_number)), " of them are the corrected six")
 
 # --------------------------------------------------------------------------------------
-# assemble the correction provenance table and require it to equal the contract
+# assemble the correction provenance table and require it to equal the check
 # --------------------------------------------------------------------------------------
 
 correction_reference_relpath <- paste(c("clusterProfiler", CORRECTION$reference_relative),
@@ -325,9 +314,9 @@ rownames(sample_class_corrections) <- NULL
 correction_checks <- release_check_sample_class_corrections(sample_class_corrections)
 if (any(!correction_checks$pass)) {
   stop("The sample-class correction derived from the canonical sources does not match the ",
-       "release contract:\n",
+       "definition in R/release_validation.R:\n",
        paste("  -", correction_checks$check[!correction_checks$pass], collapse = "\n"),
-       "\nRefusing to publish a correction record that disagrees with the forensic audit.",
+       "\nRefusing to publish a correction record that disagrees with the audit.",
        call. = FALSE)
 }
 
@@ -398,7 +387,7 @@ for (i in seq_len(nrow(sample_class_corrections))) {
 release_log("  both original and analysis sample-class labels are retained for all ",
             nrow(measurement), " measurements")
 
-# Cross-checks the design contracts depend on.
+# Cross-checks the design checks depend on.
 stopifnot(nrow(measurement) == RELEASE_DESIGN_INVARIANTS$n_measurement_records)
 stopifnot(!anyDuplicated(measurement$sample_id))
 stopifnot(!anyDuplicated(measurement$raw_file_basename))
@@ -494,7 +483,8 @@ release_log("  animal-level table: ", nrow(animal_level), " rows x ", ncol(anima
 # --------------------------------------------------------------------------------------
 
 fld <- function(field, status, source, evidence, note = NA_character_) {
-  data.frame(field = field, status = status, current_source = source,
+  data.frame(field = field, status = status,
+             current_source = release_repo_relative(source, REPO_ROOT),
              evidence = evidence, note = note,
              stringsAsFactors = FALSE, check.names = FALSE)
 }
@@ -573,7 +563,7 @@ field_provenance <- rbind(
       "Needed from: the acquisition facility, an instrument method file, or the .d metadata."),
   fld("lc_and_method_token", "KNOWN_BUT_NEEDS_STANDARDIZATION", paths$plate_provenance,
       "token `FCo_Evo2_80SPDzoom_5cmRapid_Tobias` in every acquisition run name",
-      paste("Preserved verbatim and deliberately NOT decoded. It is an operator method",
+      paste("Kept as recorded and not decoded. It is an operator method",
             "label; the acquisition method itself is not documented.")),
   fld("strain or breed", "KNOWN_VERIFIED", experimenter_source,
       release_metadata_value(experimenter_metadata, "strain_or_breed"),
@@ -666,7 +656,7 @@ w5 <- release_write_table(experimenter_metadata,
                           release_path("metadata", "experimenter_metadata.tsv"))
 release_register("metadata/experimenter_metadata.tsv",
                  paste("source-controlled experimenter facts, study scope and",
-                       "explicitly unresolved deposition metadata"),
+                       "deposition metadata that remain unresolved"),
                  experimenter_source, release_sha256(experimenter_source), STAGE, "tsv")
 
 w6 <- release_write_table(sample_preparation_protocol,

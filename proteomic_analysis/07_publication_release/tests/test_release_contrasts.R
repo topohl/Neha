@@ -1,7 +1,7 @@
 #!/usr/bin/env Rscript
 
-# Contract: exactly 12 primary contrasts, generated from the canonical helper, and
-# secondary analyses kept strictly out of the primary table.
+# Checks: 12 primary contrasts, generated from the canonical helper, and secondary analyses
+# kept out of the primary table.
 
 args <- commandArgs(trailingOnly = FALSE)
 file_arg <- grep("^--file=", args, value = TRUE)
@@ -33,7 +33,7 @@ pc_path <- file.path(OUT_ROOT, "metadata", "primary_contrast_manifest.tsv")
 sec_path <- file.path(OUT_ROOT, "metadata", "secondary_analysis_manifest.tsv")
 if (!file.exists(pc_path) || !file.exists(sec_path)) {
   cat("No built publication release at", OUT_ROOT, "\n")
-  cat("Skipping publication release contrast contracts.\n")
+  cat("Skipping publication release contrast checks.\n")
   quit(save = "no", status = 0L)
 }
 
@@ -82,6 +82,12 @@ expect(all(pc$analysis_unit == "animal"), "analysis_unit is animal on every row"
 expect(all(pc$primary_or_secondary == "primary"), "every row is labelled primary")
 expect(all(pc$gsea_ranking_statistic == "moderated_t"),
        "the recorded GSEA ranking statistic is the moderated t")
+expect(all(pc$statistical_model == RELEASE_PRIMARY_MODEL$label) &&
+         all(grepl("limma", pc$statistical_model, fixed = TRUE)) &&
+         !any(grepl("ProTigy", pc$statistical_model, fixed = TRUE)),
+       "the recorded statistical model is the per-sample-class limma model")
+expect(all(as.integer(pc$residual_df) == RELEASE_PRIMARY_MODEL$residual_df),
+       sprintf("every contrast records residual df %d", RELEASE_PRIMARY_MODEL$residual_df))
 
 cat("\n=== conditions are canonical and correctly oriented ===\n")
 expect(all(pc$numerator_condition %in% condition_levels) &&
@@ -114,10 +120,14 @@ expect(any(grepl("cross_compartment", sec$analysis_id)),
        "the cross-compartment (Supplementary E) analysis is recorded as secondary")
 expect(any(grepl("sensitivity", sec$analysis_id)),
        "the log2FC-ranked GSEA sensitivity analysis is recorded as secondary")
+expect(any(sec$analysis_id == "superseded_pooled_model_statistics"),
+       "the superseded pooled-model statistics are recorded as secondary, for comparison")
+expect(any(grepl("leave_one_animal_out", sec$analysis_id)),
+       "the leave-one-animal-out robustness check is recorded as secondary")
 expect(all(nzchar(sec$caveat)), "every secondary analysis carries a caveat")
 
 cat("\n=== RESULT ===\n")
 if (failures > 0L) {
-  stop(sprintf("Publication release contrast contracts failed: %d", failures), call. = FALSE)
+  stop(sprintf("Publication release contrast checks failed: %d", failures), call. = FALSE)
 }
-cat("All publication release contrast contracts hold.\n")
+cat("All publication release contrast checks hold.\n")

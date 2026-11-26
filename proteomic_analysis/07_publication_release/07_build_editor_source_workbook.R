@@ -5,27 +5,22 @@
 # Produces
 #   editor_source_data/Proteomics_Source_Data_Animal_Level.xlsx
 #
-# Deliberately NOT like the previous GSEA_ORA_all_results.xlsx. Rules enforced in code:
-#   * one table per sheet, starting at A1 -- never independent tables pasted side by side
-#   * no duplicate column names on any sheet
-#   * no unnamed or placeholder (V1, X1, ...1) columns
-#   * every sheet joinable to the others on canonical_comparison / protein_group_id /
+# Workbook rules:
+#   * one table per sheet, under its title and caption; never tables side by side
+#   * no duplicate, blank or placeholder (V1, X1, ...1) column names
+#     (release_check_workbook_hygiene(); the build stops on a hit)
+#   * every sheet joins to the others on canonical_comparison / protein_group_id /
 #     AnimalID + sample_class
-#   * a README sheet that states the statistical unit before anything else
-# release_check_workbook_hygiene() asserts the column rules and the build stops on a hit.
+#   * a README sheet that states the statistical unit first
 #
-# Gene-membership columns (GSEA core_enrichment, ORA geneID) are omitted from the workbook
-# and kept in the gzipped TSVs. Individual cells reach several thousand characters and the
-# column alone would add tens of megabytes to a file an editor has to open. The row counts
-# are unchanged, n_core_enrichment_genes is retained, and the README says so explicitly --
-# nothing is silently dropped.
+# Gene-membership columns (GSEA core_enrichment, ORA geneID) stay in the gzipped TSVs:
+# single cells reach thousands of characters and would add tens of megabytes. Row counts are
+# unchanged, n_core_enrichment_genes is kept, and the README sheet says so.
 #
-# PRESENTATION. This workbook is the human-facing artefact, so it carries display headers,
-# a Contents sheet with assigned supplementary-table numbers, per-sheet captions, frozen
-# header rows, filters, column widths and per-column number formats. The machine naming
-# lives in the .tsv siblings and is what the contracts and the data dictionary key off;
-# see R/release_presentation.R for the mapping between the two. Columns whose value is
-# identical on every row are hoisted into the caption rather than repeated down the sheet.
+# The workbook is the human-readable copy: display headers, a Contents sheet with assigned
+# supplementary-table numbers, captions, frozen header rows, filters, column widths and
+# number formats. Columns that are constant on a sheet move into its caption. The .tsv files
+# keep the machine names; R/release_presentation.R maps between the two.
 
 suppressWarnings({
   args <- commandArgs(trailingOnly = FALSE)
@@ -69,36 +64,39 @@ mv_wb <- function(id) release_metadata_value(experimenter_metadata_wb, id)
 differential <- read_release(rel("differential_analysis", "primary_differential_proteins.tsv.gz"))
 diff_summary <- read_release(rel("differential_analysis", "primary_differential_summary.tsv"))
 gsea_go <- read_release(rel("enrichment", "primary_GSEA_GO_BP.tsv.gz"))
+gsea_cc <- read_release(rel("enrichment", "primary_GSEA_GO_CC.tsv.gz"))
 gsea_kegg <- read_release(rel("enrichment", "primary_GSEA_KEGG.tsv.gz"))
 ora <- read_release(rel("enrichment", "primary_ORA_GO_BP.tsv.gz"))
+ora_cc <- read_release(rel("enrichment", "primary_ORA_GO_CC.tsv.gz"))
 sens <- read_release(rel("enrichment", "GSEA_log2FC_sensitivity.tsv.gz"))
+untested_sets <- read_release(rel("enrichment", "gsea_untested_gene_sets.tsv"))
 corrections_wb <- read_release(rel("metadata", "sample_class_corrections.tsv"))
 n_class_corrected_wb <- nrow(corrections_wb)
 ewce <- read_release(rel("enrichment", "primary_EWCE.tsv.gz"))
 coverage <- read_release(rel("enrichment", "enrichment_coverage.tsv"))
 figure_map <- read_release(rel("editor_source_data", "figure_source_map.tsv"))
 run_params <- read_release(rel("enrichment", "enrichment_run_parameters.tsv"))
+# The permutation note as stage 05 published it, and EWCE's own differential model.
+perm_sentence <- run_params$value[run_params$parameter == "gsea_n_perm_simple (documented)"]
+if (length(perm_sentence) != 1L) {
+  stop("enrichment_run_parameters.tsv lacks the documented nPermSimple row.", call. = FALSE)
+}
+ewce_model <- release_ewce_differential_model(DATA_ROOT)
 
 DROP_GENE_LISTS <- c("core_enrichment", "leading_edge")
 drop_cols <- function(d, cols) d[, setdiff(names(d), cols), drop = FALSE]
 # --------------------------------------------------------------------------------------
 # software / database versions
 # --------------------------------------------------------------------------------------
-# Built by the SHARED helper, not derived here. This sheet used to read only the 2025
-# hemisphere-level ProTigy params.txt header and publish "Protigy (v1.1.8)" with no
-# qualification, while provenance/software_versions.tsv correctly reported 2.4.1 for the
-# canonical animal-level run and confined v1.1.8 to the superseded hemisphere-level runs.
-# An editor reading this workbook would have concluded the analysis used ProTigy 1.1.8.
-#
-# The two artefacts now come from one derivation, so they cannot disagree again. The
-# `status` and `applies_to_stage` columns are carried into the sheet deliberately: they are
-# what makes a superseded version legible as superseded, and an UNKNOWN legible as an
-# unrecovered value rather than an omission.
+# Same rows as provenance/software_versions.tsv (release_build_software_versions()). The
+# `status` and `applies_to_stage` columns are kept so superseded versions and UNKNOWN values
+# read as such.
 sw <- release_build_software_versions(DATA_ROOT, REPO_ROOT)
+# The model and its limma / R versions, as the statistics run recorded them.
+stat_run <- release_read_stat_run(DATA_ROOT)
 
 # Retained for the registry provenance recorded at the end of this stage.
-pkg_versions_path <- file.path(DATA_ROOT, "03_output", "enrichment",
-                               "enrichment_t_rank_validation_20260825", "audits",
+pkg_versions_path <- file.path(release_enrichment_root("GO_BP", DATA_ROOT), "audits",
                                "package_database_versions.csv")
 ewce_session_path <- file.path(DATA_ROOT, "03_output", "ewce",
                                "EWCE_Results_animal_level_validation_20260825",
@@ -134,7 +132,7 @@ readme <- rbind(
     "them, is superseded by this package."), stringsAsFactors = FALSE, check.names = FALSE),
   data.frame(item = "5. GSEA RANKING STATISTIC", statement = paste(
     "The canonical GSEA ranks proteins by the MODERATED t STATISTIC. The original",
-    "submission ranked by the effect size ProTigy stores as `logFC`. Those",
+    "submission ranked by the effect size stored as `logFC`. Those",
     "effect-size-ranked results are retained here only as a",
     "sensitivity analysis, in a separate file, with analysis_role = sensitivity on every",
     "row."), stringsAsFactors = FALSE, check.names = FALSE),
@@ -144,10 +142,12 @@ readme <- rbind(
     "paired_veh vs unpaired_veh; unpaired_cno vs unpaired_veh). See the",
     "Primary_Contrasts sheet."), stringsAsFactors = FALSE, check.names = FALSE),
   data.frame(item = "7. SECONDARY ANALYSES ARE SEPARATE", statement = paste(
-    "Cross-compartment comparisons (Supplementary E), the effect-size-ranked GSEA sensitivity",
-    "analysis, the post-hoc Pairing x CNO interaction and the EWCE baseline analysis are",
-    "SECONDARY. They are listed on the Secondary_Analyses sheet and are never mixed into",
-    "the primary contrast table."), stringsAsFactors = FALSE, check.names = FALSE),
+    "Cross-compartment comparisons (Supp. Fig. 4 E), the effect-size-ranked GSEA",
+    "sensitivity analysis, the post-hoc Pairing x CNO interaction, the leave-one-animal-out",
+    "robustness check of the mCherry learning comparison, the EWCE baseline analysis and",
+    "the superseded pooled-model statistics (kept for comparison only) are SECONDARY. They",
+    "are listed on the Secondary_Analyses sheet and are never mixed into the primary",
+    "contrast table."), stringsAsFactors = FALSE, check.names = FALSE),
   data.frame(item = "8. COLLECTION PLATE", statement = paste(
     "Because pairing condition was completely associated with collection plate in the",
     "paired-vehicle versus unpaired-vehicle comparison, any collection-plate-associated",
@@ -157,13 +157,16 @@ readme <- rbind(
     "preparation, digestion, LC-MS, acquisition or instrument batch information exists",
     "for this dataset."), stringsAsFactors = FALSE, check.names = FALSE),
   data.frame(item = "9. WHAT CHANGED IN THE RESULTS", statement = paste0(
-    "Correcting the statistical unit did not leave every finding intact. Of the 12 primary",
-    " comparisons, ", n_contrasts_with_hits, " contain any FDR-significant protein and ",
-    12L - n_contrasts_with_hits, " contain none. The mCherry paired-vehicle versus",
-    " unpaired-vehicle comparison retains a broad signal (",
-    mch$n_significant_fdr_0_05_mapped_only, " of ", mch$n_proteins_tested_mapped_only,
-    " mapped proteins at FDR < 0.05), but its origin is unresolved. See",
-    " REVISION_PROTEOMICS_DATA_CHANGELOG.md for the panel-by-panel comparison."),
+    "Correcting the statistical unit did not leave every finding intact. Of the ",
+    inv$n_primary_contrasts, " primary comparisons, ", n_contrasts_with_hits,
+    if (n_contrasts_with_hits == 1L) " contains" else " contain",
+    " any FDR-significant protein and ", inv$n_primary_contrasts - n_contrasts_with_hits,
+    if (inv$n_primary_contrasts - n_contrasts_with_hits == 1L) " contains" else " contain",
+    " none. The mCherry paired-vehicle versus unpaired-vehicle comparison retains a broad",
+    " signal (", mch$n_significant_fdr_0_05_mapped_only, " of ",
+    mch$n_proteins_tested_mapped_only, " mapped proteins at FDR < 0.05), but its origin is",
+    " unresolved. See REVISION_PROTEOMICS_DATA_CHANGELOG.md for the panel-by-panel",
+    " comparison."),
     stringsAsFactors = FALSE, check.names = FALSE),
   data.frame(item = "10. FIELD NAMES", statement = paste(
     "protein_group_id holds UniProt ENTRY NAMES (e.g. A0A0J9YTR2_MOUSE), semicolon-",
@@ -178,7 +181,7 @@ readme <- rbind(
     "GSEA and ORA sheets contain every TESTED term, not only significant ones. Filter on",
     "adjusted_p_value. Where an ORA query list was empty (no FDR-significant proteins in",
     "that comparison) no rows exist; enrichment_coverage in the full release records that",
-    "explicitly as a result rather than a missing file."),
+    "as a result rather than a missing file.", perm_sentence),
     stringsAsFactors = FALSE, check.names = FALSE),
   data.frame(item = "12. GENE MEMBERSHIP LISTS", statement = paste(
     "The GSEA core_enrichment / leading_edge and ORA geneID columns are present in the",
@@ -192,9 +195,9 @@ readme <- rbind(
     "mass-spectrometry data."), stringsAsFactors = FALSE, check.names = FALSE),
   data.frame(item = "14. SHEET RELATIONSHIPS", statement = paste(
     "Join on: canonical_comparison (Primary_Contrasts <-> Differential_Proteins <-> GSEA_*",
-    "<-> ORA_GO_BP <-> EWCE); protein_group_id (Differential_Proteins <-> the feature",
+    "<-> ORA_* <-> EWCE); protein_group_id (Differential_Proteins <-> the feature",
     "annotation in the full release); AnimalID + sample_class (Animal_Level_Metadata <->",
-    "Sample_Metadata via animal_level_sample_id)."),
+    "Sample_Metadata via animal_level_sample_id).", ewce_model$sentence),
     stringsAsFactors = FALSE, check.names = FALSE),
   data.frame(item = "15. VERIFIED AND UNKNOWN METADATA ARE DISTINGUISHED", statement = paste(
     "Source-controlled experimenter records establish", mv_wb("organism_part"),
@@ -207,8 +210,9 @@ readme <- rbind(
     stringsAsFactors = FALSE, check.names = FALSE),
   data.frame(item = "16. THE EFFECT SIZE IS NOT A LOG2 FOLD CHANGE", statement = paste(
     "The abundance matrix is standardised separately for each protein, so the coefficient",
-    "ProTigy stores as `logFC` is a standardized abundance difference expressed in SD",
-    "units of that scale -- NOT a log2 ratio. A value of 2 means two standard deviations,",
+    "the statistical GCT stores as `logFC` (limma's name for it) is a standardized",
+    "abundance difference in SD units of that scale, not a log2 ratio. A value",
+    "of 2 means two standard deviations,",
     "not four-fold. It is published as `effect_size_sd_units`, with",
     "`source_statistic_field = logFC` for provenance, and the exported numbers are",
     "bit-identical to the canonical values. Only the label changed. Figure axes and",
@@ -228,6 +232,16 @@ readme <- rbind(
     " is the analysis-time class. Per-row provenance is in",
     " metadata/sample_class_corrections.tsv. This is NOT an unresolved discrepancy and NOT",
     " a mislabelling."),
+    stringsAsFactors = FALSE, check.names = FALSE),
+  data.frame(item = "18. STATISTICAL MODEL", statement = paste0(
+    RELEASE_PRIMARY_MODEL$methods_sentence, " Software: limma ", stat_run$limma_version,
+    " in R ", stat_run$r_version, " (", RELEASE_PRIMARY_MODEL$script, "), as recorded in",
+    " the statistics run manifest. Each sample class therefore has its own variance",
+    " estimate, and average_standardized_abundance (limma AveExpr) is the mean over that",
+    " sample class's ", stat_run$n_columns_in_model, " units. It replaces the earlier",
+    " pooled model (", RELEASE_PRIMARY_MODEL$superseded_label, ") used by the release of",
+    " 2026-09-07; see section 7b of REVISION_PROTEOMICS_DATA_CHANGELOG.md and the",
+    " Software_Versions sheet."),
     stringsAsFactors = FALSE, check.names = FALSE)
 )
 
@@ -252,11 +266,16 @@ sheets <- list(
   Secondary_Analyses = secondary,
   Figure_Source_Map = figure_map,
   Metadata_Field_Status = field_provenance,
-  Software_Versions = sw
+  Software_Versions = sw,
+  # GO-CC appended last (S17, S18) so the Contents stays in table-number order and S1-S16
+  # keep the numbers already cited.
+  GSEA_GO_CC = drop_cols(gsea_cc, DROP_GENE_LISTS),
+  ORA_GO_CC = drop_cols(ora_cc, DROP_GENE_LISTS),
+  GSEA_Untested_Sets = untested_sets
 )
 
 
-# Sheet-name length limit is 31 characters; check rather than truncate silently.
+# Sheet-name length limit is 31 characters; stop rather than truncate.
 too_long <- names(sheets)[nchar(names(sheets)) > 31L]
 if (length(too_long)) {
   stop("Sheet name(s) exceed the 31-character Excel limit: ",
@@ -294,7 +313,7 @@ for (nm in names(sheets)) {
 }
 
 # Hygiene runs on BOTH namings. The machine names carry the joinability and the
-# gene_symbol/uniprot_accession contract; the display names are what a reader sees, and a
+# gene_symbol/uniprot_accession check; the display names are what a reader sees, and a
 # duplicate or blank among them would be just as much a defect.
 machine_cols <- lapply(presented, function(p) names(p$data))
 display_cols <- lapply(presented, function(p) release_display_labels(names(p$data)))
@@ -304,8 +323,7 @@ if (length(hygiene)) {
   stop("Workbook hygiene violations:\n", paste("  -", hygiene, collapse = "\n"), call. = FALSE)
 }
 
-# The label map must cover every published column, so it cannot silently rot into
-# snake_case leaking onto a reader-facing header.
+# Every published column needs a display label in RELEASE_COLUMN_LABELS.
 unlabelled <- release_unlabelled_columns(unlist(machine_cols, use.names = FALSE))
 if (length(unlabelled)) {
   stop("Column(s) with no display label in RELEASE_COLUMN_LABELS: ",
@@ -396,7 +414,8 @@ openxlsx::writeData(
          inv$n_animals, " animals, ", inv$n_animal_level_units,
          " animal x sample-class units, n = ", inv$n_animals_per_stratum,
          " per condition per sample class, ", inv$n_primary_contrasts,
-         " primary contrasts. The animal is the independent experimental unit."),
+         " primary contrasts, one limma model per sample class (residual df ",
+         stat_run$df_residual, "). The animal is the independent experimental unit."),
   startRow = 2, startCol = 1)
 openxlsx::addStyle(wb, "Contents", style_caption, rows = 2, cols = 1)
 openxlsx::writeData(
@@ -488,15 +507,18 @@ release_register("editor_source_data/Proteomics_Source_Data_Animal_Level.xlsx",
                  c(rel("metadata", "sample_metadata.tsv"),
                    rel("differential_analysis", "primary_differential_proteins.tsv.gz"),
                    rel("enrichment", "primary_GSEA_GO_BP.tsv.gz"),
+                   rel("enrichment", "primary_GSEA_GO_CC.tsv.gz"),
                    rel("enrichment", "primary_ORA_GO_BP.tsv.gz"),
+                   rel("enrichment", "primary_ORA_GO_CC.tsv.gz"),
                    rel("enrichment", "primary_EWCE.tsv.gz"),
-                   pkg_versions_path, ewce_session_path),
-                 c(rep(NA_character_, 5), release_sha256(pkg_versions_path),
-                   release_sha256(ewce_session_path)),
+                   pkg_versions_path, ewce_session_path, stat_run$path, ewce_model$path),
+                 c(rep(NA_character_, 7), release_sha256(pkg_versions_path),
+                   release_sha256(ewce_session_path), release_sha256(stat_run$path),
+                   release_sha256(ewce_model$path)),
                  STAGE, "xlsx")
 
 # The workbook sheet inventory, so a validator can check it without opening Excel. Both
-# namings are recorded: `columns` is the machine naming the contracts key off, and
+# namings are recorded: `columns` is the machine naming the checks key off, and
 # `display_columns` is what the reader sees.
 inventory <- data.frame(
   sheet = names(presented),

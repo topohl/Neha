@@ -1,17 +1,16 @@
-# Shared primitives for the publication / deposition release layer.
+# Shared helpers for the release layer: repository-relative paths, data and output roots,
+# where the primary statistics run lives, output-root checks, reading and writing release
+# files, and the build registry.
 #
-# This layer is READ-ONLY with respect to validated analysis data. It reads canonical
-# artefacts and repackages them; it never recomputes a statistic and never writes into a
-# canonical root. The write-side guard is release_validate_output_root(), which fails
-# closed before any builder opens a connection.
+# The release reads analysis outputs and repackages them; it never recomputes a statistic.
+# release_validate_output_root() refuses any output root that overlaps a protected input or
+# analysis folder, using project_paths_overlap() from R/project_path_utils.R.
 #
-# Sourcing order: R/analysis_labels.R and R/project_path_utils.R must be sourced first
-# (release_source_project_helpers() does that for you). The containment engine here is
-# project_paths_overlap() from R/project_path_utils.R -- deliberately reused rather than
-# reimplemented, because a divergent normalisation is exactly how a protected root gets
-# missed (see the comment block at the top of that file).
+# After sourcing this file, call release_source_project_helpers(); it loads
+# R/analysis_labels.R and R/project_path_utils.R, which these helpers use.
 
-RELEASE_LAYER_VERSION <- "1.1.0"
+# 2.0.0 (2026-11-25): the primary statistics are the per-compartment limma run.
+RELEASE_LAYER_VERSION <- "2.0.0"
 
 # --------------------------------------------------------------------------------------
 # repository / helper discovery
@@ -42,6 +41,47 @@ release_source_project_helpers <- function(repo_root = release_repo_root(),
   source(file.path(repo_root, "R", "analysis_labels.R"), local = envir)
   source(file.path(repo_root, "R", "project_path_utils.R"), local = envir)
   invisible(repo_root)
+}
+
+#' Write paths inside proteomic_analysis/ relative to that folder.
+#'
+#' Release tables name repository files this way, so they do not carry the local folder of
+#' the computer that built the release. Other paths (the shared drive, paths inside the
+#' release, NA) are returned unchanged. A ";"-separated list is handled entry by entry.
+release_repo_relative <- function(path, repo_root = release_repo_root()) {
+  if (!length(path)) return(character(0))
+  root <- tolower(paste0(sub("/+$", "", gsub("\\\\", "/", repo_root)), "/"))
+  one <- function(p) {
+    if (is.na(p) || !nzchar(p)) return(p)
+    parts <- strsplit(p, ";", fixed = TRUE)[[1]]
+    norm <- gsub("\\\\", "/", parts)
+    inside <- startsWith(tolower(norm), root)
+    parts[inside] <- substring(norm[inside], nchar(root) + 1L)
+    paste(parts, collapse = ";")
+  }
+  vapply(as.character(path), one, character(1), USE.NAMES = FALSE)
+}
+
+#' Resolve a path as release tables write it: a relative path is read against
+#' proteomic_analysis/, an absolute path is returned as it is.
+release_repo_resolve <- function(path, repo_root = release_repo_root()) {
+  path <- as.character(path)
+  relative <- !is.na(path) & nzchar(path) & !grepl("^([A-Za-z]:|[/\\\\])", path)
+  path[relative] <- file.path(repo_root, path[relative])
+  path
+}
+
+#' TRUE for a relative path whose first folder exists in proteomic_analysis/.
+#'
+#' That is how a repository path written by release_repo_relative() is told apart from a
+#' path inside the release (metadata/, provenance/ and so on, which the repository does
+#' not have).
+release_is_repo_path <- function(path, repo_root = release_repo_root()) {
+  path <- gsub("\\\\", "/", as.character(path))
+  ok <- !is.na(path) & nzchar(path) & grepl("/", path, fixed = TRUE) &
+    !grepl("^([A-Za-z]:|/)", path)
+  first <- sub("/.*$", "", path)
+  ok & dir.exists(file.path(repo_root, first))
 }
 
 # --------------------------------------------------------------------------------------
@@ -80,22 +120,115 @@ release_project_root <- function() {
 #'
 #' Defaults to the real shared-drive release root. Always point this at scratch while
 #' testing: PROTEOMICS_RELEASE_OUTPUT_ROOT=<scratch>.
+#'
+#' The default moved on 2026-11-25 with the primary statistics. The pooled-run release
+#' of 2026-09-07 stays frozen in 03_output/publication_release (a protected root).
 release_output_root <- function() {
   release_option_or_env(
     "proteomics.release_output_root", "PROTEOMICS_RELEASE_OUTPUT_ROOT",
-    file.path(release_data_root(), "03_output", "publication_release")
+    file.path(release_data_root(), "03_output",
+              "release_within_compartment_20261125")
   )
 }
 
 # --------------------------------------------------------------------------------------
-# write-side governance
+# where the primary statistics run lives
+# --------------------------------------------------------------------------------------
+# Since 2026-11-24 the primary statistics are the per-compartment limma run. This is the
+# one place the builders and tests learn where its files are; the model itself is
+# described by RELEASE_PRIMARY_MODEL in release_validation.R. The pooled run's folders
+# stay on disk for comparison only.
+RELEASE_STATISTICS_RUN <- list(
+  id = "within_compartment_20261124",
+  date = "2026-11-24",
+  stats_relative = c("02_data", "animal_level", "within_compartment_20261124"),
+  gct = "stat_results_within_compartment.gct",
+  run_manifest = "stat_results_within_compartment_run_manifest.csv",
+  # GO-BP (GO_BP/) and GO-CC (GO_CC/) GSEA and ORA: the rerun with fgsea nPermSimple = 100000,
+  # adopted 2026-11-25. Its ORA tables are byte-identical to the 20261124 run's.
+  enrichment_relative = c("03_output", "enrichment", "enrichment_within_compartment_20261125"),
+  enrichment_date = "2026-11-25",
+  enrichment_runs = c("GO_BP", "GO_CC"),
+  # KEGG GSEA was not rerun (its gene sets are downloaded at run time and not version-pinned),
+  # so it stays in the GO_BP folder of the 20261124 run, at the fgsea default nPermSimple. That
+  # run's GO-BP and GO-CC tables are superseded and are read only as the same-setting
+  # reference of the sensitivity analyses.
+  kegg_enrichment_relative = c("03_output", "enrichment", "enrichment_within_compartment_20261124"),
+  kegg_enrichment_date = "2026-11-24",
+  kegg_run = "GO_BP",
+  figure_rebuild_relative = c("03_output", "figure_rebuild_within_compartment_20261125"),
+  # The record of the rebuild: the script that ran its R scripts, in order.
+  figure_rebuild_record = c("scripts", "run_rebuild.sh"),
+  # Rebuild of 2026-11-24 on the 20261124 enrichment, superseded by the one above.
+  superseded_figure_rebuild_relative = c("03_output", "figure_rebuild_within_compartment_20261124"),
+  inferential_relative = c("03_output", "inferential_checks", "within_compartment_20261124"),
+  # Superseded pooled run (one fit over all 48 columns), retained for comparison. Read only
+  # for the "what changed from the pooled release" tables; its mapped and enrichment indexes
+  # must both record this GCT hash before anything is counted from them.
+  pooled_stats_relative = c("02_data", "animal_level"),
+  pooled_stat_gct = "stat_results_for_ssGSEA_neha_proteome.gct",
+  pooled_stat_gct_sha256 = "e1ae20f02e2747cfae3572933f2b23e6c770b92ef6810963a2806afb7adbe2b6",
+  pooled_enrichment_relative = c("03_output", "enrichment",
+                                 "enrichment_t_rank_validation_20260825"),
+  pooled_release_relative = c("03_output", "publication_release"),
+  # The GO GSEA rerun with a larger fgsea nPermSimple (enrichment_relative above) was adopted
+  # on 2026-11-25. The sensitivity analyses (interaction, leave-one-animal-out, rank
+  # robustness) were not rerun: they stay at the fgsea default and are compared with the
+  # primary analysis at that same setting.
+  enrichment_rerun_status = "adopted"
+)
+
+release_rel_path <- function(relative, data_root = release_data_root()) {
+  do.call(file.path, c(list(data_root), as.list(relative)))
+}
+
+#' Folder holding the primary statistics GCT, its run manifest, split/ and mapped/.
+release_stats_root <- function(data_root = release_data_root()) {
+  release_rel_path(RELEASE_STATISTICS_RUN$stats_relative, data_root)
+}
+
+#' A file next to the primary statistics GCT (the GCT itself or its run manifest).
+release_stat_run_path <- function(file, data_root = release_data_root()) {
+  file.path(release_stats_root(data_root), file)
+}
+
+#' GO enrichment run folder: "GO_BP" or "GO_CC".
+release_enrichment_root <- function(run = c("GO_BP", "GO_CC"), data_root = release_data_root()) {
+  run <- match.arg(run)
+  file.path(release_rel_path(RELEASE_STATISTICS_RUN$enrichment_relative, data_root), run)
+}
+
+#' The run folder holding the released KEGG GSEA (per_comparison/*/GSEA_KEGG*.csv).
+release_kegg_root <- function(data_root = release_data_root()) {
+  file.path(release_rel_path(RELEASE_STATISTICS_RUN$kegg_enrichment_relative, data_root),
+            RELEASE_STATISTICS_RUN$kegg_run)
+}
+
+release_figure_rebuild_root <- function(data_root = release_data_root()) {
+  release_rel_path(RELEASE_STATISTICS_RUN$figure_rebuild_relative, data_root)
+}
+
+release_figure_rebuild_record <- function(data_root = release_data_root()) {
+  do.call(file.path, c(list(release_figure_rebuild_root(data_root)),
+                       as.list(RELEASE_STATISTICS_RUN$figure_rebuild_record)))
+}
+
+#' Per-compartment interaction and robustness checks (05/06 in 04_differential_*).
+release_inferential_root <- function(data_root = release_data_root()) {
+  release_rel_path(RELEASE_STATISTICS_RUN$inferential_relative, data_root)
+}
+
+# --------------------------------------------------------------------------------------
+# output-root checks
 # --------------------------------------------------------------------------------------
 
 #' Roots this layer must never write into.
 #'
-#' 03_output is NOT protected wholesale, because the intended real release root lives
-#' inside it (03_output/publication_release). The individual canonical analysis branches
-#' under 03_output are protected by name instead.
+#' 03_output is not protected as a whole, because the release root lives
+#' inside it (03_output/release_within_compartment_20261125). The individual
+#' canonical analysis branches under 03_output are protected by name instead, and so is
+#' the frozen pooled-run release (03_output/publication_release). Overlap is tested on
+#' whole path components, so the new root's name does not collide with the frozen one.
 release_protected_roots <- function(data_root = release_data_root()) {
   c(
     file.path(data_root, "01_input"),
@@ -107,18 +240,22 @@ release_protected_roots <- function(data_root = release_data_root()) {
     file.path(data_root, "03_output", "pca"),
     file.path(data_root, "03_output", "synthesis"),
     file.path(data_root, "03_output", "inferential_checks"),
+    # inside inferential_checks already; named so the guard reports it by name
+    release_rel_path(RELEASE_STATISTICS_RUN$inferential_relative, data_root),
     file.path(data_root, "03_output", "qc"),
     file.path(data_root, "03_output", "reviewer_revision_animal_level_20260827"),
-    file.path(data_root, "03_output", "manuscript_curation_20260827")
+    file.path(data_root, "03_output", "manuscript_curation_20260827"),
+    release_rel_path(RELEASE_STATISTICS_RUN$figure_rebuild_relative, data_root),
+    release_rel_path(RELEASE_STATISTICS_RUN$superseded_figure_rebuild_relative, data_root),
+    # pooled-run release of 2026-09-07: superseded, frozen, never rebuilt in place
+    release_rel_path(RELEASE_STATISTICS_RUN$pooled_release_relative, data_root)
   )
 }
 
-#' Fail closed unless `output_root` is clear of every protected root.
+#' Stop unless `output_root` is clear of every protected root.
 #'
-#' Containment is checked bidirectionally and case-insensitively via
-#' project_paths_overlap(), so an output root that *contains* a protected root is
-#' rejected too. Pointing the release at the parent of 02_data must not pass merely
-#' because it is not literally 02_data.
+#' Overlap is checked in both directions and ignoring case (project_paths_overlap()), so an
+#' output root that contains a protected root, such as the parent of 02_data, is refused too.
 release_validate_output_root <- function(output_root, data_root = release_data_root()) {
   if (is.null(output_root) || !nzchar(trimws(as.character(output_root)))) {
     stop("Publication release output root is empty.", call. = FALSE)
@@ -141,33 +278,48 @@ release_is_shared_drive_root <- function(output_root, data_root = release_data_r
   isTRUE(try(project_path_is_within(output_root, data_root), silent = TRUE))
 }
 
-#' Fail closed unless writing to the shared drive has been explicitly opted into.
+#' Stop before writing to the shared drive unless PROTEOMICS_RELEASE_ALLOW_SHARED_DRIVE=true.
+#' The default release root is on the shared drive, so a bare `Rscript run_release.R` would
+#' otherwise write there.
 #'
-#' The default release root is on the shared drive, so a bare `Rscript run_release.R`
-#' would populate it. That is the same failure mode as the 2026-08-28 incident recorded in
-#' the repository history: a run that was meant for scratch reached the validated tree
-#' because nothing required the destination to be stated. Building into scratch stays
-#' frictionless; publishing to the shared drive requires saying so.
+#' A shared-drive build is also refused while the repository has uncommitted or untracked
+#' changes, because the recorded commit would not contain the code. Set
+#' PROTEOMICS_RELEASE_ALLOW_DIRTY=true to build anyway; the commit is then recorded with a
+#' "+dirty" suffix.
 release_assert_shared_drive_opt_in <- function(output_root,
-                                               data_root = release_data_root()) {
+                                               data_root = release_data_root(),
+                                               dirty = NULL) {
   if (!release_is_shared_drive_root(output_root, data_root)) return(invisible(TRUE))
   allow <- tolower(trimws(release_option_or_env(
     "proteomics.release_allow_shared_drive", "PROTEOMICS_RELEASE_ALLOW_SHARED_DRIVE", "")))
-  if (allow %in% c("true", "yes", "1")) return(invisible(TRUE))
-  stop(
-    "Refusing to write the publication release to the shared drive without an explicit ",
-    "opt-in.\n  target: ", output_root,
-    "\n  Build into scratch first:\n",
-    "    PROTEOMICS_RELEASE_OUTPUT_ROOT=<scratch dir> Rscript 07_publication_release/run_release.R\n",
-    "  To publish to the shared drive deliberately, set ",
-    "PROTEOMICS_RELEASE_ALLOW_SHARED_DRIVE=true.",
-    call. = FALSE)
+  if (!allow %in% c("true", "yes", "1")) {
+    stop(
+      "Refusing to write the publication release to the shared drive without an explicit ",
+      "opt-in.\n  target: ", output_root,
+      "\n  Build into scratch first:\n",
+      "    PROTEOMICS_RELEASE_OUTPUT_ROOT=<scratch dir> Rscript 07_publication_release/run_release.R\n",
+      "  To publish to the shared drive, set ",
+      "PROTEOMICS_RELEASE_ALLOW_SHARED_DRIVE=true.",
+      call. = FALSE)
+  }
+  if (is.null(dirty)) dirty <- release_git_tree_dirty()
+  allow_dirty <- tolower(trimws(release_option_or_env(
+    "proteomics.release_allow_dirty", "PROTEOMICS_RELEASE_ALLOW_DIRTY", "")))
+  if (isTRUE(dirty) && !allow_dirty %in% c("true", "yes", "1")) {
+    stop(
+      "Refusing to write the publication release to the shared drive from a repository with ",
+      "uncommitted or untracked changes: the recorded commit would not contain the code that ",
+      "built it.\n  Commit first, or set PROTEOMICS_RELEASE_ALLOW_DIRTY=true to publish with ",
+      "the commit recorded as <hash>+dirty.",
+      call. = FALSE)
+  }
+  invisible(TRUE)
 }
 
 #' Create (if needed) and validate the release root, then return it normalised.
 #'
-#' Order matters: both guards run BEFORE the directory is created, so a rejected target
-#' does not even leave an empty folder behind on the shared drive.
+#' Both checks run before the directory is created, so a refused target leaves no empty
+#' folder.
 release_prepare_output_root <- function(output_root = release_output_root(),
                                         data_root = release_data_root()) {
   release_validate_output_root(output_root, data_root)
@@ -206,18 +358,9 @@ release_require <- function(...) {
   invisible(TRUE)
 }
 
-#' SHA256 of a file's bytes, or NA if the file is absent.
-#'
-#' The byte-reading digest this layer introduced now lives in R/project_path_utils.R as
-#' project_file_sha256(), because the same digest(file = ...) hazard was breaking the
-#' pipeline's own hashers and its tests -- see the note there for the SMB ACL-probe
-#' detail. This wrapper keeps the layer's own contract on top of that primitive: an
-#' absent file yields NA rather than an error, which the manifest and figure-provenance
-#' stages rely on to distinguish "not released" from "hash mismatch".
-#'
-#' Delegation runs one way only: the release layer reuses a pipeline-wide primitive, and
-#' nothing scientific depends on this layer. The digest is unchanged and still reproduces
-#' both locked GCT hashes exactly.
+#' SHA256 of a file's bytes (project_file_sha256() in R/project_path_utils.R), or NA if the
+#' file is absent. The manifest and figure stages use the NA to tell "not released" from
+#' "hash mismatch".
 release_sha256 <- function(path) {
   release_require("digest")
   if (!file.exists(path)) return(NA_character_)
@@ -248,9 +391,8 @@ release_read_tsv_plain <- function(path, what = basename(path)) {
 
 #' Read a GCT v1.3 file into id / row-descriptor / column-descriptor / matrix parts.
 #'
-#' Implemented here rather than reused from R/protigy_input_utils.R because that helper
-#' belongs to a *producing* stage; the release layer must not pull a GCT writer into
-#' scope at all.
+#' Kept separate from R/protigy_input_utils.R so the release layer does not load a GCT
+#' writer.
 release_read_gct <- function(path, what = basename(path)) {
   release_assert_exists(path, what)
   lines <- readLines(path, warn = FALSE)
@@ -315,7 +457,7 @@ release_read_gct <- function(path, what = basename(path)) {
 #' Strip characters that would corrupt an unquoted TSV.
 #'
 #' GO term names and the protein descriptions carried in the retained search/quantification
-#' output are free text; a stray tab or newline would silently shift every downstream
+#' output are free text; a stray tab or newline would shift every downstream
 #' column. Replaced with a single space rather than dropped, so field content stays
 #' readable.
 release_sanitize_tsv <- function(df) {
@@ -331,9 +473,8 @@ release_sanitize_tsv <- function(df) {
 
 #' Format doubles with full round-trip precision so exports equal their source exactly.
 #'
-#' write.table() would emit 7 significant digits, which breaks the exact-equality
-#' contract the release tests assert against the canonical CSVs. 17 significant digits
-#' round-trips an IEEE double.
+#' write.table() writes 15 significant digits, which does not round-trip every double;
+#' 17 always do, so the exports pass the exact-equality checks against the canonical CSVs.
 release_format_numeric <- function(df) {
   # Use positional indexing for the same repeated-header reason as above.
   for (i in seq_along(df)) {
@@ -372,10 +513,9 @@ release_write_lines <- function(lines, path) {
   invisible(path)
 }
 
-# Stage 13 is deliberately run after the 12-stage build and then reissues the manifest.
-# On a later in-place rebuild, its two reports would otherwise survive the registry reset
-# and make Stage 12 (correctly) reject them as unregistered stale files. Remove only these
-# exact generated paths; every other unexpected file must continue to fail the manifest.
+# Stage 13 runs after the 12-stage build and writes these two reports. An in-place rebuild
+# removes them first, or stage 12 would reject them as unregistered files; any other
+# unexpected file still fails the manifest.
 RELEASE_VALIDATION_REPORT_RELPATHS <- c(
   "provenance/validation_results.tsv",
   "provenance/VALIDATION_REPORT.md"
@@ -395,7 +535,7 @@ release_clear_previous_validation_reports <- function(output_root = release_outp
 }
 
 # --------------------------------------------------------------------------------------
-# build registry -- the cross-process channel 09_build_release_manifest.R aggregates
+# build registry: each stage records its files; 12_build_release_manifest.R checks them
 # --------------------------------------------------------------------------------------
 
 RELEASE_REGISTRY_RELPATH <- "provenance/_build_registry.tsv"
@@ -432,10 +572,21 @@ release_register <- function(relative_path, file_role, source_artifact,
                              generated_by, format_hint = NA_character_,
                              output_root = release_output_root()) {
   p <- release_registry_path(output_root)
+  # A source inside this release is recorded by its release-relative path, so the registry
+  # and the manifest read the same whichever root the release was built in.
+  source_artifact <- gsub("\\\\", "/", as.character(source_artifact))
+  root_prefix <- paste0(sub("/+$", "", gsub("\\\\", "/", project_normalize_path(output_root))),
+                        "/")
+  inside <- !is.na(source_artifact) &
+    startsWith(tolower(source_artifact), tolower(root_prefix))
+  source_artifact[inside] <- substring(source_artifact[inside], nchar(root_prefix) + 1L)
+  # A source inside the repository is recorded relative to proteomic_analysis/.
+  repo_root <- tryCatch(release_repo_root(), error = function(e) NULL)
+  if (!is.null(repo_root)) source_artifact <- release_repo_relative(source_artifact, repo_root)
   row <- data.frame(
     relative_path = gsub("\\\\", "/", as.character(relative_path)[[1]]),
     file_role = as.character(file_role)[[1]],
-    source_artifact = paste(unique(as.character(source_artifact)), collapse = ";"),
+    source_artifact = paste(unique(source_artifact), collapse = ";"),
     canonical_source_sha256 = paste(
       unique(stats::na.omit(as.character(canonical_source_sha256))), collapse = ";"),
     generated_by = as.character(generated_by)[[1]],
@@ -462,6 +613,20 @@ release_registry_read <- function(output_root = release_output_root()) {
 # small shared conveniences
 # --------------------------------------------------------------------------------------
 
+#' TRUE when proteomic_analysis/ has uncommitted or untracked changes, NA if git is absent.
+release_git_tree_dirty <- function(repo_root = release_repo_root()) {
+  out <- tryCatch(
+    suppressWarnings(system2("git", c("-C", shQuote(repo_root), "status", "--porcelain",
+                                      "--untracked-files=all", "--", "."),
+                             stdout = TRUE, stderr = FALSE)),
+    error = function(e) NULL
+  )
+  status <- attr(out, "status")
+  if (is.null(out) || (!is.null(status) && status != 0L)) return(NA)
+  any(nzchar(trimws(out)))
+}
+
+#' HEAD of the repository, suffixed "+dirty" when the working tree differs from it.
 release_git_commit <- function(repo_root = release_repo_root()) {
   out <- tryCatch(
     suppressWarnings(system2("git", c("-C", shQuote(repo_root), "rev-parse", "HEAD"),
@@ -469,7 +634,9 @@ release_git_commit <- function(repo_root = release_repo_root()) {
     error = function(e) character()
   )
   if (!length(out) || is.na(out[[1]]) || !nzchar(out[[1]])) return("UNKNOWN")
-  trimws(out[[1]])
+  commit <- trimws(out[[1]])
+  if (isTRUE(release_git_tree_dirty(repo_root))) commit <- paste0(commit, "+dirty")
+  commit
 }
 
 release_timestamp_utc <- function() {
@@ -498,13 +665,10 @@ release_sample_class_alias <- function(sample_class) {
 
 #' Normalise the 2024 acquisition-annotation group labels to canonical sample classes.
 #'
-#' sample_annotation.xlsx uses `Background`, `cFosN`, `mCherryN`, `Neuron` (and `N` in the
-#' hemisphere label). Only two of those four are in sample_class_aliases in
-#' R/analysis_labels.R, so normalize_sample_class() returns NA for `cFosN` and `mCherryN`.
-#' That matters here: a corroboration check comparing against NA silently passes, which
-#' would hide exactly the kind of mismatch the check exists to find. The shared helper is
-#' left alone -- it is used by the scientific stages and changing its vocabulary could
-#' alter their behaviour -- and the extra aliases live here instead.
+#' sample_annotation.xlsx uses `Background`, `cFosN`, `mCherryN`, `Neuron` (and `N`).
+#' normalize_sample_class() in R/analysis_labels.R returns NA for `cFosN` and `mCherryN`,
+#' and a comparison against NA would hide a mismatch, so the extra aliases live here
+#' instead of in the shared helper the analysis stages use.
 RELEASE_ANNOTATION_LABEL_ALIASES <- c(
   "background" = "neuropil",
   "bg" = "neuropil",

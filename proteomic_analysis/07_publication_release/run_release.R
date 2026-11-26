@@ -1,25 +1,20 @@
 #!/usr/bin/env Rscript
 
-# Publication release -- orchestrator.
+# Publication release: runs stages 01-12 in order and stops at the first failure. Run
+# 13_validate_release.R afterwards with the same output root.
 #
-#   Rscript 07_publication_release/run_release.R
+# From proteomic_analysis/, build into scratch first:
+#   PROTEOMICS_RELEASE_OUTPUT_ROOT=<scratch dir> Rscript 07_publication_release/run_release.R
 #
-# Writes to PROTEOMICS_RELEASE_OUTPUT_ROOT if set, otherwise to the shared-drive release
-# root (03_output/publication_release). ALWAYS run into scratch first:
+# Without PROTEOMICS_RELEASE_OUTPUT_ROOT the release goes to the shared-drive root
+# 03_output/release_within_compartment_20261125. Any output root on the shared drive also
+# needs PROTEOMICS_RELEASE_ALLOW_SHARED_DRIVE=true and no uncommitted or untracked changes
+# under proteomic_analysis/ (or PROTEOMICS_RELEASE_ALLOW_DIRTY=true). Output roots that
+# overlap 01_input, 02_data, 99_historical, the migration backup, an analysis folder under
+# 03_output or the frozen pooled-run release (03_output/publication_release) are refused.
 #
-#   PROTEOMICS_RELEASE_OUTPUT_ROOT=%TEMP%\amp_release_<timestamp> \
-#     Rscript 07_publication_release/run_release.R
-#
-# The output root is validated before anything is written: a root that overlaps 01_input,
-# 02_data, 99_historical, the migration backup, or any canonical 03_output analysis branch
-# is rejected outright.
-#
-# The build registry is reset first. Without that, a file renamed between runs would leave
-# a stale registry row and the manifest stage would report a released file that no longer
-# exists -- correctly, but for the wrong reason.
-#
-# Each stage runs in its own environment, so every stage is also runnable on its own with
-# plain Rscript. Stages are ordered by dependency, not by convenience.
+# The locked input hashes are checked and the build registry is reset before stage 01.
+# Each stage runs in its own environment and can also be run alone with Rscript.
 
 suppressWarnings({
   args <- commandArgs(trailingOnly = FALSE)
@@ -34,9 +29,7 @@ source(file.path(LAYER, "R", "release_validation.R"))
 
 OUT_ROOT <- release_prepare_output_root()
 
-# A validated in-place release contains Stage 13's reports. They are regenerated only after
-# this 12-stage build, so clear those exact generated files before resetting the registry;
-# otherwise Stage 12 would correctly reject them as stale, unregistered carry-overs.
+# Remove the previous stage 13 reports (see release_clear_previous_validation_reports()).
 cleared_validation_reports <- release_clear_previous_validation_reports(OUT_ROOT)
 
 cat("\n")
@@ -48,6 +41,8 @@ cat("git commit   : ", release_git_commit(REPO_ROOT), "\n", sep = "")
 cat("data root    : ", release_data_root(), "\n", sep = "")
 cat("project root : ", release_project_root(), "\n", sep = "")
 cat("release root : ", OUT_ROOT, "\n", sep = "")
+cat("statistics   : ", RELEASE_STATISTICS_RUN$id, " (", RELEASE_PRIMARY_MODEL$label, ")\n",
+    sep = "")
 cat("started      : ", release_timestamp_utc(), "\n", sep = "")
 if (length(cleared_validation_reports)) {
   cat("cleared      : previous Stage 13 validation reports (",

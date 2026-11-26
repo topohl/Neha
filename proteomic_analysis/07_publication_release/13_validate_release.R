@@ -1,21 +1,18 @@
 #!/usr/bin/env Rscript
 
-# Publication release, stage 13 -- validate the built package.
+# Publication release, stage 13: validate the built package.
 #
 # Produces
-#   provenance/validation_results.tsv   one row per contract, PASS / FAIL / SKIP
-#   provenance/VALIDATION_REPORT.md     the same, readable
+#   provenance/validation_results.tsv   one row per check, PASS / FAIL / SKIP
+#   provenance/VALIDATION_REPORT.md     the same as a readable report
 #
-# Two verdicts are reported and must not be conflated:
+# Two separate results: PASS / FAIL / SKIP per check, and a PRIDE readiness status (one of
+# release_pride_statuses). Missing PRIDE metadata does not fail the release; it only keeps
+# the status below PRIDE_READY.
 #
-#   RELEASE VALIDATION  PASS / FAIL / SKIP per scientific and integrity contract.
-#   PRIDE READINESS     one of four values, derived from evidence.
-#
-# A PRIDE field that is genuinely unavailable does NOT fail the scientific release. It does
-# prevent the deposition being called PRIDE_READY, and that distinction is the point.
-#
-# The validator rewrites the manifest and checksums as its last act, so its own report is
-# covered by both. Everything it validates is fixed before that happens.
+# Run after run_release.R with the same PROTEOMICS_RELEASE_OUTPUT_ROOT. The last step
+# rebuilds the manifest and checksums (stage 12) so they cover this report; the script then
+# stops with an error if any check failed.
 
 suppressWarnings({
   args <- commandArgs(trailingOnly = FALSE)
@@ -27,6 +24,7 @@ REPO_ROOT <- release_repo_root()
 release_source_project_helpers(REPO_ROOT)
 LAYER <- file.path(REPO_ROOT, "07_publication_release")
 source(file.path(LAYER, "R", "release_validation.R"))
+source(file.path(LAYER, "R", "release_software_versions.R"))
 release_require("digest")
 
 DATA_ROOT <- release_data_root()
@@ -113,11 +111,9 @@ expect("metadata provenance", "released sample-preparation protocol equals the c
 expect("metadata provenance", "sample-preparation protocol is the 2024-11-28 version",
        identical(unique(sample_preparation_protocol$protocol_version_date), "2024-11-28"))
 
-# Sample-class correction. The contract is NOT that every measurement carries its original
-# class -- six do not, deliberately -- and it is NOT that the difference is an open question.
-# The forensic audit resolved it as an intentional correction, so what is checked here is
-# that the correction is documented exactly, both identities are retained, and nothing about
-# it is left as an unresolved blocker.
+# Sample-class correction: six measurements were reassigned (see
+# RELEASE_SAMPLE_CLASS_CORRECTION). Check that both labels are kept, the six rows match the
+# record, and the documents describe the correction as resolved.
 corr_path <- rel("metadata", "sample_class_corrections.tsv")
 expect("design", "both original and analysis sample-class labels are retained for all 96",
        all(c("original_sample_class", "analysis_sample_class", "sample_class_corrected")
@@ -151,13 +147,13 @@ if (!file.exists(corr_path)) {
            setequal(corr$sample_id, sm$sample_id[as.logical(sm$sample_class_corrected)]),
          paste(nrow(corr), "row(s)"))
 
-  # The full contract: count, identity, hemisphere, animals, plate positions, both class
-  # vectors and the 3-cycle. Reported per check so a failure names what diverged.
+  # Count, identity, hemisphere, animals, plate positions, both class vectors and the cycle,
+  # one check each so a failure names the field.
   for (i in seq_len(nrow(cc <- release_check_sample_class_corrections(corr)))) {
     expect("design", cc$check[i], cc$pass[i])
   }
 
-  # The cited correction record must still hash to what the forensic audit recorded.
+  # The cited correction record must still hash to what the audit recorded.
   ref <- release_verify_sample_class_correction_reference(DATA_ROOT, require_match = FALSE)
   expect("design", "the preserved correction record matches its recorded SHA256",
          isTRUE(ref$matches),
@@ -167,9 +163,8 @@ if (!file.exists(corr_path)) {
   expect("design", "no corrected row claims a quantitative change",
          all(toupper(as.character(corr$quantitative_values_changed)) == "FALSE"))
 
-  # This is the check that used to be a SKIP. It is a PASS now, and it is a real check:
-  # the correction has to be RESOLVED, documented in the reader-facing documents, and
-  # described without the vocabulary of an open discrepancy.
+  # The correction must carry the resolved status and be described in README_DATA.md and
+  # the changelog.
   readme_txt <- paste(readLines(rel("README_DATA.md"), warn = FALSE), collapse = " ")
   changelog_txt <- paste(readLines(
     rel("editor_source_data", "REVISION_PROTEOMICS_DATA_CHANGELOG.md"), warn = FALSE),
@@ -201,7 +196,7 @@ if (!file.exists(corr_path)) {
          length(hit) == 0L,
          if (length(hit)) paste("found:", paste(hit, collapse = "; ")) else "")
 
-  # The absence of a written rationale is a fact and must stay stated.
+  # The changelog must say that no written rationale survives.
   expect("design", "the missing prose rationale is disclosed, not glossed",
          grepl("No surviving prose note", changelog_txt, fixed = TRUE) ||
            grepl("no surviving prose note", changelog_txt, fixed = TRUE))
@@ -256,7 +251,25 @@ expect("differential", "gene_symbol column holds gene symbols, not UniProt ident
 expect("differential", "protein_group_id holds UniProt entry names",
        mean(release_uniprot_like(unique(da$protein_group_id))) > 0.9)
 
-SPLIT_FORWARD <- file.path(DATA_ROOT, "02_data", "animal_level", "split", "forward")
+# The split and mapped tables the release reads must descend from the locked statistics GCT.
+for (ix in list(list(label = "split index", path = file.path(release_stats_root(DATA_ROOT),
+                                                             "split", "indexComparisons.csv")),
+                list(label = "mapped index", path = file.path(release_stats_root(DATA_ROOT),
+                                                              "mapped",
+                                                              "indexMappedComparisons.csv")))) {
+  if (!file.exists(ix$path)) {
+    record("differential", paste("the", ix$label, "cites the locked statistics GCT"), "SKIP",
+           "canonical index unreachable")
+  } else {
+    d <- release_read_csv(ix$path)
+    expect("differential", paste("the", ix$label, "cites the locked statistics GCT"),
+           nrow(d) == inv$n_primary_contrasts &&
+             all(as.character(d$source_gct_sha256) == RELEASE_LOCKED_ARTEFACTS$stat_gct$sha256),
+           paste(nrow(d), "comparisons"))
+  }
+}
+
+SPLIT_FORWARD <- file.path(release_stats_root(DATA_ROOT), "split", "forward")
 CHECK_MAP <- c(effect_size_sd_units = "log2fc", average_standardized_abundance = "aveExpr", moderated_t = "t",
                P.Value = "pval", adj.P.Val = "padj", B_log_odds = "B")
 if (!dir.exists(SPLIT_FORWARD)) {
@@ -292,32 +305,100 @@ expect("differential", "summary counts agree with the exported rows",
        }, logical(1))))
 
 # --------------------------------------------------------------------------------------
+cat("\n=== the differential statistics are the per-sample-class model ===\n")
+# --------------------------------------------------------------------------------------
+# A release built from the superseded pooled run would pass every equality check above
+# against its own tables, so the model itself is checked against its run manifest.
+stat_run <- tryCatch(release_read_stat_run(DATA_ROOT), error = function(e) e)
+if (inherits(stat_run, "error")) {
+  record("statistics", "the statistics run manifest is readable and describes the primary model",
+         "FAIL", conditionMessage(stat_run))
+} else {
+  sm_stat <- stat_run$manifest
+  expect("statistics", "one manifest row per primary contrast, all the per-sample-class model",
+         nrow(sm_stat) == inv$n_primary_contrasts &&
+           setequal(sm_stat$canonical_comparison, pc$canonical_comparison) &&
+           all(sm_stat$variance_model == RELEASE_PRIMARY_MODEL$variance_model))
+  expect("statistics", "each model uses one sample class's 12 animal-level units",
+         all(as.integer(sm_stat$n_columns_in_model) == inv$n_animals) &&
+           all(as.integer(sm_stat$df_residual) == inv$n_animals - inv$n_conditions),
+         paste0("residual df ", paste(unique(sm_stat$df_residual), collapse = ";")))
+  expect("statistics", "the run manifest cites the locked input and statistics GCTs",
+         identical(stat_run$input_gct_sha256,
+                   RELEASE_LOCKED_ARTEFACTS$animal_level_input_gct$sha256) &&
+           identical(stat_run$output_gct_sha256, RELEASE_LOCKED_ARTEFACTS$stat_gct$sha256))
+  m_fdr <- stats::setNames(as.integer(sm_stat$n_fdr_proteins), sm_stat$canonical_comparison)
+  expect("statistics", "released FDR counts equal the counts the statistics run recorded",
+         identical(unname(m_fdr[da_sum$canonical_comparison]),
+                   as.integer(da_sum$n_significant_fdr_0_05)),
+         paste(sum(m_fdr), "FDR-significant protein rows in total"))
+  expect("statistics", "every contrast row names the primary model, residual df and limma version",
+         all(pc$statistical_model == RELEASE_PRIMARY_MODEL$label) &&
+           all(as.integer(pc$residual_df) == stat_run$df_residual) &&
+           all(grepl(paste0("limma ", stat_run$limma_version), pc$statistics_software,
+                     fixed = TRUE)))
+  ave <- release_aveexpr_summary(da)
+  expect("statistics", "AveExpr is the sample-class mean; over the four classes it averages ~0",
+         ave$n_proteins == inv$n_proteins_statistical && ave$max_abs_mean_over_classes < 0.0015,
+         sprintf("max |mean over classes| %.5f; within-class range %.2f to %.2f",
+                 ave$max_abs_mean_over_classes, ave$range_within_classes[1],
+                 ave$range_within_classes[2]))
+}
+
+# --------------------------------------------------------------------------------------
 cat("\n=== enrichment results equal their canonical sources ===\n")
 # --------------------------------------------------------------------------------------
 gsea_go <- read_release(rel("enrichment", "primary_GSEA_GO_BP.tsv.gz"))
+gsea_cc <- read_release(rel("enrichment", "primary_GSEA_GO_CC.tsv.gz"))
 gsea_kegg <- read_release(rel("enrichment", "primary_GSEA_KEGG.tsv.gz"))
 ora <- read_release(rel("enrichment", "primary_ORA_GO_BP.tsv.gz"))
+ora_cc <- read_release(rel("enrichment", "primary_ORA_GO_CC.tsv.gz"))
 sens <- read_release(rel("enrichment", "GSEA_log2FC_sensitivity.tsv.gz"))
 ewce <- read_release(rel("enrichment", "primary_EWCE.tsv.gz"))
 coverage <- read_release(rel("enrichment", "enrichment_coverage.tsv"))
+untested_rel <- read_release(rel("enrichment", "gsea_untested_gene_sets.tsv"))
 
 expect("enrichment", "canonical GSEA covers all 12 comparisons",
        length(unique(gsea_go$canonical_comparison)) == 12L &&
+         length(unique(gsea_cc$canonical_comparison)) == 12L &&
          length(unique(gsea_kegg$canonical_comparison)) == 12L)
 expect("enrichment", "canonical GSEA is ranked by the moderated t",
        all(gsea_go$rank_statistic == "moderated_t") &&
+         all(gsea_cc$rank_statistic == "moderated_t") &&
          all(gsea_kegg$rank_statistic == "moderated_t"))
 expect("enrichment", "canonical and sensitivity rows are in separate files",
        all(gsea_go$analysis_role == "canonical") &&
+         all(gsea_cc$analysis_role == "canonical") &&
          all(gsea_kegg$analysis_role == "canonical") &&
          all(sens$analysis_role == "sensitivity") &&
          all(sens$rank_statistic == "log2fc"))
+expect("enrichment", "GO-CC is a primary output and part of the sensitivity file",
+       all(gsea_cc$ontology == "GO_CC") && all(ora_cc$ontology == "GO_CC") &&
+         any(sens$ontology == "GO_CC") && any(coverage$ontology == "GO_CC"),
+       paste(nrow(gsea_cc), "GSEA and", nrow(ora_cc), "ORA GO-CC rows"))
 expect("enrichment", "every enrichment row carries an analysis_role",
-       all(nzchar(gsea_go$analysis_role)) && all(nzchar(ora$analysis_role)) &&
+       all(nzchar(gsea_go$analysis_role)) && all(nzchar(gsea_cc$analysis_role)) &&
+         all(nzchar(ora$analysis_role)) && all(nzchar(ora_cc$analysis_role)) &&
          all(nzchar(sens$analysis_role)))
 expect("enrichment", "ORA rows are separated by query_list",
-       length(unique(ora$query_list)) >= 3L,
+       length(unique(ora$query_list)) >= 3L && length(unique(ora_cc$query_list)) >= 3L,
        paste(length(unique(ora$query_list)), "variants"))
+# The enrichment runs (GO-BP, GO-CC and the KEGG run) must have been computed on the locked
+# statistics GCT.
+for (run in c(RELEASE_STATISTICS_RUN$enrichment_runs, "KEGG")) {
+  ix_path <- file.path(if (run == "KEGG") release_kegg_root(DATA_ROOT) else
+    release_enrichment_root(run, DATA_ROOT), "indexEnrichmentComparisons.csv")
+  if (!file.exists(ix_path)) {
+    record("enrichment", paste(run, "enrichment index cites the locked statistics GCT"), "SKIP",
+           "canonical enrichment index unreachable")
+  } else {
+    ix <- release_read_csv(ix_path)
+    expect("enrichment", paste(run, "enrichment index cites the locked statistics GCT"),
+           nrow(ix) == inv$n_primary_contrasts &&
+             all(as.character(ix$source_gct_sha256) == RELEASE_LOCKED_ARTEFACTS$stat_gct$sha256),
+           paste(nrow(ix), "comparisons"))
+  }
+}
 expect("enrichment", "exported row counts equal the counts the canonical run recorded",
        all(as.logical(coverage$agrees_with_run_record)),
        paste(sum(as.integer(coverage$rows_exported) == 0L), "blocks legitimately empty"))
@@ -333,18 +414,14 @@ expect("enrichment", "only EWCE baseline rows lack a comparison",
 expect("enrichment", "EWCE baseline rows are labelled secondary",
        all(ewce$primary_or_secondary[ewce$ewce_analysis_type == "Baseline"] == "secondary"))
 
-ENRICH_ROOT <- file.path(DATA_ROOT, "03_output", "enrichment",
-                         "enrichment_t_rank_validation_20260825", "per_comparison")
-if (!dir.exists(ENRICH_ROOT)) {
-  record("enrichment", "exported enrichment statistics equal the canonical files", "SKIP",
-         "canonical enrichment folder unreachable")
-} else {
+check_gsea_equal <- function(tbl, root, file) {
+  if (!dir.exists(root)) return(NULL)
   bad <- character(0); checked <- 0L
-  for (cmp in unique(gsea_go$canonical_comparison)) {
-    p <- file.path(ENRICH_ROOT, cmp, "GSEA_GO_BP.csv")
+  for (cmp in unique(tbl$canonical_comparison)) {
+    p <- file.path(root, cmp, file)
     if (!file.exists(p)) { bad <- c(bad, paste("missing:", cmp)); next }
     d <- release_read_csv(p)
-    ex <- gsea_go[gsea_go$canonical_comparison == cmp, , drop = FALSE]
+    ex <- tbl[tbl$canonical_comparison == cmp, , drop = FALSE]
     if (!identical(ex$term_id, as.character(d$ID))) { bad <- c(bad, paste("order:", cmp)); next }
     if (!isTRUE(all.equal(as.numeric(ex$NES), as.numeric(d$NES), tolerance = 0)) ||
         !isTRUE(all.equal(as.numeric(ex$adjusted_p_value), as.numeric(d[["p.adjust"]]),
@@ -353,18 +430,89 @@ if (!dir.exists(ENRICH_ROOT)) {
     }
     checked <- checked + 1L
   }
-  expect("enrichment", "exported GSEA statistics equal the canonical files exactly",
-         length(bad) == 0L,
-         if (length(bad)) paste(head(bad, 3), collapse = "; ") else
-           paste(checked, "comparisons verified"))
+  list(bad = bad, checked = checked)
+}
+for (blk in list(
+  list(tbl = gsea_go, run = "GO_BP", file = "GSEA_GO_BP.csv", label = "GO-BP"),
+  list(tbl = gsea_cc, run = "GO_CC", file = "GSEA_GO_CC.csv", label = "GO-CC"),
+  list(tbl = gsea_kegg, run = "KEGG", file = "GSEA_KEGG.csv", label = "KEGG"))) {
+  root <- if (blk$run == "KEGG") release_kegg_root(DATA_ROOT) else
+    release_enrichment_root(blk$run, DATA_ROOT)
+  r <- check_gsea_equal(blk$tbl, file.path(root, "per_comparison"), blk$file)
+  if (is.null(r)) {
+    record("enrichment",
+           paste("exported", blk$label, "GSEA statistics equal the canonical files"), "SKIP",
+           "canonical enrichment folder unreachable")
+  } else {
+    expect("enrichment",
+           paste("exported", blk$label, "GSEA statistics equal the canonical files exactly"),
+           length(r$bad) == 0L,
+           if (length(r$bad)) paste(head(r$bad, 3), collapse = "; ") else
+             paste(r$checked, "comparisons verified"))
+  }
+}
+
+# The gene sets fgsea could not test: the released list equals the runs' own lists, and the
+# coverage table counts the same sets.
+untested_src <- tryCatch(release_fgsea_untested_sets(pc$canonical_comparison, DATA_ROOT),
+                         error = function(e) NULL)
+if (is.null(untested_src)) {
+  record("enrichment", "the untested gene sets equal the enrichment runs' lists", "SKIP",
+         "canonical untested-set audits unreachable")
+} else {
+  key_src <- sort(paste(untested_src$canonical_comparison,
+                        sub("_GSEA.*$", "", untested_src$analysis),
+                        ifelse(grepl("_log2fc_sensitivity$", untested_src$analysis),
+                               "sensitivity", "canonical"), untested_src$ID))
+  key_rel <- sort(paste(untested_rel$canonical_comparison, untested_rel$ontology,
+                        untested_rel$analysis_role, untested_rel$term_id))
+  expect("enrichment", "the untested gene sets equal the enrichment runs' lists",
+         identical(key_src, key_rel),
+         paste(sum(untested_rel$analysis_role == "canonical"), "canonical and",
+               sum(untested_rel$analysis_role == "sensitivity"), "sensitivity GO sets"))
+}
+cov_go <- coverage[coverage$analysis == "GSEA" & coverage$ontology %in% c("GO_BP", "GO_CC"), ,
+                   drop = FALSE]
+expect("enrichment", "the coverage table counts the same untested GO sets",
+       all(mapply(function(cmp, ont, role, n) {
+         sum(untested_rel$canonical_comparison == cmp & untested_rel$ontology == ont &
+               untested_rel$analysis_role == role) == as.integer(n)
+       }, cov_go$canonical_comparison, cov_go$ontology, cov_go$analysis_role,
+       cov_go$gsea_untested_gene_sets)),
+       paste(nrow(cov_go), "GO GSEA blocks"))
+expect("enrichment", "every GSEA block records its untested gene sets",
+       !anyNA(suppressWarnings(as.integer(coverage$gsea_untested_gene_sets[
+         coverage$analysis == "GSEA"]))))
+# The adopted enrichment is described as decided, with the settings read from the runs.
+perm_docs <- c("README_DATA.md", "editor_source_data/REVISION_PROTEOMICS_DATA_CHANGELOG.md",
+               "editor_source_data/MANUSCRIPT_TERMINOLOGY_ACTIONS.md",
+               "editor_source_data/figure_source_map.tsv", "enrichment/enrichment_run_parameters.tsv",
+               "metadata/secondary_analysis_manifest.tsv")
+perm_text <- unlist(lapply(perm_docs[file.exists(rel(perm_docs))], function(f) {
+  readLines(rel(f), warn = FALSE, encoding = "UTF-8")
+}))
+expect("enrichment", "the published documents describe the GO enrichment as decided",
+       !any(grepl("provisional|pending", perm_text, ignore.case = TRUE) &
+              !grepl("PRIDE_READY_PENDING_RAW_UPLOAD|pending raw upload", perm_text,
+                     ignore.case = TRUE)),
+       paste(length(perm_docs), "documents scanned"))
+perm <- tryCatch(release_enrichment_permutations(DATA_ROOT), error = function(e) NULL)
+if (is.null(perm)) {
+  record("enrichment", "the permutation statement is published as the runs record it", "SKIP",
+         "canonical run parameters unreachable")
+} else {
+  expect("enrichment", "the permutation statement is published as the runs record it",
+         any(grepl(perm$sentence, perm_text, fixed = TRUE)) &&
+           any(grepl(paste0("nPermSimple = ", format(perm$go_n_perm_simple, big.mark = ",")),
+                     perm_text, fixed = TRUE)),
+         perm$setting)
 }
 
 # --------------------------------------------------------------------------------------
 cat("\n=== effect-size semantics ===\n")
 # --------------------------------------------------------------------------------------
-# The published effect size must be named for what it is, traceable to what it came from,
-# and numerically identical to it. The scan below is the check that no reader-facing
-# document slipped back into calling it a fold change.
+# Effect size: the right name, traceable to its source column, identical values, and no
+# reader-facing document calling it a fold change.
 
 da_head <- read.delim(gzfile(rel("differential_analysis",
                                  "primary_differential_proteins.tsv.gz")),
@@ -389,7 +537,7 @@ expect("effect_size", "the effect-size units are stated per row",
 expect("effect_size", "the summary carries the full effect-size definition",
        "effect_size_definition" %in% names(ds_eff) &&
          all(ds_eff$effect_size_definition == RELEASE_EFFECT_SIZE$definition))
-expect("effect_size", "the definition states explicitly that it is not a log2 fold change",
+expect("effect_size", "the definition states that it is not a log2 fold change",
        all(grepl("NOT a log2 fold change", ds_eff$effect_size_definition, fixed = TRUE)))
 expect("effect_size", "the effect size is not called a standardised mean difference alone",
        !any(grepl("standardised mean difference", ds_eff$effect_size_definition,
@@ -409,8 +557,8 @@ expect("effect_size", "canonical GSEA is still ranked by the moderated t",
 expect("effect_size", "the sensitivity ranking keeps its canonical `log2fc` token",
        all(sens$rank_statistic == "log2fc") && all(sens$analysis_role == "sensitivity"))
 
-# The terminology audit, and the scan of every reader-facing document. Builder sources are
-# deliberately not scanned: they hold the claim list and the audit rows themselves.
+# The terminology audit, then a scan of every reader-facing document (not the builder
+# sources, which hold the claim list and the audit rows).
 audit_path <- rel("editor_source_data", "EFFECT_SIZE_TERMINOLOGY_AUDIT.tsv")
 if (!file.exists(audit_path)) {
   record("effect_size", "the terminology audit is published", "FAIL",
@@ -467,7 +615,7 @@ expect("effect_size",
        n_mislabel == 0L,
        paste(length(PUBLIC_DOCS), "documents scanned,", n_mislabel, "mislabel(s)"))
 
-# The methods-safe definition has to actually be present for someone to copy.
+# README_DATA.md must contain the Methods sentence for the effect size.
 readme_lines <- readLines(rel("README_DATA.md"), warn = FALSE)
 expect("effect_size", "README_DATA.md carries the methods-safe definition",
        any(grepl(RELEASE_EFFECT_SIZE$methods_sentence, readme_lines, fixed = TRUE)))
@@ -486,7 +634,8 @@ expect("statistical unit", "animal-level columns are not acquisition run names",
        length(intersect(animal_cols, sm$sample_id)) == 0L)
 expect("statistical unit", "no inferential table declares a non-animal unit",
        all(da$analysis_unit == "animal") && all(gsea_go$analysis_unit == "animal") &&
-         all(ora$analysis_unit == "animal") && all(ewce$analysis_unit == "animal"))
+         all(gsea_cc$analysis_unit == "animal") && all(ora$analysis_unit == "animal") &&
+         all(ora_cc$analysis_unit == "animal") && all(ewce$analysis_unit == "animal"))
 expect("statistical unit", "no inferential row claims 6 replicates per arm",
        !any(as.integer(da$n_numerator_animals) > 3L, na.rm = TRUE) &&
          !any(as.integer(gsea_go$n_numerator_animals) > 3L, na.rm = TRUE))
@@ -497,12 +646,46 @@ expect("statistical unit",
        "panels drawn at acquisition level are labelled technical QC",
        all(fm$primary_or_secondary[acq_unit] == "technical_qc"),
        paste(sum(acq_unit), "acquisition-level panel(s)"))
-expect("figures", "all required manuscript panels are mapped",
-       all(c("Fig 3 C", "Fig 3 D", "Fig 3 E", "Fig 3 F", "Fig 3 G", "Fig 3 H", "Fig 3 I",
-             "Supp A", "Supp B1", "Supp B2", "Supp B3", "Supp C", "Supp D", "Supp E",
-             "Supp F") %in% fm$panel_label))
+expect("figures", "all required manuscript panels are mapped (manuscript numbering)",
+       all(c(paste("Fig. 2", c("C", "D", "E", "F", "G", "H", "I")),
+             paste("Supp. Fig. 4", c("A", "B1", "B2", "B3", "C", "D", "E", "F"))) %in%
+             fm$panel_label))
+rebuilt <- fm[grepl("^REBUILT_WITHIN_COMPARTMENT", fm$revision_status), , drop = FALSE]
+expect("figures", "the panels that use the differential statistics come from the per-sample-class rebuild",
+       setequal(rebuilt$panel_label,
+                c(paste("Fig. 2", c("D", "F", "G", "H", "I")), "Supp. Fig. 4 F")) &&
+         all(grepl(paste(RELEASE_STATISTICS_RUN$figure_rebuild_relative, collapse = "/"),
+                   rebuilt$panel_source_data_canonical_path, fixed = TRUE)),
+       paste(nrow(rebuilt), "rebuilt panel(s)"))
+panel_hash_ok <- vapply(seq_len(nrow(fm)), function(i) {
+  rp <- fm$panel_source_data_release_path[i]
+  if (is.na(rp) || !nzchar(rp)) return(TRUE)
+  files <- strsplit(rp, ";", fixed = TRUE)[[1]]
+  hashes <- strsplit(as.character(fm$panel_source_data_sha256[i]), ";", fixed = TRUE)[[1]]
+  length(files) == length(hashes) &&
+    all(vapply(seq_along(files), function(j) {
+      p <- file.path(OUT_ROOT, files[j])
+      file.exists(p) && identical(release_sha256(p), hashes[j])
+    }, logical(1)))
+}, logical(1))
+expect("figures", "every copied panel source file matches the SHA256 the map records",
+       all(panel_hash_ok),
+       if (all(panel_hash_ok)) paste(sum(nzchar(fm$panel_source_data_release_path)),
+                                     "panels checked") else
+         paste(fm$panel_label[!panel_hash_ok], collapse = "; "))
 expect("figures", "every data-bearing panel names a final revision script",
        all(nzchar(fm$final_revision_script[fm$primary_or_secondary != "not_applicable"])))
+released_panel_files <- basename(unlist(strsplit(
+  fm$panel_source_data_release_path[!is.na(fm$panel_source_data_release_path) &
+                                      nzchar(fm$panel_source_data_release_path)],
+  ";", fixed = TRUE)))
+expect("figures", "released panel source data are named in the manuscript numbering",
+       length(released_panel_files) > 0L &&
+         all(grepl("^(Fig2|SuppFig4)[A-Z][0-9]?_", released_panel_files)),
+       paste(length(released_panel_files), "files"))
+expect("figures", "no rebuilt panel describes its effect size as moderated or as log2FC",
+       !any(grepl("log2FC|moderated limma", c(rebuilt$statistical_unit, rebuilt$panel_title),
+                  ignore.case = TRUE)))
 
 # --------------------------------------------------------------------------------------
 cat("\n=== editor workbook hygiene ===\n")
@@ -515,16 +698,11 @@ expect("workbook", "no duplicate or unnamed workbook columns", length(hygiene) =
        if (length(hygiene)) paste(head(hygiene, 2), collapse = "; ") else
          paste(nrow(wb_inv), "sheets"))
 
-# The workbook carries display headers; the machine names above are what the contracts and
-# the data dictionary key off. A duplicate or blank among the DISPLAY headers is just as
-# much a defect -- it is the naming a reader actually sees -- so both are checked.
-#
-# Guarded rather than assumed present, because this validator is routinely pointed at an
-# already-deployed release: one built before the display-header contract has no such
-# column, and the missing column would otherwise reach strsplit() and abort the whole
-# validation with a type error instead of reporting the actual problem.
+# The same check on the display headers the reader sees. A release built before display
+# headers existed has no display_columns column; record a FAIL instead of letting
+# strsplit() abort the run.
 if (!all(c("display_columns", "title", "supplementary_table") %in% names(wb_inv))) {
-  expect("workbook", "workbook inventory carries the display-header contract", FALSE,
+  expect("workbook", "workbook inventory carries the display-header check", FALSE,
          "inventory predates it; rebuild the release with stage 07")
 } else {
   display_cols <- stats::setNames(
@@ -548,9 +726,17 @@ if (!all(c("display_columns", "title", "supplementary_table") %in% names(wb_inv)
 }
 expect("workbook", "required sheets present",
        all(c("README", "Sample_Metadata", "Animal_Level_Metadata", "Primary_Contrasts",
-             "Differential_Proteins", "GSEA_GO_BP", "GSEA_KEGG", "ORA_GO_BP", "EWCE",
-             "Secondary_Analyses", "Figure_Source_Map", "Software_Versions") %in%
-             wb_inv$sheet))
+             "Differential_Proteins", "GSEA_GO_BP", "GSEA_GO_CC", "GSEA_KEGG", "ORA_GO_BP",
+             "ORA_GO_CC", "EWCE", "Secondary_Analyses", "Figure_Source_Map",
+             "Software_Versions") %in% wb_inv$sheet))
+if ("supplementary_table" %in% names(wb_inv)) {
+  expect("workbook", "GO-CC sheets are appended as S17 and S18; S1-S16 keep their numbers",
+         identical(wb_inv$supplementary_table[match(c("GSEA_GO_CC", "ORA_GO_CC"), wb_inv$sheet)],
+                   c("S17", "S18")) &&
+           identical(wb_inv$supplementary_table[match("Software_Versions", wb_inv$sheet)], "S16"))
+  expect("workbook", "the untested GO gene sets are appended as S19",
+         identical(wb_inv$supplementary_table[match("GSEA_Untested_Sets", wb_inv$sheet)], "S19"))
+}
 expect("workbook", "workbook file exists",
        file.exists(rel("editor_source_data", "Proteomics_Source_Data_Animal_Level.xlsx")))
 expect("workbook", "no sheet carries a misleading public gene_symbol field",
@@ -601,10 +787,10 @@ cat("\n=== data lineage ===\n")
 lineage <- read_release(rel("provenance", "data_lineage.tsv"))
 expect("lineage", "lineage covers acquisition through release",
        all(c("A02_acquisition_raw", "A04_protein_group_matrix_prefilter",
-             "A07_processed_matrix", "A08_animal_level_matrix", "A09_protigy_statistics",
+             "A07_processed_matrix", "A08_animal_level_matrix", "A09_differential_statistics",
              "A10_split_differential_tables", "A12_mapped_differential_tables",
-             "A13_enrichment", "A14_ewce", "A17_publication_release") %in%
-             lineage$artifact_id))
+             "A13_enrichment", "A14_ewce", "A16c_figure_panels_within_compartment",
+             "A17_publication_release") %in% lineage$artifact_id))
 unresolved <- lineage$artifact_id[grepl("UNRESOLVED",
                                         paste(lineage$processing_stage, lineage$notes))]
 record("lineage", "unproven lineage edges are marked UNRESOLVED, not inferred", "PASS",
@@ -612,8 +798,7 @@ record("lineage", "unproven lineage edges are marked UNRESOLVED, not inferred", 
 expect("lineage", "the locked artefacts appear with their hashes",
        any(lineage$sha256 == RELEASE_LOCKED_ARTEFACTS$animal_level_input_gct$sha256,
            na.rm = TRUE) &&
-         any(lineage$sha256 == RELEASE_LOCKED_ARTEFACTS$protigy_stat_gct$sha256,
-             na.rm = TRUE))
+         any(lineage$sha256 == RELEASE_LOCKED_ARTEFACTS$stat_gct$sha256, na.rm = TRUE))
 expect("lineage", "upstream preprocessing gap is documented",
        file.exists(rel("provenance", "UPSTREAM_PREPROCESSING_GAP.md")))
 
@@ -627,6 +812,16 @@ expect("lineage", "no vague version strings such as 1.1.x",
 expect("lineage", "the UniProt mapping reference is traceable",
        any(grepl("idmapping", sw$component, ignore.case = TRUE) &
              nzchar(sw$evidence_sha256) & !is.na(sw$evidence_sha256)))
+if (!inherits(stat_run, "error")) {
+  canon_sw <- sw[sw$applies_to_stage == "canonical animal-level differential statistics", ,
+                 drop = FALSE]
+  expect("lineage", "the canonical statistics are attributed to limma at the run-recorded version",
+         any(canon_sw$component == "limma" & canon_sw$version == stat_run$limma_version) &&
+           any(canon_sw$component == "R" & canon_sw$version == stat_run$r_version),
+         paste0("limma ", stat_run$limma_version, ", R ", stat_run$r_version))
+  expect("lineage", "no ProTigy version is scoped to the canonical statistics",
+         !any(grepl("ProTigy", canon_sw$component, ignore.case = TRUE)))
+}
 
 # --------------------------------------------------------------------------------------
 cat("\n=== release manifest and checksums ===\n")
@@ -664,12 +859,41 @@ if (!file.exists(manifest_path)) {
 }
 
 # --------------------------------------------------------------------------------------
+cat("\n=== repository files are named by relative paths ===\n")
+# --------------------------------------------------------------------------------------
+# Release tables name repository files relative to proteomic_analysis/, so no file may carry
+# the local folder of the computer that built the release.
+repo_prefix <- tolower(paste0(sub("/+$", "", gsub("\\\\", "/", REPO_ROOT)), "/"))
+text_files <- gsub("\\\\", "/", list.files(OUT_ROOT, pattern = "[.](tsv|md|txt|csv)$|[.]tsv[.]gz$",
+                                           recursive = TRUE))
+local_hits <- text_files[vapply(text_files, function(f) {
+  txt <- gsub("\\\\", "/", readLines(file.path(OUT_ROOT, f), warn = FALSE), useBytes = TRUE)
+  txt <- tryCatch(tolower(txt), error = function(e) txt)
+  any(grepl(repo_prefix, txt, fixed = TRUE, useBytes = TRUE))
+}, logical(1))]
+expect("lineage", "no release file names the local repository folder",
+       length(local_hits) == 0L,
+       if (length(local_hits)) paste(head(local_hits, 3), collapse = "; ") else
+         paste(length(text_files), "text files scanned"))
+path_cells <- c(lineage$path_or_release_filename,
+                read_release(rel("provenance", "analysis_parameters.tsv"))$evidence_path,
+                read_release(rel("metadata", "metadata_field_provenance.tsv"))$current_source,
+                if (file.exists(manifest_path)) read_release(manifest_path)$source_artifact)
+path_refs <- unique(unlist(strsplit(path_cells[!is.na(path_cells)], ";", fixed = TRUE)))
+repo_refs <- path_refs[release_is_repo_path(path_refs, REPO_ROOT)]
+missing_refs <- repo_refs[!file.exists(release_repo_resolve(repo_refs, REPO_ROOT))]
+expect("lineage", "repository paths in the provenance tables resolve under proteomic_analysis/",
+       length(repo_refs) > 0L && length(missing_refs) == 0L,
+       if (length(missing_refs)) paste("not found:", paste(head(missing_refs, 3), collapse = "; "))
+       else paste(length(repo_refs), "repository paths"))
+
+# --------------------------------------------------------------------------------------
 cat("\n=== publication scripts perform no scientific recomputation ===\n")
 # --------------------------------------------------------------------------------------
 scripts <- list.files(LAYER, pattern = "[.]R$", full.names = TRUE, recursive = TRUE)
 hits <- release_scan_prohibited_calls(scripts)
-# The validator itself and the validation helper legitimately name these calls when
-# scanning for them; a hit inside the scanner's own pattern table is not a computation.
+# This file and R/release_validation.R name the calls in the scanner's pattern table; skip
+# them.
 hits <- hits[!basename(hits$file) %in% c("release_validation.R", "13_validate_release.R"), ,
              drop = FALSE]
 expect("no recomputation", "no model fitting, enrichment or PCA call in the builders",
@@ -688,10 +912,9 @@ pride_status <- pr$value[pr$key == "pride_status"]
 fs <- read_release(rel("pride", "sdrf_field_status.tsv"))
 sdrf_v <- read_release(rel("pride", "sdrf.tsv"))
 
-# sdrf_field_status.tsv carries two kinds of required gap, and adding them together behind
-# the words "SDRF fields" would be a lie about the SDRF: actual SDRF columns that cannot be
-# populated, and the raw acquisition files, which are required for deposition but are not a
-# column of the SDRF at all. Counted separately; both still gate PRIDE_READY.
+# sdrf_field_status.tsv lists two kinds of required gap: SDRF columns that cannot be filled,
+# and the raw acquisition files, which deposition needs but which are not an SDRF column.
+# They are counted separately; either keeps the status below PRIDE_READY.
 fs_is_sdrf_column <- fs$sdrf_field %in% names(sdrf_v)
 fs_missing_req <- fs$status == "MISSING_REQUIRED_METADATA"
 n_req_sdrf <- sum(fs_missing_req & fs_is_sdrf_column)
@@ -705,7 +928,7 @@ expect("pride", "PRIDE status is one of the four sanctioned values",
 expect("pride", "SDRF exists with one row per acquisition",
        nrow(sdrf_v) == inv$n_measurement_records)
 expect("pride", "every SDRF field has a recorded status", all(nzchar(fs$status)))
-expect("pride", "no required field is silently blank",
+expect("pride", "no required field is left blank without a reason",
        all(fs$status[fs$sdrf_requirement == "required" &
                        fs$value_or_reason == "not available"] ==
              "MISSING_REQUIRED_METADATA"))
@@ -723,10 +946,8 @@ record("pride", "raw acquisition files are a separate required deposition blocke
          paste0(n_req_raw, " non-SDRF required deposition input(s) outstanding: ",
                 paste(fs$sdrf_field[fs_missing_req & !fs_is_sdrf_column], collapse = "; ")))
 
-# The sample-class correction must NOT be carried as a PRIDE gap. It used to be the reason
-# for one of the two SKIPs; it is resolved, so the SDRF factor is populated and the
-# deposition documents say so. This is a PASS, and a real one: the factor has to be
-# populated from the analysis-time class and the correction has to be described as resolved.
+# The sample-class correction is not a PRIDE gap: the SDRF factor must be filled from the
+# analysis-time class, and the PRIDE documents must describe the correction as resolved.
 class_col <- "factor value[sample class]"
 cols_named <- function(df, field) df[, which(names(df) == field), drop = FALSE]
 expect("pride", "the SDRF sample-class factor is populated for every acquisition",
@@ -780,7 +1001,7 @@ expect("pride", "TCEP and CAA preparation reagents are encoded without inventing
          all(sdrf_v[["comment[modification parameters]"]] == "not available"))
 for (unknown_field in c("comment[instrument]", "comment[proteomics data acquisition method]",
                         "comment[precursor mass tolerance]", "comment[fragment mass tolerance]")) {
-  expect("pride", paste(unknown_field, "remains explicitly unresolved"),
+  expect("pride", paste(unknown_field, "is recorded as unresolved"),
          all(sdrf_v[[unknown_field]] == "not available"))
 }
 repeated_headers <- unique(names(sdrf_v)[duplicated(names(sdrf_v))])
@@ -816,8 +1037,7 @@ record("pride", "sample-class correction is resolved, not a deposition blocker",
               RELEASE_N_SAMPLE_CLASS_CORRECTED,
               " corrected measurement(s), original class retained in companion tables"))
 
-# ...and the genuinely missing acquisition metadata must STAY missing. Nothing above may be
-# read as closing that gap. Reported as SKIP because it is unresolved, which is the truth.
+# The acquisition-metadata gap must still be reported, and no readiness status may hide it.
 expect("pride", "the acquisition-metadata gap is still reported as incomplete",
        pride_status == "PRIDE_METADATA_INCOMPLETE" || n_req_sdrf == 0L,
        pride_status)
@@ -844,7 +1064,10 @@ report <- c(
   "# Publication release validation report",
   "",
   paste0("Generated by `", STAGE, "` at ", release_timestamp_utc(), "."),
-  paste0("Release root: `", OUT_ROOT, "`"),
+  # A scratch root is not named: it is a temporary location, never the published copy.
+  if (release_is_shared_drive_root(OUT_ROOT, DATA_ROOT)) {
+    paste0("Release root: `", OUT_ROOT, "`")
+  } else "Release root: a scratch build outside the shared data root (not a published copy).",
   paste0("Repository commit: `", release_git_commit(REPO_ROOT), "`"),
   "",
   paste0("**Release validation: ", n_pass, " PASS, ", n_fail, " FAIL, ", n_skip, " SKIP**"),
@@ -855,7 +1078,7 @@ report <- c(
          " column, so they are counted separately: ", n_req_raw,
          " outstanding required deposition blocker(s) of that kind."),
   "",
-  "A PRIDE field that is genuinely unavailable does not fail the scientific release. It",
+  "A PRIDE field that is unavailable does not fail the scientific release. It",
   "does prevent the deposition being reported as `PRIDE_READY`.",
   "",
   "| group | check | status | detail |",
@@ -883,7 +1106,7 @@ sys.source(file.path(LAYER, "12_build_release_manifest.R"), envir = manifest_env
            keep.source = FALSE)
 
 if (n_fail > 0L) {
-  stop(sprintf("Publication release validation failed: %d contract(s).", n_fail),
+  stop(sprintf("Publication release validation failed: %d check(s).", n_fail),
        call. = FALSE)
 }
-cat("\nAll publication release contracts hold.\n")
+cat("\nAll publication release checks hold.\n")

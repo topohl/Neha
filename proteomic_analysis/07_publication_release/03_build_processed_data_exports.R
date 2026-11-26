@@ -7,13 +7,12 @@
 #   processed_data/protein_abundance_animal_level.tsv.gz        5349 x 48 animal units
 #   processed_data/protein_feature_annotation.tsv.gz            5349 protein groups
 #
-# NAMING. Nothing here is called "raw". The measurement-level matrix is processed
-# protein-level output, standardised per protein (mean 0, sd 1 across acquisitions); the
-# genuinely raw acquisition files are the `.d` directories named in
-# metadata/sample_metadata.tsv and are NOT part of this package.
+# Nothing here is called "raw". The measurement-level matrix is processed protein-level
+# output, standardised per protein (row means ~0, SDs ~1 across acquisitions); the raw
+# acquisition files are the `.d` directories named in metadata/sample_metadata.tsv and are
+# not part of this package.
 #
-# FIELD SEMANTICS. The internal pipeline carries two misleading column names, and this
-# stage exists partly to stop them reaching a published table:
+# Two internal column names are misleading, and this stage keeps them out of the release:
 #
 #   split/*.csv     `gene_symbol`  actually holds the UniProt ENTRY NAME(s)  (A0A0J9YTR2_MOUSE)
 #                   `Description`  actually holds the GENE SYMBOL(s)         (Ncbp2as2)
@@ -43,7 +42,10 @@ STAGE <- "07_publication_release/03_build_processed_data_exports.R"
 
 release_banner("stage 03 -- processed data exports")
 
-ANIMAL_ROOT <- file.path(DATA_ROOT, "02_data", "animal_level")
+# Only mapped/ is read from here: the per-compartment run's identifier mapping. Its mapping
+# columns are the same as the pooled run's (same reference, 5327 + 22), so only the cited
+# provenance changed on 2026-11-24.
+ANIMAL_ROOT <- release_stats_root(DATA_ROOT)
 
 paths <- list(
   measurement_gct = file.path(DATA_ROOT, "02_data", "gct",
@@ -81,18 +83,11 @@ if (!setequal(meas$sample_ids, sample_metadata$sample_id)) {
        call. = FALSE)
 }
 
-# What scale are these values actually on? The filename says `pcaAdjusted_unnormalized`,
-# which suggests neither, and a package that mislabels its own units is worse than one that
-# says it does not know. Measured directly: each protein is standardised across the 96
-# acquisitions, so the values are neither log2 abundance nor raw intensity, and a difference
-# of group means on them is in units of that per-protein SD.
-#
-# Deliberately NOT called "z-scored". The released values are serialised to 2 decimals, and
-# on those bytes no row is exactly mean 0 / sd 1 -- the residual deviations are of exactly
-# the size 2-decimal rounding produces. The producing operation is also UNRESOLVED in the
-# lineage (no script, no parameters; see provenance/UPSTREAM_PROVENANCE_GAP.md). So the
-# release states what the numbers support, "standardised per protein", and reports the
-# measured deviations rather than asserting a specific formula.
+# Measure the value scale rather than trust the file name (`pcaAdjusted_unnormalized`):
+# each protein is standardised across the 96 acquisitions. Not called "z-scored": the
+# values have 2 decimals, so row means and SDs are 0 and 1 only to rounding, and the
+# producing step is unresolved (provenance/UPSTREAM_PREPROCESSING_GAP.md). The measured
+# deviations are reported instead.
 std <- release_standardization_evidence(meas$mat)
 release_log("  value scale: max |row mean| ", signif(std$max_abs_row_mean, 3),
             ", max |row sd - 1| ", signif(std$max_abs_row_sd_minus_1, 3),
@@ -110,7 +105,7 @@ VALUE_SCALE <- paste0(
   "(max |sd - 1| ", signif(std$max_abs_row_sd_minus_1, 3), "). NOT log2 abundance and NOT ",
   "raw intensity. The values carry 2 decimals, so no row is exactly mean 0 / sd 1 and the ",
   "release does not claim a specific standardisation formula; the producing step is ",
-  "unresolved (see provenance/UPSTREAM_PROVENANCE_GAP.md).")
+  "unresolved (see provenance/UPSTREAM_PREPROCESSING_GAP.md).")
 
 meas_order <- match(sample_metadata$sample_id, meas$sample_ids)
 measurement_export <- data.frame(
@@ -147,6 +142,16 @@ animal_export <- data.frame(
   stringsAsFactors = FALSE, check.names = FALSE
 )
 names(animal_export)[-1] <- animal_metadata$animal_level_column_name
+
+# The animal-level values are the mean of the two hemispheres on the same scale, so each
+# protein keeps its mean of about 0 but its SD over the 48 units is below 1.
+animal_row_sd <- apply(animal$mat, 1L, stats::sd)
+ANIMAL_VALUE_SCALE <- paste0(
+  "mean of the two hemispheres on the per-protein standardised scale of the measurement-level ",
+  "matrix: row means approximately 0 (max |mean| ", signif(max(abs(rowMeans(animal$mat))), 3),
+  "), row standard deviations ", sprintf("%.2f", min(animal_row_sd)), " to ",
+  sprintf("%.2f", max(animal_row_sd)), " (below 1, because two hemispheres are averaged). ",
+  "NOT log2 abundance and NOT raw intensity.")
 
 # --------------------------------------------------------------------------------------
 # feature annotation
@@ -289,7 +294,7 @@ w2 <- release_write_table(animal_export,
                                        "protein_abundance_animal_level.tsv.gz"))
 release_register("processed_data/protein_abundance_animal_level.tsv.gz",
                  paste("animal-level abundance used for all inference; Left/Right averaged",
-                       "within AnimalID x sample_class; ", VALUE_SCALE),
+                       "within AnimalID x sample_class; ", ANIMAL_VALUE_SCALE),
                  paths$animal_gct, animal_hash, STAGE, "tsv.gz")
 
 w3 <- release_write_table(feature_annotation,

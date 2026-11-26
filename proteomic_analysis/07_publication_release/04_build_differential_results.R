@@ -6,12 +6,13 @@
 #   differential_analysis/primary_differential_proteins.tsv.gz  12 x 5349 = 64188 rows
 #   differential_analysis/primary_differential_summary.tsv      12 rows
 #
-# NO STATISTIC IS RECOMPUTED. Every numeric value is read from the canonical animal-level
-# split tables (02_data/animal_level/split/forward/) and copied through unchanged; the
-# stage then re-reads each canonical file and asserts bit-level equality of the exported
-# values against it.
+# No statistic is recomputed. Every numeric value is read from the canonical animal-level
+# split tables of the per-compartment run
+# (02_data/animal_level/within_compartment_20261124/split/forward/) and copied through
+# unchanged; the stage then re-reads each canonical file and asserts bit-level equality of
+# the exported values against it.
 #
-# The statistical source is split/, not mapped/, on purpose. mapped/ drops the 22 protein
+# The statistical source is split/, not mapped/, because mapped/ drops the 22 protein
 # groups whose identifiers are not mouse (human keratins, porcine trypsin and similar
 # contaminants), so exporting from it would make 22 tested proteins per comparison
 # disappear from the published record without saying so. Here all 5349 tested rows are
@@ -47,7 +48,7 @@ STAGE <- "07_publication_release/04_build_differential_results.R"
 
 release_banner("stage 04 -- differential protein results")
 
-ANIMAL_ROOT <- file.path(DATA_ROOT, "02_data", "animal_level")
+ANIMAL_ROOT <- release_stats_root(DATA_ROOT)   # per-compartment split/ and mapped/
 SPLIT_FORWARD <- file.path(ANIMAL_ROOT, "split", "forward")
 
 paths <- list(
@@ -85,12 +86,17 @@ if (anyNA(split_hashes)) {
   stop("The mapped index does not record a split hash for every primary contrast.",
        call. = FALSE)
 }
-# The source GCT recorded in the split index must still be the locked statistical GCT.
-locked_stat_sha <- RELEASE_LOCKED_ARTEFACTS$protigy_stat_gct$sha256
-if (!all(as.character(split_index$source_gct_sha256) == locked_stat_sha)) {
-  stop("indexComparisons.csv no longer points every contrast at the locked ProTigy ",
-       "statistical GCT.", call. = FALSE)
+# The source GCT recorded in both indexes must still be the locked statistics GCT.
+locked_stat_sha <- RELEASE_LOCKED_ARTEFACTS$stat_gct$sha256
+if (!all(as.character(split_index$source_gct_sha256) == locked_stat_sha) ||
+    !all(as.character(mapped_index$source_gct_sha256) == locked_stat_sha)) {
+  stop("indexComparisons.csv / indexMappedComparisons.csv no longer point every contrast ",
+       "at the locked per-compartment statistics GCT.", call. = FALSE)
 }
+# The FDR counts the statistics run recorded, compared with the exported flags below.
+stat_run <- release_read_stat_run(DATA_ROOT)
+run_fdr_counts <- stats::setNames(as.integer(stat_run$manifest$n_fdr_proteins),
+                                  stat_run$manifest$canonical_comparison)
 
 feature_idx_by_id <- stats::setNames(seq_len(nrow(features)), features$protein_group_id)
 
@@ -99,21 +105,10 @@ SPLIT_NUMERIC <- c(log2fc = "effect_size_sd_units", aveExpr = "average_standardi
                    B = "B_log_odds", logpval = "neg_log10_P_value",
                    sign.logP = "signed_neg_log10_P_value")
 
-# The abundance matrix these statistics were computed on is standardised separately for
-# each protein across the measurement-level dataset: row means are approximately 0 and row
-# SDs approximately 1 (measured in stage 03, and corroborated by limma's AveExpr sitting at
-# ~0 for every protein). A difference of group means on that scale is a STANDARDIZED
-# ABUNDANCE DIFFERENCE expressed in SD units of that scale, not a log2 ratio. The canonical
-# column is nevertheless named `log2fc` (ProTigy `logFC`), so publishing it under that name
-# would assert a fold-change reading the data do not support. It is renamed here and the
-# source name is recorded alongside, so provenance is not lost either.
-#
-# The wording comes from RELEASE_EFFECT_SIZE in R/release_validation.R rather than being
-# written out again here: four builders and the validator all describe this quantity, and a
-# local copy is how they drift apart. Note it is NOT called a "standardised mean difference"
-# unqualified -- that phrasing invites a Cohen's d reading, i.e. scaling by a pooled
-# WITHIN-GROUP SD, which is a different quantity from the across-dataset per-protein SD
-# actually used here.
+# `log2fc` is a difference on the per-protein standardised scale, not a log2 fold change
+# (see RELEASE_EFFECT_SIZE in R/release_validation.R, which also holds the wording). It is
+# published as effect_size_sd_units with the source column name alongside. limma's AveExpr
+# is the mean over one sample class's 12 units, so it is not ~0 within a class.
 EFFECT_SIZE_DEFINITION <- RELEASE_EFFECT_SIZE$definition
 EFFECT_SIZE_SOURCE_COLUMN <- RELEASE_EFFECT_SIZE$source_field_detail
 EFFECT_SIZE_UNITS <- RELEASE_EFFECT_SIZE$units
@@ -191,11 +186,13 @@ for (i in seq_len(nrow(contrasts))) {
 
   # Mapped-only counts are carried alongside the full-set counts because the manuscript
   # figures were drawn from mapped/ (5327 rows). Without both numbers a reader cannot
-  # reconcile, for example, the panel-3D figure count of 1132 with the full tested set.
+  # reconcile, for example, the Fig. 2 D count of mapped FDR proteins with the full tested
+  # set.
   is_mapped <- features$id_mapping_status[fidx] == "mapped"
 
   blocks[[i]] <- block
-  verify[[i]] <- list(contrast = row$canonical_contrast, path = csv_path,
+  verify[[i]] <- list(contrast = row$canonical_contrast,
+                      comparison = row$canonical_comparison, path = csv_path,
                       sha256 = observed_hash, rows = nrow(d),
                       significant_is_padj_lt_0_05 = agrees_with_fdr,
                       n_significant = sum(significant, na.rm = TRUE),
@@ -263,6 +260,16 @@ for (v in verify) {
   }
 }
 release_log("  all 12 comparisons verified identical to their canonical sources")
+
+fdr_disagree <- vapply(verify, function(v) {
+  !identical(unname(run_fdr_counts[v$comparison]), as.integer(v$n_significant))
+}, logical(1))
+if (any(fdr_disagree)) {
+  stop("Exported FDR counts differ from the counts the statistics run recorded for: ",
+       paste(vapply(verify[fdr_disagree], function(v) v$comparison, character(1)),
+             collapse = ", "), call. = FALSE)
+}
+release_log("  FDR counts equal the counts recorded in the statistics run manifest")
 
 # --------------------------------------------------------------------------------------
 # per-comparison summary (counts of already-flagged rows; no thresholding is applied)

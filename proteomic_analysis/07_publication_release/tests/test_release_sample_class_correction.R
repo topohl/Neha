@@ -1,16 +1,12 @@
 #!/usr/bin/env Rscript
 
-# Contract: the six C46/C47 sample-class corrections are published exactly, both identities
-# are retained for all 96 measurements, and nothing about the correction is left as an
-# unresolved blocker.
+# Checks: the six C46/C47 sample-class corrections are published as recorded (identities,
+# hemisphere, animals, plate positions, both class vectors, direction of the cycle), both
+# labels are kept for all 96 measurements, the correction is described as resolved, and
+# the preserved correction table matches its recorded hash.
 #
-# The point of this file is that the six rows cannot drift. Every field of the correction is
-# pinned -- the identities, the hemisphere, the animals, the plate positions, both class
-# vectors and the direction of the cycle -- and the preserved correction record is verified
-# by hash rather than by modification time.
-#
-# Skips cleanly when no built release is reachable, so it is safe in CI. Point it at one
-# with PROTEOMICS_RELEASE_OUTPUT_ROOT.
+# Skips when no built release is reachable; point it at one with
+# PROTEOMICS_RELEASE_OUTPUT_ROOT.
 
 args <- commandArgs(trailingOnly = FALSE)
 file_arg <- grep("^--file=", args, value = TRUE)
@@ -44,7 +40,7 @@ corr_path <- file.path(OUT_ROOT, "metadata", "sample_class_corrections.tsv")
 if (!file.exists(sm_path) || !file.exists(corr_path)) {
   cat("No built publication release at", OUT_ROOT, "\n")
   cat("  set PROTEOMICS_RELEASE_OUTPUT_ROOT and run 07_publication_release/run_release.R.\n")
-  cat("Skipping publication release sample-class correction contracts.\n")
+  cat("Skipping publication release sample-class correction checks.\n")
   quit(save = "no", status = 0L)
 }
 
@@ -61,7 +57,7 @@ cat("=== A. exactly six corrected rows ===\n")
 expect(nrow(corr) == 6L, sprintf("the correction table has exactly 6 rows (got %d)",
                                  nrow(corr)))
 expect(nrow(corr) == RELEASE_N_SAMPLE_CLASS_CORRECTED,
-       "the correction table matches the release contract count")
+       "the correction table has the expected number of rows")
 expect(sum(as.logical(sm$sample_class_corrected)) == 6L,
        sprintf("exactly 6 of 96 measurements are flagged corrected (got %d)",
                sum(as.logical(sm$sample_class_corrected))))
@@ -161,7 +157,7 @@ expect(all(toupper(as.character(corr$quantitative_values_changed)) == "FALSE"),
        "quantitative_values_changed is FALSE on every corrected row")
 expect(isTRUE(RELEASE_SAMPLE_CLASS_CORRECTION$quantitative_values_changed == FALSE) &&
          RELEASE_SAMPLE_CLASS_CORRECTION$max_abs_numeric_difference == 0,
-       "the contract records a maximum absolute numeric difference of 0")
+       "the definition records a maximum absolute numeric difference of 0")
 
 # The acquisition identity of the six is unchanged: the run name still yields the raw file.
 six_rows <- sm[as.logical(sm$sample_class_corrected), , drop = FALSE]
@@ -179,7 +175,7 @@ if (!ref$exists) {
   cat("  [skip]  the correction record is unreachable; hash not checked\n")
 } else {
   expect(isTRUE(ref$matches),
-         paste("the correction record matches the SHA256 the forensic audit recorded:",
+         paste("the correction record matches the SHA256 the audit recorded:",
                substr(ref$observed_sha256, 1, 16)))
   expect(all(as.character(corr$correction_reference_sha256) == ref$expected_sha256),
          "every published row cites that same SHA256")
@@ -190,7 +186,7 @@ if (!ref$exists) {
          paste("the recorded mtime matches the file:", ref$observed_mtime))
 }
 expect(isFALSE(RELEASE_SAMPLE_CLASS_CORRECTION$prose_rationale_exists),
-       "the contract records that no prose rationale survives")
+       "the definition records that no prose rationale survives")
 
 # --------------------------------------------------------------------------------------
 cat("\n=== UMAP is documented, not treated as ground truth ===\n")
@@ -227,7 +223,7 @@ if (!file.exists(vr_path)) {
                grepl("RESOLVED", sample_class_rows$check, fixed = TRUE)),
          "the correction is recorded as RESOLVED and PASSing")
 
-  # L. the genuinely missing acquisition metadata must stay unresolved.
+  # L. the missing acquisition metadata must stay unresolved.
   pride_missing <- vr[vr$check == "missing required SDRF fields", , drop = FALSE]
   if (nrow(pride_missing) == 1L && pride_missing$status == "SKIP") {
     expect(!grepl("sample class", pride_missing$detail, fixed = TRUE),
@@ -236,13 +232,13 @@ if (!file.exists(vr_path)) {
   } else if (nrow(pride_missing) == 1L && pride_missing$status == "PASS") {
     cat("  [ok]   all SDRF-required fields are now populated\n")
   } else {
-    expect(FALSE, "the missing-SDRF-fields contract is reported exactly once")
+    expect(FALSE, "the missing-SDRF-fields check is reported exactly once")
   }
 }
 
 cat("\n=== RESULT ===\n")
 if (failures > 0L) {
-  stop(sprintf("Publication release sample-class correction contracts failed: %d", failures),
+  stop(sprintf("Publication release sample-class correction checks failed: %d", failures),
        call. = FALSE)
 }
-cat("All publication release sample-class correction contracts hold.\n")
+cat("All publication release sample-class correction checks hold.\n")

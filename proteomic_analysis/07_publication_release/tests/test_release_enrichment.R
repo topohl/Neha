@@ -1,7 +1,7 @@
 #!/usr/bin/env Rscript
 
-# Contract: the published enrichment tables are the canonical ones, canonical and
-# sensitivity rows are never pooled, and every row carries enough context to stand alone.
+# Checks: the published enrichment tables are the canonical ones, canonical and
+# sensitivity rows are kept apart, and every row carries enough context to stand alone.
 
 args <- commandArgs(trailingOnly = FALSE)
 file_arg <- grep("^--file=", args, value = TRUE)
@@ -33,10 +33,12 @@ DATA_ROOT <- release_data_root()
 need <- file.path(OUT_ROOT, "enrichment",
                   c("primary_GSEA_GO_BP.tsv.gz", "primary_GSEA_KEGG.tsv.gz",
                     "primary_ORA_GO_BP.tsv.gz", "GSEA_log2FC_sensitivity.tsv.gz",
-                    "primary_EWCE.tsv.gz", "enrichment_coverage.tsv"))
+                    "primary_EWCE.tsv.gz", "enrichment_coverage.tsv",
+                    "primary_GSEA_GO_CC.tsv.gz", "primary_ORA_GO_CC.tsv.gz",
+                    "gsea_untested_gene_sets.tsv"))
 if (!all(file.exists(need))) {
   cat("No built publication release at", OUT_ROOT, "\n")
-  cat("Skipping publication release enrichment contracts.\n")
+  cat("Skipping publication release enrichment checks.\n")
   quit(save = "no", status = 0L)
 }
 
@@ -49,6 +51,7 @@ rd <- function(p) {
 }
 gsea_go <- rd(need[1]); gsea_kegg <- rd(need[2]); ora <- rd(need[3])
 sens <- rd(need[4]); ewce <- rd(need[5]); coverage <- rd(need[6])
+gsea_cc <- rd(need[7]); ora_cc <- rd(need[8]); untested <- rd(need[9])
 inv <- RELEASE_DESIGN_INVARIANTS
 
 cat("=== coverage ===\n")
@@ -56,18 +59,25 @@ expect(length(unique(gsea_go$canonical_comparison)) == inv$n_primary_contrasts,
        "GSEA GO-BP covers all 12 comparisons")
 expect(length(unique(gsea_kegg$canonical_comparison)) == inv$n_primary_contrasts,
        "GSEA KEGG covers all 12 comparisons")
+expect(length(unique(gsea_cc$canonical_comparison)) == inv$n_primary_contrasts,
+       "GSEA GO-CC covers all 12 comparisons")
+expect(all(gsea_cc$ontology == "GO_CC") && all(ora_cc$ontology == "GO_CC") &&
+         any(sens$ontology == "GO_CC") && any(coverage$ontology == "GO_CC"),
+       "GO-CC is exported as a primary result and in the sensitivity and coverage tables")
 expect(length(unique(sens$canonical_comparison)) == inv$n_primary_contrasts,
        "the sensitivity table covers all 12 comparisons")
 expect(all(as.logical(coverage$agrees_with_run_record)),
        "every exported row count equals the count the canonical run recorded")
 expect(any(as.integer(coverage$rows_exported) == 0L),
-       "empty analysis blocks are recorded rather than omitted silently")
+       "empty analysis blocks are recorded rather than left out")
 
 cat("\n=== canonical ranks by the moderated t; log2FC is sensitivity only ===\n")
 expect(all(gsea_go$rank_statistic == "moderated_t"),
        "canonical GSEA GO-BP is ranked by the moderated t")
 expect(all(gsea_kegg$rank_statistic == "moderated_t"),
        "canonical GSEA KEGG is ranked by the moderated t")
+expect(all(gsea_cc$rank_statistic == "moderated_t") && all(gsea_cc$analysis_role == "canonical"),
+       "canonical GSEA GO-CC is ranked by the moderated t")
 expect(all(gsea_go$analysis_role == "canonical") &&
          all(gsea_kegg$analysis_role == "canonical"),
        "no sensitivity row appears in a canonical file")
@@ -85,7 +95,7 @@ context_cols <- c("sample_class", "contrast_family", "canonical_comparison",
                   "n_denominator_animals", "analysis_unit", "analysis", "ontology",
                   "term_id", "term_name", "p_value", "adjusted_p_value", "direction",
                   "rank_statistic", "analysis_role")
-for (nm in c("gsea_go", "gsea_kegg", "ora", "sens")) {
+for (nm in c("gsea_go", "gsea_cc", "gsea_kegg", "ora", "ora_cc", "sens")) {
   d <- get(nm)
   missing <- setdiff(context_cols, names(d))
   expect(length(missing) == 0L,
@@ -129,18 +139,42 @@ diff_rows <- ewce$ewce_analysis_type == "Differential"
 expect(all(ewce$canonical_comparison[diff_rows] %in% gsea_go$canonical_comparison),
        "EWCE differential rows name one of the 12 primary comparisons")
 
+cat("\n=== gene sets fgsea could not test ===\n")
+expect(all(untested$ontology %in% c("GO_BP", "GO_CC")) &&
+         all(untested$analysis_role %in% c("canonical", "sensitivity")) &&
+         all(untested$analysis_unit == "animal"),
+       "the untested-set table lists GO sets of the canonical and sensitivity GSEA")
+leak <- merge(untested[untested$analysis_role == "canonical",
+                       c("canonical_comparison", "ontology", "term_id")],
+              rbind(gsea_go[c("canonical_comparison", "ontology", "term_id")],
+                    gsea_cc[c("canonical_comparison", "ontology", "term_id")]))
+expect(nrow(leak) == 0L, "no untested set appears in a canonical GSEA table")
+gsea_cov <- coverage[coverage$analysis == "GSEA", , drop = FALSE]
+expect(!anyNA(suppressWarnings(as.integer(gsea_cov$gsea_untested_gene_sets))),
+       "every GSEA block in the coverage table records its untested gene sets")
+go_cov <- gsea_cov[gsea_cov$ontology %in% c("GO_BP", "GO_CC"), , drop = FALSE]
+expect(all(mapply(function(cmp, ont, role, n) {
+  sum(untested$canonical_comparison == cmp & untested$ontology == ont &
+        untested$analysis_role == role) == as.integer(n)
+}, go_cov$canonical_comparison, go_cov$ontology, go_cov$analysis_role,
+go_cov$gsea_untested_gene_sets)), "the coverage counts match the untested-set table")
+
 cat("\n=== values equal the canonical enrichment files ===\n")
-ENRICH <- file.path(DATA_ROOT, "03_output", "enrichment",
-                    "enrichment_t_rank_validation_20260825", "per_comparison")
-if (!dir.exists(ENRICH)) {
-  cat("  [skip]  canonical enrichment folder unreachable; equality not checked\n")
-} else {
+for (blk in list(list(tbl = gsea_go, run = "GO_BP", file = "GSEA_GO_BP.csv", label = "GO-BP"),
+                 list(tbl = gsea_cc, run = "GO_CC", file = "GSEA_GO_CC.csv", label = "GO-CC"),
+                 list(tbl = gsea_kegg, run = "KEGG", file = "GSEA_KEGG.csv", label = "KEGG"))) {
+  ENRICH <- file.path(if (blk$run == "KEGG") release_kegg_root(DATA_ROOT) else
+    release_enrichment_root(blk$run, DATA_ROOT), "per_comparison")
+  if (!dir.exists(ENRICH)) {
+    cat("  [skip]  canonical enrichment folder unreachable; equality not checked\n")
+    next
+  }
   bad <- character(0); n <- 0L
-  for (cmp in unique(gsea_go$canonical_comparison)) {
-    p <- file.path(ENRICH, cmp, "GSEA_GO_BP.csv")
+  for (cmp in unique(blk$tbl$canonical_comparison)) {
+    p <- file.path(ENRICH, cmp, blk$file)
     if (!file.exists(p)) { bad <- c(bad, paste("missing", cmp)); next }
     d <- release_read_csv(p)
-    ex <- gsea_go[gsea_go$canonical_comparison == cmp, , drop = FALSE]
+    ex <- blk$tbl[blk$tbl$canonical_comparison == cmp, , drop = FALSE]
     if (!identical(ex$term_id, as.character(d$ID))) { bad <- c(bad, paste("order", cmp)); next }
     for (pair in list(c("NES", "NES"), c("enrichment_score", "enrichmentScore"),
                       c("p_value", "pvalue"), c("adjusted_p_value", "p.adjust"))) {
@@ -151,12 +185,13 @@ if (!dir.exists(ENRICH)) {
     n <- n + 1L
   }
   expect(length(bad) == 0L,
-         sprintf("GSEA GO-BP values are bit-identical to canonical in %d comparisons%s", n,
+         sprintf("GSEA %s values are bit-identical to canonical in %d comparisons%s",
+                 blk$label, n,
                  if (length(bad)) paste0(" -- ", paste(head(bad, 3), collapse = "; ")) else ""))
 }
 
 cat("\n=== RESULT ===\n")
 if (failures > 0L) {
-  stop(sprintf("Publication release enrichment contracts failed: %d", failures), call. = FALSE)
+  stop(sprintf("Publication release enrichment checks failed: %d", failures), call. = FALSE)
 }
-cat("All publication release enrichment contracts hold.\n")
+cat("All publication release enrichment checks hold.\n")

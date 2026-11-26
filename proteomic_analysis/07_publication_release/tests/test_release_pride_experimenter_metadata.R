@@ -1,6 +1,6 @@
 #!/usr/bin/env Rscript
 
-# Contract: experimenter-supplied metadata is source-controlled, scoped to this mouse
+# Checks: experimenter-supplied metadata is source-controlled, scoped to this mouse
 # proteomics dataset, and propagated to PRIDE without per-sample invention.
 
 args <- commandArgs(trailingOnly = FALSE)
@@ -52,7 +52,7 @@ out_root <- release_output_root()
 sdrf_path <- file.path(out_root, "pride", "sdrf.tsv")
 if (!file.exists(sdrf_path)) {
   cat("No built publication release at", out_root, "\n")
-  cat("Skipping generated PRIDE contracts.\n")
+  cat("Skipping generated PRIDE checks.\n")
 } else {
   rd <- function(p) read.delim(p, sep = "\t", quote = "", stringsAsFactors = FALSE,
                                check.names = FALSE, na.strings = character(0),
@@ -120,7 +120,7 @@ if (!file.exists(sdrf_path)) {
 
 cat("\n=== RESULT ===\n")
 if (failures > 0L) {
-  stop(sprintf("PRIDE experimenter-metadata contracts failed: %d", failures),
+  stop(sprintf("PRIDE experimenter-metadata checks failed: %d", failures),
        call. = FALSE)
 }
-cat("All PRIDE experimenter-metadata contracts hold.\n")
+cat("All PRIDE experimenter-metadata checks hold.\n")

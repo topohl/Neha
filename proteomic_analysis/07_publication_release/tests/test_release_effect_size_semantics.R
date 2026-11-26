@@ -1,17 +1,11 @@
 #!/usr/bin/env Rscript
 
-# Contract: the published effect size is named for what it is, is bit-identical to the
-# canonical `logFC` it was copied from, and is nowhere described as a log2 fold change.
+# Checks: the published effect size has the right name, equals the canonical `log2fc`
+# (limma `logFC`) in all 64,188 rows, and is nowhere called a log2 fold change. File names
+# and the `rank_statistic` value must keep the old `log2fc` token so they still match the
+# canonical run.
 #
-# The central assertion re-reads all 12 canonical split tables and requires every one of
-# the 64,188 exported effect values to equal its source `log2fc` (ProTigy `logFC`) exactly.
-# That is what makes "renamed, not recomputed" checkable rather than asserted.
-#
-# Internal provenance is deliberately NOT scrubbed: canonical filenames and the
-# `rank_statistic` value keep the historical `log2fc` token, and the tests below require
-# that they do, because renaming them would break the link to the canonical run.
-#
-# Skips cleanly when no built release is reachable, so it is safe in CI.
+# Skips when no built release is reachable.
 
 args <- commandArgs(trailingOnly = FALSE)
 file_arg <- grep("^--file=", args, value = TRUE)
@@ -46,7 +40,7 @@ sum_path <- file.path(OUT_ROOT, "differential_analysis",
                       "primary_differential_summary.tsv")
 if (!file.exists(da_path) || !file.exists(sum_path)) {
   cat("No built publication release at", OUT_ROOT, "\n")
-  cat("Skipping publication release effect-size contracts.\n")
+  cat("Skipping publication release effect-size checks.\n")
   quit(save = "no", status = 0L)
 }
 
@@ -81,14 +75,14 @@ expect("source_statistic_field" %in% names(da) &&
        "source_statistic_field records the canonical source field as logFC")
 expect("effect_size_source_column" %in% names(da) &&
          all(grepl("logFC", da$effect_size_source_column, fixed = TRUE)),
-       "effect_size_source_column names the ProTigy logFC column")
+       "effect_size_source_column names the source logFC column")
 expect(all(grepl("log2fc", da$effect_size_source_column, fixed = TRUE)),
        "it also names the canonical split-table column log2fc")
 
 # --------------------------------------------------------------------------------------
 cat("\n=== G. exported effect values equal the canonical logFC exactly ===\n")
 # --------------------------------------------------------------------------------------
-SPLIT_FORWARD <- file.path(DATA_ROOT, "02_data", "animal_level", "split", "forward")
+SPLIT_FORWARD <- file.path(release_stats_root(DATA_ROOT), "split", "forward")
 if (!dir.exists(SPLIT_FORWARD)) {
   cat("  [skip]  canonical split tables unreachable; exact equality not checked\n")
 } else {
@@ -123,7 +117,7 @@ expect(all(da$effect_size_units == RELEASE_EFFECT_SIZE$units),
 expect(!any(grepl("fold", da$effect_size_units, ignore.case = TRUE)),
        "the units string contains no fold-change wording")
 expect(all(grepl("NOT a log2 fold change", ds$effect_size_definition, fixed = TRUE)),
-       "the definition states explicitly that it is not a log2 fold change")
+       "the definition states that it is not a log2 fold change")
 expect(!any(grepl("standardis(ed|ed) mean difference", ds$effect_size_definition)) &&
          !any(grepl("standardised mean difference", ds$effect_size_definition,
                     fixed = TRUE)) &&
@@ -212,7 +206,7 @@ if (file.exists(sens_path)) {
 
 cat("\n=== RESULT ===\n")
 if (failures > 0L) {
-  stop(sprintf("Publication release effect-size contracts failed: %d", failures),
+  stop(sprintf("Publication release effect-size checks failed: %d", failures),
        call. = FALSE)
 }
-cat("All publication release effect-size contracts hold.\n")
+cat("All publication release effect-size checks hold.\n")

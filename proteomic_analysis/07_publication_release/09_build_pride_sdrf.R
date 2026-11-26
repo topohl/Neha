@@ -8,20 +8,15 @@
 #   pride/SDRF_MISSING_METADATA.md     what is missing, why, and what would supply it
 #   pride/README_PRIDE.md              which files are suitable for PRIDE and which are not
 #
-# RULE: no acquisition metadata is invented. Project-derived and experimenter-supplied
-# facts are read from hashed, source-controlled records. Where a value remains unknown, the
-# SDRF cell carries the SDRF-sanctioned string "not available" and the field is recorded as
-# missing, with the specific document that would supply it.
+# No acquisition metadata is invented. Facts come from the release metadata tables and the
+# checked-in experimenter records; an unknown value is written as "not available" and
+# listed as missing, with the document that would supply it. Left unknown: instrument
+# model, acquisition mode, search-software version, search modifications and mass
+# tolerances, AnimalID-level sex, age at tissue collection, developmental stage.
 #
-# Fields deliberately NOT guessed: instrument model, acquisition mode, search-software
-# version, search/quantification modifications and mass tolerances, AnimalID-level sex,
-# age at tissue collection, developmental stage.
-#
-# One field needs its reasoning stated rather than hidden. comment[fraction identifier] is
-# mandatory in SDRF and is set to 1. That encodes the observed one-run-per-biological-sample
-# mapping (96 acquisition runs for 96 distinct AnimalID x sample_class x hemisphere
-# samples), which is what the value 1 means in SDRF. It is NOT a claim about a fractionation
-# protocol, and it is still listed for confirmation in SDRF_MISSING_METADATA.md.
+# comment[fraction identifier] is required and set to 1: one acquisition run per sample
+# (96 runs, 96 AnimalID x sample_class x hemisphere samples). It says nothing about
+# fractionation and is listed for confirmation in SDRF_MISSING_METADATA.md.
 
 suppressWarnings({
   args <- commandArgs(trailingOnly = FALSE)
@@ -53,8 +48,7 @@ sample_preparation_protocol <- release_read_tsv_plain(
   rel("metadata", "sample_preparation_protocol.tsv"))
 n_class_corrected <- nrow(sample_class_corrections)
 
-# Re-read and validate the checked-in sources too. This makes a manually edited release copy
-# insufficient: the generated release must agree with the canonical source-controlled record.
+# The released copies must equal the checked-in source records.
 source_experimenter_metadata <- release_read_experimenter_metadata(REPO_ROOT)
 source_sample_preparation_protocol <- release_read_sample_preparation_protocol(REPO_ROOT)
 if (!identical(experimenter_metadata, source_experimenter_metadata) ||
@@ -83,10 +77,9 @@ if (nrow(sample_metadata) != RELEASE_DESIGN_INVARIANTS$n_measurement_records) {
 # --------------------------------------------------------------------------------------
 # are the raw acquisition files actually in hand?
 # --------------------------------------------------------------------------------------
-# The names are proven; the files are a separate question. Point
-# PROTEOMICS_RELEASE_RAW_FILE_ROOT at the store holding the `.d` directories to have this
-# resolve to TRUE. Absent that, the release reports them as not yet located, which is what
-# keeps the PRIDE verdict honest.
+# The file names are known; the files themselves are not in the project. Set
+# PROTEOMICS_RELEASE_RAW_FILE_ROOT to the folder holding the `.d` directories to check them;
+# otherwise they are reported as not located and the status stays below PRIDE_READY.
 
 raw_root <- release_option_or_env("proteomics.release_raw_file_root",
                                   "PROTEOMICS_RELEASE_RAW_FILE_ROOT", "")
@@ -223,7 +216,7 @@ field_status <- rbind(
      paste("The four outputs are marker-defined laser-capture microdissected material, not",
            "four discrete ontology cell types. Their exact definitions are carried in",
            "characteristics[sampling site] and factor value[sample class]. Neuropil is",
-           "explicitly a mixed/enriched non-nuclear compartment.")),
+           "a mixed/enriched non-nuclear compartment.")),
   fs("characteristics[disease]", "required", "READY", "normal",
      NA_character_, "experimental design (behavioural/chemogenetic, no disease model)",
      "no", NA_character_),
@@ -234,7 +227,7 @@ field_status <- rbind(
      NOT_AVAILABLE, "no developmental-stage term is established by the supplied metadata",
      "experiment timeline / animal records", "yes",
      paste("The 7-10 week range is age at experiment start, not a recorded developmental",
-           "stage or age at tissue collection; deliberately not converted.")),
+           "stage or age at tissue collection; not converted.")),
   fs("characteristics[sex]", "recommended", "MISSING_OPTIONAL_METADATA", NOT_AVAILABLE,
      "reliable AnimalID-level sex assignments are not available",
      "animal-facility records", "no", NA_character_),
@@ -305,7 +298,7 @@ field_status <- rbind(
      "no search-parameter record (run log, config or report) exists in the project tree",
      paste("acquisition facility: the original search/quantification software run log or",
            "configuration (e.g. DIA-NN report.log.txt, if DIA-NN was used)"), "no",
-     "Deliberately not inferred from CAA or TCEP use."),
+     "Not inferred from CAA or TCEP use."),
   fs("comment[precursor mass tolerance]", "recommended", "MISSING_OPTIONAL_METADATA", NOT_AVAILABLE,
      "no search-parameter record exists in the project tree",
      "acquisition facility: original search/quantification software run log or configuration",
@@ -320,7 +313,7 @@ field_status <- rbind(
      paste("The retained processed files use the historical pg.matrix naming convention,",
            "but the exact upstream search/quantification software and configuration could",
            "not be recovered from the retained project files, so nothing retained",
-           "establishes the acquisition mode used. Deliberately not guessed.")),
+           "establishes the acquisition mode used. Not guessed.")),
   fs("comment[collision energy]", "optional", "MISSING_OPTIONAL_METADATA", NOT_AVAILABLE,
      "no instrument method record exists in the project tree",
      "acquisition facility; instrument method file", "no", NA_character_),
@@ -340,17 +333,17 @@ field_status <- rbind(
      "non-standard comment; preserves the original identifier"),
   fs("comment[instrument alias in run name]", "optional", "READY", "Olive", NA_character_,
      "token in every acquisition run name", "no",
-     "non-standard comment; a local alias, explicitly NOT an instrument model"),
+     "non-standard comment; a local alias, not an instrument model"),
   fs("comment[lc and method token in run name]", "optional", "READY",
      "FCo_Evo2_80SPDzoom_5cmRapid_Tobias", NA_character_,
      "token in every acquisition run name", "no",
-     paste("non-standard comment; preserved verbatim and deliberately NOT decoded into an",
+     paste("non-standard comment; kept as recorded and not decoded into an",
            "LC system, gradient or throughput claim")),
   fs("comment[sdrf version]", "recommended", "READY", "v1.1.0", NA_character_,
-     "pinned release metadata contract", "no", NA_character_),
+     "release metadata file in the repository", "no", NA_character_),
   fs("comment[sdrf template]", "optional", "READY",
      "NT=ms-proteomics;VV=v1.1.0 / NT=vertebrates;VV=v1.1.0", NA_character_,
-     "pinned release metadata contract", "no", NA_character_),
+     "release metadata file in the repository", "no", NA_character_),
   fs("comment[sdrf annotation tool]", "optional", "READY", "manual curation",
      NA_character_, "source-controlled release generator", "no", NA_character_),
   fs("factor value[pairing]", "required", "READY", "paired / unpaired", NA_character_,
@@ -366,8 +359,8 @@ field_status <- rbind(
             " differs from the pre-correction records because the assignment was",
             " corrected during historical sample-identity QC; that correction is",
             " RESOLVED, not missing metadata. The pre-correction class is kept out of",
-            " this SDRF factor deliberately -- overloading a factor value with two",
-            " identities would misrepresent the design -- and is carried in the",
+            " this SDRF factor, because a factor value with two identities would",
+            " misrepresent the design; it is carried in the",
             " companion tables metadata/sample_metadata.tsv",
             " (original_sample_class) and metadata/sample_class_corrections.tsv.")),
   fs("raw acquisition FILES (not an SDRF column)", "required for deposition",
@@ -441,7 +434,7 @@ missing_md <- c(
   "  `pride/SAMPLE_PREPARATION_PROTOCOL.md` (version 2024-11-28).",
   "",
   "None of the values below were inferred. Where a plausible inference existed it is",
-  "written out and explicitly rejected, so a later reader can see what was considered.",
+  "written out and rejected, so a later reader can see what was considered.",
   "",
   "| field | status | why_missing | likely_source | required_before_submission | notes |",
   "|---|---|---|---|---|---|",
@@ -464,7 +457,7 @@ missing_md <- c(
   "the experiment timeline or animal records instead. Digestion and labelling are already",
   "resolved from the source-controlled experimenter records.",
   "",
-  "## Explicitly rejected inferences",
+  "## Inferences considered and rejected",
   "",
   "| candidate inference | why it was rejected |",
   "|---|---|",
@@ -489,7 +482,7 @@ missing_md <- c(
            paste("argues against isobaric multiplexing but is not a record of the chemistry",
                  "used; label-free status is now independently experimenter-verified"))),
   "",
-  "## Sample class: RESOLVED, and deliberately not listed above",
+  "## Sample class: RESOLVED, so not listed above",
   "",
   paste0("The sample-class assignment is **not** missing or unresolved metadata, and it is",
          " not one of the gaps this document lists. For ", n_class_corrected, " of the 96",
@@ -501,8 +494,8 @@ missing_md <- c(
   paste0("`factor value[sample class]` and `characteristics[sampling site]` therefore carry",
          " the **analysis-time** class: the class the validated results were computed on.",
          " That is the correct primary factor representation. The pre-correction class is",
-         " deliberately NOT packed into the SDRF factor -- overloading a factor value with",
-         " two identities would misrepresent the experimental design, and SDRF has no",
+         " not packed into the SDRF factor: a factor value with two identities would",
+         " misrepresent the experimental design, and SDRF has no",
          " sanctioned column for a superseded label. It is carried in the companion tables",
          " instead:"),
   "",
@@ -572,9 +565,12 @@ readme_pride <- c(
            paste("Depositable as a processed result. It is **NOT** native raw",
                  "mass-spectrometry data -- see below."))),
   md_row(c("`processed_data/protein_abundance_measurement_level.tsv.gz`",
-           "processed result", "Filtered, log2, median-centred, imputed, PCA-adjusted.")),
+           "processed result",
+           paste("Filtered, imputed and standardised per protein (each protein has mean about",
+                 "0 and SD about 1 over the 96 acquisitions). Not log2 abundance."))),
   md_row(c("`processed_data/protein_abundance_animal_level.tsv.gz`", "processed result",
-           "The matrix all inference is computed on.")),
+           paste("The matrix all inference is computed on: the mean of the two hemispheres,",
+                 "on the same per-protein standardised scale."))),
   md_row(c("`differential_analysis/` and `enrichment/`", "processed result",
            "Downstream statistics; usually supplied to the journal rather than to PRIDE.")),
   "",
@@ -589,7 +585,7 @@ readme_pride <- c(
   "pre-filtering, not to it being an instrument acquisition file.",
   "",
   "A PRIDE submission that offered this file as the raw data would be incomplete. The",
-  "genuinely raw data are the 96 `.d` acquisition directories.",
+  "raw data are the 96 `.d` acquisition directories.",
   "",
   "## Layers, so the distinction stays visible",
   "",
@@ -604,7 +600,8 @@ readme_pride <- c(
            "cited; annotation republished")),
   md_row(c("4", "Processed measurement-level matrix", "5,349 x 96", "yes")),
   md_row(c("5", "Animal-level matrix", "5,349 x 48", "yes")),
-  md_row(c("6", "Differential statistics", "12 primary comparisons", "yes")),
+  md_row(c("6", "Differential statistics",
+           "12 primary comparisons, one limma model per sample class", "yes")),
   md_row(c("7", "Enrichment / EWCE", "GSEA, ORA, EWCE", "yes")),
   md_row(c("8", "Figure source data", "15 panels", "yes")),
   "",

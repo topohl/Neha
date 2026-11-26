@@ -1,28 +1,19 @@
-# Presentation layer for the reader-facing workbook.
+# Display labels, captions, column order and number formats for the editor workbook.
 #
-# The release carries every table twice, on purpose, and the two serve different readers:
+# The release has every table twice:
+#   *.tsv / *.tsv.gz     snake_case column names, one table per file; the tests and the data
+#                        dictionary use these names, so they do not change
+#   the .xlsx workbook   display headers, units in captions, a contents sheet, formatting
 #
-#   *.tsv / *.tsv.gz   machine-readable. Snake_case machine column names, one table per
-#                      file, contract-bound: the tests and the data dictionary key off
-#                      these names, so they never change for cosmetic reasons.
-#   the .xlsx workbook human-readable. This is what an editor or reviewer actually opens,
-#                      so it gets display headers, units in the caption rather than
-#                      repeated down a column, a table of contents, and formatting.
+# This file only maps between the two and holds no data. Requires release_validation.R to
+# be sourced first (captions read RELEASE_PRIMARY_MODEL).
 #
-# This file holds only the mapping between the two. It contains no data and no statistics.
-#
-# Three conventions worth stating, because they are what make the workbook read like a
-# supplementary table set rather than a database dump:
-#
-#   1. A column whose value is IDENTICAL on every row of a sheet is not a column. It is a
-#      property of the table, and it belongs in the caption. release_sheet_constants()
-#      finds those and the builder hoists them out.
-#   2. Columns are ordered scientifically: what the row identifies, then the result, then
-#      supporting quantities, then provenance. Machine order is insertion order, which is
-#      not the same thing.
-#   3. Numeric formats are chosen per column from the values actually present, so a
-#      p-value column spanning 1e-30 renders in scientific notation and one spanning
-#      0.05-1 renders as a decimal.
+# Conventions:
+#   1. A column with the same value on every row of a sheet goes into the caption
+#      (release_sheet_constants()).
+#   2. Columns run: identifiers, result, supporting values, provenance.
+#   3. Number formats follow the values present: a P-value column reaching 1e-30 is shown
+#      in scientific notation, one between 0.05 and 1 as a decimal.
 
 # --------------------------------------------------------------------------------------
 # display labels
@@ -106,12 +97,16 @@ RELEASE_COLUMN_LABELS <- c(
   n_denominator_animals                = "Denominator animals (n)",
   primary_or_secondary                 = "Primary or secondary",
   statistical_model                    = "Statistical model",
+  residual_df                          = "Residual df",
+  statistics_software                  = "Statistics software",
   gsea_ranking_statistic               = "GSEA ranking statistic",
   interpretation                       = "Interpretation",
   differential_statistics_file         = "Differential statistics file",
   canonical_split_forward_path         = "Canonical differential table",
   canonical_mapped_forward_path        = "Canonical mapped table",
-  canonical_enrichment_dir             = "Canonical enrichment folder",
+  canonical_enrichment_dir             = "Canonical enrichment folder (GO-BP)",
+  canonical_enrichment_dir_go_cc       = "Canonical enrichment folder (GO-CC)",
+  canonical_enrichment_dir_kegg        = "Canonical enrichment folder (KEGG)",
 
   # --- proteins and differential statistics -------------------------------------------
   protein_group_id                     = "Protein group (UniProt entry names)",
@@ -120,7 +115,7 @@ RELEASE_COLUMN_LABELS <- c(
   protein_description                  = "Protein description",
   id_mapping_status                    = "Identifier mapping status",
   effect_size_sd_units                 = "Standardized abundance difference (SD units)",
-  average_standardized_abundance       = "Mean standardized abundance",
+  average_standardized_abundance       = "Mean standardized abundance, sample class",
   moderated_t                          = "Moderated t",
   P.Value                              = "P value",
   adj.P.Val                            = "Adjusted P value (BH)",
@@ -174,6 +169,8 @@ RELEASE_COLUMN_LABELS <- c(
   rows_exported                        = "Rows exported (n)",
   term_count_recorded_by_run           = "Terms recorded by run (n)",
   agrees_with_run_record               = "Agrees with run record",
+  gsea_untested_gene_sets              = "Gene sets without a P value (n)",
+  n_perm_simple                        = "fgsea nPermSimple",
   note                                 = "Note",
   parameter                            = "Parameter",
   value                                = "Value",
@@ -224,6 +221,7 @@ RELEASE_COLUMN_LABELS <- c(
   biological_interpretation_changed    = "Interpretation changed",
   key_numbers_original                 = "Key numbers, original",
   key_numbers_revised                  = "Key numbers, revised",
+  key_numbers_pooled_model             = "Key numbers, pooled model (superseded)",
   panel_source_data_release_path       = "Panel source data in this release",
   panel_source_data_original_filename  = "Panel source data, original filename",
   panel_source_data_canonical_path     = "Panel source data, canonical path",
@@ -265,7 +263,7 @@ release_display_labels <- function(cols) {
   out
 }
 
-#' Machine columns that have no label yet -- used by a contract so the map cannot rot.
+#' Machine columns with no display label yet (stage 07 stops if a published column has none).
 release_unlabelled_columns <- function(cols) {
   cols <- unique(as.character(cols))
   cols[!cols %in% names(RELEASE_COLUMN_LABELS)]
@@ -275,7 +273,7 @@ release_unlabelled_columns <- function(cols) {
 # sheet captions
 # --------------------------------------------------------------------------------------
 # Supplementary-table numbering is assigned here rather than derived from sheet order, so
-# inserting a sheet cannot silently renumber a table an editor has already cited.
+# inserting a sheet cannot renumber a table an editor has already cited.
 
 RELEASE_SHEET_META <- list(
   README = list(
@@ -305,9 +303,11 @@ RELEASE_SHEET_META <- list(
                     "subset.")),
   Differential_Proteins = list(
     number = "S5", title = "Differential abundance, protein level",
-    caption = paste("One row per protein group per primary comparison. The effect size is a",
-                    "standardized abundance difference in SD units, not a log2 fold change.",
-                    "Positive values are higher in the numerator condition.")),
+    caption = paste("One row per protein group per primary comparison. Statistics:",
+                    paste0(RELEASE_PRIMARY_MODEL$label, "."),
+                    "The effect size is a standardized abundance difference in SD units,",
+                    "not a log2 fold change. Positive values are higher in the numerator",
+                    "condition.")),
   GSEA_GO_BP = list(
     number = "S6", title = "Gene set enrichment analysis, GO biological process",
     caption = paste("Canonical GSEA, ranked by the moderated t statistic. The complete",
@@ -334,14 +334,15 @@ RELEASE_SHEET_META <- list(
   Enrichment_Coverage = list(
     number = "S11", title = "Enrichment coverage audit",
     caption = paste("Rows exported per comparison and analysis, cross-checked against the",
-                    "term counts the canonical run recorded. Empty query lists are a result",
-                    "and are recorded as such, not a missing file.")),
+                    "term counts the canonical run recorded, and the gene sets per GSEA",
+                    "block that fgsea gave no P value. Empty query lists are a result and",
+                    "are recorded as such, not a missing file.")),
   Enrichment_Parameters = list(
     number = "S12", title = "Enrichment and EWCE parameters",
     caption = "Parameters as recorded by the canonical enrichment and EWCE runs."),
   Secondary_Analyses = list(
     number = "S13", title = "Secondary and excluded analyses",
-    caption = paste("Analyses that are deliberately not part of the 12 primary contrasts,",
+    caption = paste("Analyses that are not part of the 12 primary contrasts,",
                     "with the reason and the inferential caveat for each.")),
   Figure_Source_Map = list(
     number = "S14", title = "Figure panel provenance",
@@ -357,7 +358,24 @@ RELEASE_SHEET_META <- list(
     caption = paste("Versions as recorded by the runs themselves, or UNKNOWN with the source",
                     "that would supply them. Scoped by the stage each applies to, so a",
                     "superseded version cannot be read as the version behind the reported",
-                    "result."))
+                    "result.")),
+  # Appended 2026-11-25, never inserted: S1-S16 keep the numbers already cited.
+  GSEA_GO_CC = list(
+    number = "S17", title = "Gene set enrichment analysis, GO cellular component",
+    caption = paste("Canonical GSEA, ranked by the moderated t statistic. Complete tested",
+                    "result: filter on the adjusted P value.", RELEASE_GO_CC_PROVENANCE_NOTE)),
+  ORA_GO_CC = list(
+    number = "S18", title = "Over-representation analysis, GO cellular component",
+    caption = paste("Over-representation of GO cellular component terms across four",
+                    "query-list definitions. Complete tested result.",
+                    RELEASE_GO_CC_PROVENANCE_NOTE)),
+  # Appended 2026-11-25 with the adoption of the nPermSimple = 100000 GO run.
+  GSEA_Untested_Sets = list(
+    number = "S19", title = "Gene sets GSEA could not test, GO",
+    caption = paste("GO biological process and cellular component gene sets, within the",
+                    "size limits, that fgsea gave no P value (unbalanced statistics), one row",
+                    "per comparison and set. They are absent from the GSEA tables (S6, S9,",
+                    "S17), not non-significant. KEGG counts are in S11."))
 )
 
 #' Preferred leading column order per sheet.
@@ -402,6 +420,14 @@ RELEASE_SHEET_COLUMN_ORDER <- list(
   ORA_GO_BP = c("canonical_comparison", "sample_class", "contrast_family", "query_list",
                 "term_id", "term_name", "gene_count", "gene_ratio", "background_ratio",
                 "fold_enrichment", "p_value", "adjusted_p_value", "q_value", "direction"),
+  GSEA_GO_CC = c("canonical_comparison", "sample_class", "contrast_family", "term_id",
+                 "term_name", "NES", "enrichment_score", "p_value", "adjusted_p_value",
+                 "q_value", "set_size", "n_core_enrichment_genes", "direction"),
+  ORA_GO_CC = c("canonical_comparison", "sample_class", "contrast_family", "query_list",
+                "term_id", "term_name", "gene_count", "gene_ratio", "background_ratio",
+                "fold_enrichment", "p_value", "adjusted_p_value", "q_value", "direction"),
+  GSEA_Untested_Sets = c("canonical_comparison", "sample_class", "contrast_family",
+                         "ontology", "analysis_role", "term_id", "term_name", "set_size"),
   GSEA_log2FC_sensitivity = c("canonical_comparison", "sample_class", "contrast_family",
                               "ontology", "term_id", "term_name", "NES", "p_value",
                               "adjusted_p_value", "q_value", "set_size", "direction"),
@@ -430,9 +456,7 @@ release_order_columns <- function(df, sheet) {
 
 #' Columns whose value is identical on every row, with that value.
 #'
-#' A quantity that never varies is a property of the table, not a variable in it. Hoisting
-#' these into the caption is the difference between a supplementary table and a database
-#' dump -- and on the 64,188-row differential sheet it removes four columns of repetition.
+#' The workbook builder moves these into the sheet caption.
 #'
 #' `keep` names columns that stay in the sheet even when constant, because a reader filters
 #' or joins on them.
@@ -483,12 +507,9 @@ release_numfmt_for <- function(values, column_name = "") {
 # --------------------------------------------------------------------------------------
 # display names for controlled-vocabulary values
 # --------------------------------------------------------------------------------------
-# These are for PROSE and markdown tables only. Data cells keep the controlled vocabulary
-# (`mcherry`, `paired_cno`, `cfos_paired_cno_over_cfos_paired_veh`) because that is what
-# joins the tables together and what the contracts assert on. A reader-facing sentence or
-# table heading, though, should read "cFos: paired-CNO vs paired-VEH" -- the underscored
-# machine key in running text is exactly what makes a supplementary section look like a
-# database dump. README_DATA.md documents both namings side by side.
+# For prose and markdown tables only, e.g. "cFos: paired-CNO vs paired-VEH". Data cells keep
+# the controlled vocabulary (`mcherry`, `paired_cno`, `cfos_paired_cno_over_cfos_paired_veh`),
+# which the tables join on. README_DATA.md lists both namings.
 
 RELEASE_SAMPLE_CLASS_DISPLAY <- c(
   mcherry  = "mCherry",
@@ -522,6 +543,36 @@ release_comparison_label <- function(sample_class, numerator_condition,
   paste0(release_sample_class_display(sample_class), ": ",
          release_condition_display(numerator_condition), " vs ",
          release_condition_display(denominator_condition))
+}
+
+RELEASE_FAMILY_DISPLAY <- c(
+  paired_veh_vs_unpaired_veh   = "learning",
+  paired_cno_vs_paired_veh     = "paired CNO",
+  unpaired_cno_vs_unpaired_veh = "unpaired CNO"
+)
+
+#' Reader-facing list of the GSEA blocks with gene sets fgsea could not test.
+#'
+#' `untested` is release_fgsea_untested(); `contrasts` the primary contrast manifest. Gives
+#' e.g. "learning: Neuropil 31 GO-BP, cFos 11 GO-BP; paired CNO: cFos 114 GO-BP", or "" when
+#' no block matches.
+release_untested_blocks_text <- function(untested, contrasts, families,
+                                         ontologies = "GO_BP", classes = NULL) {
+  u <- merge(untested, contrasts[c("canonical_comparison", "sample_class", "contrast_family")],
+             by = "canonical_comparison")
+  keep <- u$contrast_family %in% families & u$ontology %in% ontologies
+  if (!is.null(classes)) keep <- keep & u$sample_class %in% classes
+  u <- u[keep, , drop = FALSE]
+  if (!nrow(u)) return("")
+  class_order <- names(RELEASE_SAMPLE_CLASS_DISPLAY)
+  parts <- vapply(families[families %in% u$contrast_family], function(f) {
+    uf <- u[u$contrast_family == f, , drop = FALSE]
+    uf <- uf[order(match(uf$sample_class, class_order), uf$ontology), , drop = FALSE]
+    paste0(RELEASE_FAMILY_DISPLAY[[f]], ": ",
+           paste0(release_sample_class_display(uf$sample_class), " ", uf$n_sets, " ",
+                  sub("_", "-", uf$ontology), collapse = ", "))
+  }, character(1))
+  paste(parts, collapse = "; ")
 }
 
 #' Column display width, bounded so one long free-text field cannot dominate the sheet.

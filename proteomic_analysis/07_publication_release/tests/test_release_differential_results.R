@@ -1,10 +1,7 @@
 #!/usr/bin/env Rscript
 
-# Contract: the published differential statistics are the canonical ones, unchanged.
-#
-# The central assertion re-reads every canonical split table and requires bit-level
-# equality with the exported values. If that ever fails, the release has recomputed or
-# rounded something and must not be published.
+# Checks: the published differential statistics are the canonical ones, unchanged. Every
+# canonical split table is re-read and must be identical to the exported values.
 
 args <- commandArgs(trailingOnly = FALSE)
 file_arg <- grep("^--file=", args, value = TRUE)
@@ -37,7 +34,7 @@ da_path <- file.path(OUT_ROOT, "differential_analysis", "primary_differential_pr
 sum_path <- file.path(OUT_ROOT, "differential_analysis", "primary_differential_summary.tsv")
 if (!file.exists(da_path) || !file.exists(sum_path)) {
   cat("No built publication release at", OUT_ROOT, "\n")
-  cat("Skipping publication release differential contracts.\n")
+  cat("Skipping publication release differential checks.\n")
   quit(save = "no", status = 0L)
 }
 
@@ -75,7 +72,7 @@ expect(!"Description" %in% names(da),
        "the misleading source column name `Description` is not republished")
 
 cat("\n=== exported statistics equal the canonical split tables ===\n")
-SPLIT_FORWARD <- file.path(DATA_ROOT, "02_data", "animal_level", "split", "forward")
+SPLIT_FORWARD <- file.path(release_stats_root(DATA_ROOT), "split", "forward")
 if (!dir.exists(SPLIT_FORWARD)) {
   cat("  [skip]  canonical split tables unreachable; equality not checked\n")
 } else {
@@ -132,7 +129,7 @@ expect(sum(da$id_mapping_status == "unmapped") ==
 
 cat("\n=== RESULT ===\n")
 if (failures > 0L) {
-  stop(sprintf("Publication release differential contracts failed: %d", failures),
+  stop(sprintf("Publication release differential checks failed: %d", failures),
        call. = FALSE)
 }
-cat("All publication release differential contracts hold.\n")
+cat("All publication release differential checks hold.\n")

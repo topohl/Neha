@@ -1,18 +1,21 @@
 #!/usr/bin/env Rscript
 
-# Publication release, stage 08 -- the editor/reviewer changelog.
+# Publication release, stage 08: the changelog for editors and reviewers.
 #
 # Produces
 #   editor_source_data/REVISION_PROTEOMICS_DATA_CHANGELOG.md
 #   editor_source_data/EFFECT_SIZE_TERMINOLOGY_AUDIT.tsv     classified fold-change mentions
-#   editor_source_data/MANUSCRIPT_TERMINOLOGY_ACTIONS.md     manual, outside-repo actions
+#   editor_source_data/MANUSCRIPT_TERMINOLOGY_ACTIONS.md     hand edits outside the repo
 #
-# Every count in the document is read from the release tables built by stages 04-06, not
-# typed in. If a canonical number changes, the changelog changes with it.
+# Counts for the revised analysis are read from the release tables (stages 04-06), the
+# figure rebuild's audit and source-data files, the inferential checks and the pooled run's
+# tables. A few values from the original submission and earlier audits (PCA variance, EWCE
+# cell types, plate QC, UMAP outlier ranks) are typed in. The changelog says which findings
+# weakened or changed in the revised analysis.
 #
-# The document must not imply that correcting the statistical unit left the biology
-# untouched. It did not: most contrasts lost every FDR-significant protein, one main-figure
-# panel became a null result, and two panels changed meaning. Those are stated plainly.
+# Panels use the manuscript numbering (Fig. 2 X, Supp. Fig. 4 X), as do the released
+# source-data files; internal keys and rebuild file names (Figure3, Fig3G_*) keep the old
+# names.
 
 suppressWarnings({
   args <- commandArgs(trailingOnly = FALSE)
@@ -52,26 +55,38 @@ secondary <- read_release(rel("metadata", "secondary_analysis_manifest.tsv"))
 corrections <- read_release(rel("metadata", "sample_class_corrections.tsv"))
 differential <- read_release(rel("differential_analysis",
                                 "primary_differential_proteins.tsv.gz"))
+gsea_cc <- read_release(rel("enrichment", "primary_GSEA_GO_CC.tsv.gz"))
+gsea_kegg <- read_release(rel("enrichment", "primary_GSEA_KEGG.tsv.gz"))
+ora_go <- read_release(rel("enrichment", "primary_ORA_GO_BP.tsv.gz"))
+ora_cc <- read_release(rel("enrichment", "primary_ORA_GO_CC.tsv.gz"))
+inv <- RELEASE_DESIGN_INVARIANTS
+# Stops unless the run manifest describes RELEASE_PRIMARY_MODEL on the locked GCTs.
+stat_run <- release_read_stat_run(DATA_ROOT)
 
-# The post-hoc Pairing x CNO interaction lives in the canonical inferential-checks branch,
-# not in the 12 primary contrasts. Read for the manuscript actions: the manuscript must not
-# present its pathway-level observations as protein-level confirmation, and stating that
-# requires the actual protein counts rather than an adjective.
-interaction_protein_path <- file.path(
-  DATA_ROOT, "03_output", "inferential_checks", "final_inferential_checks_20260826",
-  "pairing_cno_interaction_protein_summary.csv")
-interaction_gsea_path <- file.path(
-  DATA_ROOT, "03_output", "inferential_checks", "final_inferential_checks_20260826",
-  "pairing_cno_interaction_gsea_summary.csv")
-interaction_proteins <- if (file.exists(interaction_protein_path)) {
-  release_read_csv(interaction_protein_path)
-} else NULL
-interaction_gsea <- if (file.exists(interaction_gsea_path)) {
-  release_read_csv(interaction_gsea_path)
-} else NULL
+# Post hoc Pairing x CNO interaction and leave-one-animal-out check, from the inferential
+# checks (not among the 12 primary contrasts; stage 02 checks they used this statistics
+# run). Their counts go into the manuscript action list.
+INFERENTIAL <- release_inferential_root(DATA_ROOT)
+interaction_protein_path <- file.path(INFERENTIAL, "pairing_cno_interaction_protein_summary.csv")
+interaction_gsea_path <- file.path(INFERENTIAL, "pairing_cno_interaction_gsea_summary.csv")
+interaction_diag_path <- file.path(INFERENTIAL, "pairing_cno_interaction_diagnostics.csv")
+loo_path <- file.path(INFERENTIAL, "robustness", "mcherry_learning_leave_one_out.csv")
+inferential_report <- file.path(INFERENTIAL, "interaction_and_robustness_report.txt")
+for (p in c(interaction_protein_path, interaction_gsea_path, interaction_diag_path, loo_path,
+            inferential_report)) {
+  release_assert_exists(p, basename(p))
+}
+interaction_proteins <- release_read_csv(interaction_protein_path)
+interaction_gsea <- release_read_csv(interaction_gsea_path)
+interaction_diag <- release_read_csv(interaction_diag_path)
+loo <- release_read_csv(loo_path)
+loo_full <- loo[loo$animal_dropped == "none", , drop = FALSE]
+loo_drop <- loo[loo$animal_dropped != "none", , drop = FALSE]
+if (nrow(loo_full) != 1L || !nrow(loo_drop)) {
+  stop("Leave-one-animal-out table lacks the full fit or the refits: ", loo_path, call. = FALSE)
+}
 
-# Experimenter-supplied Methods facts, read from the checked-in source of truth so the
-# manuscript action list quotes exactly what the release publishes.
+# Experimenter-supplied Methods facts, from the checked-in records the release publishes.
 experimenter_metadata <- release_read_experimenter_metadata(REPO_ROOT)
 sample_preparation_protocol <- release_read_sample_preparation_protocol(REPO_ROOT)
 crosswalk <- release_old_package_crosswalk()
@@ -80,6 +95,46 @@ REVISION_ROOT <- file.path(DATA_ROOT, "03_output", "reviewer_revision_animal_lev
 retained_report <- file.path(REVISION_ROOT, "manifests",
                              "RETAINED_PANELS_3G_3H_3I_SuppE_REPORT.md")
 final_report <- file.path(REVISION_ROOT, "manifests", "FINAL_REPORT.md")
+
+# Fig. 2 D, F, G, H, I and Supp. Fig. 4 F were rebuilt on the per-sample-class statistics
+# (2026-11-25, on the nPermSimple = 100000 GO enrichment). Their numbers are read from the
+# rebuild's audit and source-data files; its run script is the record of the rebuild.
+REBUILD_ROOT <- release_figure_rebuild_root(DATA_ROOT)
+REBUILD_REL <- paste(RELEASE_STATISTICS_RUN$figure_rebuild_relative, collapse = "/")
+REBUILD_FIG <- file.path(REBUILD_ROOT, "figure_panels_style_matched", "Figure3")
+rebuild_record <- release_figure_rebuild_record(DATA_ROOT)
+fig_f_src_path <- file.path(REBUILD_FIG,
+  "Fig3F_memory_engram_GSEA_animal_level_STYLE_MATCHED_source_data.csv")
+fig_g_src_path <- file.path(REBUILD_FIG, "Fig3G_source_data.csv")
+fig_h_audit_path <- file.path(REBUILD_FIG, "Fig3H_interpretation_audit.csv")
+fig_i_audit_path <- file.path(REBUILD_FIG, "Fig3I_interpretation_audit.csv")
+for (p in c(retained_report, final_report, rebuild_record, fig_f_src_path, fig_g_src_path,
+            fig_h_audit_path, fig_i_audit_path)) {
+  release_assert_exists(p, basename(p))
+}
+audit_value <- function(path, item) {
+  a <- release_read_csv(path)
+  v <- as.character(a$value[a$item == item])
+  if (length(v) != 1L || !nzchar(v)) stop("No single '", item, "' in ", path, call. = FALSE)
+  v
+}
+fig_h_r <- as.numeric(audit_value(fig_h_audit_path, "corrected_r"))
+fig_h_n <- as.integer(audit_value(fig_h_audit_path, "n_proteins"))
+fig_h_control_r <- as.numeric(audit_value(fig_h_audit_path, "control_r_learning_signature"))
+fig_i_n <- as.integer(audit_value(fig_i_audit_path, "n_overlapping_terms"))
+fig_i_opposed <- as.integer(audit_value(fig_i_audit_path, "n_opposed"))
+fig_i_concordant <- as.integer(audit_value(fig_i_audit_path, "n_concordant"))
+fig_g_src <- release_read_csv(fig_g_src_path)
+fig_f_src <- release_read_csv(fig_f_src_path)
+g_bp <- fig_g_src[fig_g_src$ontology == "BP", , drop = FALSE]
+g_cc <- fig_g_src[fig_g_src$ontology == "CC", , drop = FALSE]
+if (!nrow(g_bp) || !nrow(g_cc) || length(unique(g_bp$n_FDR_significant)) != 1L ||
+    length(unique(g_cc$n_FDR_significant)) != 1L) {
+  stop("Fig. 2 G source data no longer holds one GO-BP and one GO-CC block.", call. = FALSE)
+}
+f_terms <- unique(fig_f_src$ID[as.logical(fig_f_src$selected_by_column)])
+f_mcherry <- sum(fig_f_src$sample_class == "mcherry" & as.logical(fig_f_src$fdr_significant) &
+                   as.logical(fig_f_src$selected_by_column))
 
 # --------------------------------------------------------------------------------------
 # derived numbers
@@ -103,13 +158,151 @@ sens_fdr_by_comparison <- vapply(
   unique(sens$canonical_comparison),
   function(cmp) fdr_terms(sens, sens$canonical_comparison == cmp & sens$ontology == "GO_BP"),
   integer(1))
+gsea_cc_fdr_by_comparison <- vapply(
+  unique(gsea_cc$canonical_comparison),
+  function(cmp) fdr_terms(gsea_cc, gsea_cc$canonical_comparison == cmp), integer(1))
+kegg_fdr_by_comparison <- vapply(
+  unique(gsea_kegg$canonical_comparison),
+  function(cmp) fdr_terms(gsea_kegg, gsea_kegg$canonical_comparison == cmp), integer(1))
+term_count <- function(counts, cmp) {
+  v <- unname(counts[cmp])
+  v[is.na(v)] <- 0L
+  as.integer(v)
+}
+plural <- function(n, one, many) if (n == 1L) one else many
 
-#' Render a data frame as a GitHub-flavoured markdown table.
-#'
-#' Numeric columns are right-aligned and cells are trimmed. Without the trim, as.matrix()
-#' pads every numeric column to a common width and the padding survives into the rendered
-#' table as ragged whitespace; without the alignment, counts render left-aligned against
-#' their own header, which reads badly in a column of figures.
+MCH_LEARNING <- "mcherry_paired_veh_over_mcherry_unpaired_veh"
+mch <- diff_summary[diff_summary$canonical_comparison == MCH_LEARNING, , drop = FALSE]
+ora_up <- ora_go[ora_go$canonical_comparison == MCH_LEARNING &
+                   ora_go$query_list == "fdr_significant_higher_in_numerator", , drop = FALSE]
+ora_up_padj <- as.numeric(ora_up$adjusted_p_value)
+ora_cc_up <- ora_cc[ora_cc$canonical_comparison == MCH_LEARNING &
+                      ora_cc$query_list == "fdr_significant_higher_in_numerator", , drop = FALSE]
+if (nrow(mch) != 1L || !nrow(ora_up) || !nrow(ora_cc_up)) {
+  stop("The mCherry learning comparison or its ORA up-lists are missing from the release.",
+       call. = FALSE)
+}
+ora_cc_up_padj <- as.numeric(ora_cc_up$adjusted_p_value)
+ora_cc_up_sig <- sum(ora_cc_up_padj < 0.05, na.rm = TRUE)
+# The released name of the Fig. 2 G redundant-terms file (the panel's second file).
+g_skip_release <- basename(strsplit(
+  figure_map$panel_source_data_release_path[figure_map$figure == "Figure3" &
+                                              figure_map$panel == "G"],
+  ";", fixed = TRUE)[[1]][[2]])
+comparison_labels <- release_comparison_label(diff_summary$sample_class,
+                                              diff_summary$numerator_condition,
+                                              diff_summary$denominator_condition)
+n_prot_mapped <- as.integer(diff_summary$n_significant_fdr_0_05_mapped_only)
+n_bp_now <- term_count(gsea_fdr_by_comparison, diff_summary$canonical_comparison)
+n_cc_now <- term_count(gsea_cc_fdr_by_comparison, diff_summary$canonical_comparison)
+
+# AveExpr as the per-sample-class model reports it, measured on the released table.
+ave <- release_aveexpr_summary(differential)
+
+# Leave-one-animal-out summary of the mCherry learning comparison (read, not refitted).
+loo_range <- function(col) range(as.numeric(loo_drop[[col]]))
+loo_fdr <- loo_range("n_fdr05")
+loo_r_effect_min <- min(as.numeric(loo_drop$r_effect))
+loo_bp <- loo_range("go_bp_fdr05"); loo_bp_kept <- loo_range("go_bp_retained_of_full")
+loo_cc <- loo_range("go_cc_fdr05"); loo_cc_kept <- loo_range("go_cc_retained_of_full")
+loo_df <- unique(as.integer(loo_drop$df_residual))
+
+# Gene sets fgsea could not test, per block, and the permutation settings behind every GSEA
+# count (GO at nPermSimple 100000; KEGG and the sensitivity analyses at the fgsea default).
+contrast_manifest <- read_release(rel("metadata", "primary_contrast_manifest.tsv"))
+untested <- release_fgsea_untested(diff_summary$canonical_comparison, DATA_ROOT)
+permutations <- release_enrichment_permutations(DATA_ROOT)
+untested_n <- function(cmp, ontology) {
+  vapply(cmp, function(x) {
+    as.integer(sum(untested$n_sets[untested$canonical_comparison == x &
+                                     untested$ontology == ontology]))
+  }, integer(1), USE.NAMES = FALSE)
+}
+untested_blocks <- function(families, ontologies = "GO_BP", classes = NULL) {
+  release_untested_blocks_text(untested, contrast_manifest, families, ontologies, classes)
+}
+PERMUTATION_NOTE <- paste(
+  permutations$sentence,
+  "The gene sets fgsea could not test are counted per comparison in section 5 of the",
+  "changelog and listed in enrichment/gsea_untested_gene_sets.tsv.")
+
+# The superseded pooled model (one fit over all 48 units), read for the "what changed from
+# the pooled release" sections. Its folders are not locked, so they are checked first: both
+# indexes must name the pooled statistics GCT, each mapped table must match the hash in its
+# index, and term counts are compared with the pooled enrichment index.
+POOLED_STATS <- release_rel_path(RELEASE_STATISTICS_RUN$pooled_stats_relative, DATA_ROOT)
+POOLED_MAPPED <- file.path(POOLED_STATS, "mapped", "forward")
+POOLED_ENRICH_ROOT <- release_rel_path(RELEASE_STATISTICS_RUN$pooled_enrichment_relative,
+                                       DATA_ROOT)
+POOLED_ENRICH <- file.path(POOLED_ENRICH_ROOT, "per_comparison")
+pooled_mapped_index_path <- file.path(POOLED_STATS, "mapped", "indexMappedComparisons.csv")
+pooled_enrich_index_path <- file.path(POOLED_ENRICH_ROOT, "indexEnrichmentComparisons.csv")
+pooled_mapped_index <- release_read_csv(pooled_mapped_index_path)
+pooled_enrich_index <- release_read_csv(pooled_enrich_index_path)
+for (ix in list(list(d = pooled_mapped_index, p = pooled_mapped_index_path),
+                list(d = pooled_enrich_index, p = pooled_enrich_index_path))) {
+  if (nrow(ix$d) != inv$n_primary_contrasts ||
+      !all(as.character(ix$d$source_gct_sha256) == RELEASE_STATISTICS_RUN$pooled_stat_gct_sha256)) {
+    stop("The pooled-model index does not record the pooled statistics GCT (",
+         substr(RELEASE_STATISTICS_RUN$pooled_stat_gct_sha256, 1, 16), "): ", ix$p,
+         call. = FALSE)
+  }
+}
+pooled_mapped <- function(cmp) {
+  p <- file.path(POOLED_MAPPED, paste0(sub("_over_", "_vs_", cmp), ".csv"))
+  release_assert_exists(p, basename(p))
+  row <- pooled_mapped_index[pooled_mapped_index$canonical_comparison == cmp, , drop = FALSE]
+  if (nrow(row) != 1L || !identical(release_sha256(p), as.character(row$mapped_output_sha256))) {
+    stop("Pooled mapped table does not hash to the value its index recorded: ", p, call. = FALSE)
+  }
+  release_read_csv(p)
+}
+# Row counts are checked against what the pooled run recorded, and FDR counts too where the
+# run recorded one (GO-BP; its index has no KEGG FDR column).
+POOLED_INDEX_COUNT <- list(GSEA_GO_BP.csv = c(rows = "go_gsea_term_count",
+                                              fdr = "go_gsea_fdr_term_count"),
+                           GSEA_KEGG.csv = c(rows = "kegg_gsea_term_count"))
+pooled_terms <- function(cmp, file) {
+  p <- file.path(POOLED_ENRICH, cmp, file)
+  release_assert_exists(p, basename(p))
+  d <- release_read_csv(p)
+  n <- sum(as.numeric(d[["p.adjust"]]) < 0.05, na.rm = TRUE)
+  ix_row <- pooled_enrich_index[pooled_enrich_index$canonical_comparison == cmp, , drop = FALSE]
+  cols <- POOLED_INDEX_COUNT[[file]]
+  ok <- nrow(ix_row) == 1L && identical(as.integer(ix_row[[cols[["rows"]]]]), nrow(d)) &&
+    (!"fdr" %in% names(cols) || identical(as.integer(ix_row[[cols[["fdr"]]]]), as.integer(n)))
+  if (!isTRUE(ok)) {
+    stop("Pooled enrichment table differs from the pooled run's record: ", p, call. = FALSE)
+  }
+  n
+}
+# Rows (protein groups) are counted; symbols are kept only to name short lists.
+pooled_sig <- lapply(diff_summary$canonical_comparison, function(cmp) {
+  d <- pooled_mapped(cmp)
+  as.character(d$mapped_gene_symbol[as.logical(d$significant) %in% TRUE])
+})
+pooled_n <- lengths(pooled_sig)
+pooled_vs_now <- data.frame(
+  Comparison = comparison_labels,
+  `Proteins (mapped), pooled` = pooled_n,
+  `Proteins (mapped), now` = n_prot_mapped,
+  `GO-BP terms, pooled` = vapply(diff_summary$canonical_comparison, pooled_terms, integer(1),
+                                 file = "GSEA_GO_BP.csv", USE.NAMES = FALSE),
+  `GO-BP terms, now` = n_bp_now,
+  `KEGG terms, pooled` = vapply(diff_summary$canonical_comparison, pooled_terms, integer(1),
+                                file = "GSEA_KEGG.csv", USE.NAMES = FALSE),
+  `KEGG terms, now` = term_count(kegg_fdr_by_comparison, diff_summary$canonical_comparison),
+  check.names = FALSE, stringsAsFactors = FALSE)
+lost <- which(pooled_vs_now[["Proteins (mapped), pooled"]] > 0L & n_prot_mapped == 0L)
+lost_text <- if (length(lost)) paste(vapply(lost, function(i) {
+  n <- pooled_n[i]
+  paste0(comparison_labels[i], " (", n,
+         if (n <= 10L) paste0(": ", paste(sort(unique(pooled_sig[[i]])), collapse = ", ")) else "",
+         ")")
+}, character(1)), collapse = "; ") else ""
+
+#' Render a data frame as a GitHub-flavoured markdown table: cells trimmed, numeric
+#' columns right-aligned.
 md_table <- function(df, align = NULL) {
   cols <- names(df)
   numeric_col <- vapply(df, function(v) is.numeric(v) || is.integer(v), logical(1))
@@ -124,9 +317,8 @@ md_table <- function(df, align = NULL) {
     body)
 }
 
-# Reader-facing tables use display labels ("cFos: paired-CNO vs paired-VEH"), not the
-# underscored machine keys. The machine keys stay in the data files, which is where a
-# reader who needs to join something will be looking.
+# Tables in the document use display labels ("cFos: paired-CNO vs paired-VEH"); the
+# underscored keys stay in the data files.
 da_tbl <- data.frame(
   Comparison = release_comparison_label(diff_summary$sample_class,
                                         diff_summary$numerator_condition,
@@ -145,13 +337,24 @@ gsea_tbl <- data.frame(
   Comparison = release_comparison_label(gsea_context$sample_class,
                                         gsea_context$numerator_condition,
                                         gsea_context$denominator_condition),
-  `GO-BP terms, FDR < 0.05 (canonical, moderated-t-ranked)` =
-    unname(gsea_fdr_by_comparison),
-  `GO-BP terms, FDR < 0.05 (effect-size-ranked sensitivity)` =
-    unname(sens_fdr_by_comparison[names(gsea_fdr_by_comparison)]),
+  `GO-BP, FDR < 0.05 (moderated-t-ranked)` = unname(gsea_fdr_by_comparison),
+  `GO-CC, FDR < 0.05 (moderated-t-ranked)` =
+    term_count(gsea_cc_fdr_by_comparison, names(gsea_fdr_by_comparison)),
+  `KEGG, FDR < 0.05 (moderated-t-ranked)` =
+    term_count(kegg_fdr_by_comparison, names(gsea_fdr_by_comparison)),
+  `GO-BP, FDR < 0.05 (effect-size-ranked sensitivity)` =
+    term_count(sens_fdr_by_comparison, names(gsea_fdr_by_comparison)),
+  `Sets fgsea could not test (GO-BP / GO-CC / KEGG)` = paste(
+    untested_n(names(gsea_fdr_by_comparison), "GO_BP"),
+    untested_n(names(gsea_fdr_by_comparison), "GO_CC"),
+    untested_n(names(gsea_fdr_by_comparison), "KEGG"), sep = " / "),
   check.names = FALSE, stringsAsFactors = FALSE)
 
+# "Interpretation changed" has two bases. The panels rebuilt on the per-sample-class
+# statistics are judged against the pooled-model release of 2026-09-07; every other panel
+# keeps its 2026-08-27 judgement against the original submission. The table says which.
 panel_tbl_rows <- figure_map[figure_map$primary_or_secondary != "not_applicable", , drop = FALSE]
+rebuilt_panel <- grepl("^REBUILT_WITHIN_COMPARTMENT", panel_tbl_rows$revision_status)
 panel_tbl <- data.frame(
   Panel = panel_tbl_rows$panel_label,
   Status = panel_tbl_rows$revision_status,
@@ -159,10 +362,48 @@ panel_tbl <- data.frame(
                                       panel_tbl_rows$statistical_unit),
   `Displayed statistics changed` = panel_tbl_rows$displayed_statistics_changed,
   `Interpretation changed` = panel_tbl_rows$biological_interpretation_changed,
+  `Compared with` = ifelse(rebuilt_panel, "pooled release (2026-09-07)",
+                           "original submission"),
   check.names = FALSE, stringsAsFactors = FALSE)
 
 changed_interpretation <- panel_tbl_rows$panel_label[
   toupper(panel_tbl_rows$biological_interpretation_changed) == "YES"]
+rebuilt_labels <- panel_tbl_rows$panel_label[rebuilt_panel]
+fig_label <- function(figure, panel) {
+  v <- figure_map$panel_label[figure_map$figure == figure & figure_map$panel == panel]
+  if (length(v) != 1L) stop("No single panel label for ", figure, " ", panel, call. = FALSE)
+  v
+}
+LBL <- list(C = fig_label("Figure3", "C"), D = fig_label("Figure3", "D"),
+            E = fig_label("Figure3", "E"), F = fig_label("Figure3", "F"),
+            G = fig_label("Figure3", "G"), H = fig_label("Figure3", "H"),
+            I = fig_label("Figure3", "I"),
+            SA = fig_label("Supplementary_proteomics", "A"),
+            SB1 = fig_label("Supplementary_proteomics", "B1"),
+            SB3 = fig_label("Supplementary_proteomics", "B3"),
+            SC = fig_label("Supplementary_proteomics", "C"),
+            SD = fig_label("Supplementary_proteomics", "D"),
+            SE = fig_label("Supplementary_proteomics", "E"),
+            SF = fig_label("Supplementary_proteomics", "F"))
+supp_prefix <- sub(" A$", "", LBL$SA)   # e.g. "Supp. Fig. 4"
+
+# The sample classes Supp. Fig. 4 F shows, from its released source data (it omits one).
+sf_row <- figure_map[figure_map$figure == "Supplementary_proteomics" & figure_map$panel == "F", ,
+                     drop = FALSE]
+sf_classes <- unique(as.character(release_read_csv(
+  strsplit(sf_row$panel_source_data_canonical_path, ";", fixed = TRUE)[[1]][[1]])$sample_class))
+# Untested blocks for a panel, as text; "none" when fgsea tested every set.
+panel_untested <- function(...) {
+  x <- untested_blocks(...)
+  if (nzchar(x)) paste(x, "sets") else "none"
+}
+# Legend guidance for a GSEA panel whose blocks have untested gene sets.
+untested_legend <- function(...) {
+  x <- untested_blocks(...)
+  if (!nzchar(x)) return("")
+  paste0(" Say that fgsea could not test some gene sets in these blocks (", x, " sets), so",
+         " they are absent rather than non-significant.")
+}
 
 # --------------------------------------------------------------------------------------
 # document
@@ -173,11 +414,10 @@ L <- c(
 "",
 "This document accompanies the revised proteomics data package. It states what changed",
 "between the analysis supplied with the original submission and the analysis supplied now,",
-"and it does so without claiming that the biological conclusions survived unchanged.",
-"Several did not.",
+"including the findings that weakened or no longer hold.",
 "",
-"Every count below is generated from the release tables in this package rather than",
-"transcribed, so the document cannot drift from the data it describes.",
+"Protein and term counts for the revised analysis are read from the release tables in",
+"this package.",
 "",
 "---",
 "",
@@ -189,6 +429,9 @@ L <- c(
 "| Observations entering inference | 96 (or 120 in some ProTigy exports) | **48** (12 animals x 4 sample classes) |",
 "| n per group | 6 (two hemispheres from each of 3 animals) | **3 animals** |",
 "| Left / right handling | treated as independent replicates | **averaged within AnimalID x sample_class before testing** |",
+paste0("| Statistical model | two-sample moderated t (ProTigy), hemisphere level | **limma, one",
+       " model per sample class: ", stat_run$n_columns_in_model, " animal-level units each,",
+       " residual df ", stat_run$df_residual, "** |"),
 "",
 "Two hemispheres taken from the same animal are not independent samples. Treating them as",
 "independent replicates doubles the apparent sample size and shrinks standard errors, which",
@@ -197,7 +440,8 @@ L <- c(
 "",
 "The correction is an aggregation, not a reanalysis of a different experiment: left and",
 "right values are averaged with equal weight within each AnimalID x sample_class unit, on",
-"the existing imputed log2 values, with no further transformation. In a balanced design the",
+"the existing processed values (standardised per protein, see section 12), with no further",
+"transformation. In a balanced design the",
 "mean of animal means equals the mean of all hemispheres, so **point estimates barely move**.",
 "What changes is the **inference**: standard errors, degrees of freedom, and therefore every",
 "p-value.",
@@ -207,8 +451,8 @@ L <- c(
 "| Layer | Rows x columns | Role |",
 "|---|---|---|",
 "| Search output (`pg.matrix_raw.txt`) | 5,747 protein groups x 96 acquisitions | quantification output, pre-filter |",
-"| Processed measurement-level matrix | 5,349 x 96 acquisitions | filtered, log2, median-centred, imputed, PCA-adjusted |",
-"| **Animal-level matrix** | **5,349 x 48 animal units** | **the matrix all inference is computed on** |",
+"| Processed measurement-level matrix | 5,349 x 96 acquisitions | filtered, imputed and standardised per protein; not log2 abundance (section 12) |",
+"| **Animal-level matrix** | **5,349 x 48 animal units** | **the matrix all inference is computed on**: mean of the two hemispheres on the same per-protein standardised scale |",
 "",
 "The originally submitted `processed_protein_group_matrix_filtered_umap_adjusted.xlsx`",
 "(5,349 proteins x 96 columns) corresponds to the measurement-level layer. It is still",
@@ -244,10 +488,26 @@ L <- c(
 "were drawn from. The 22-row difference is contaminant and non-mouse entries (human",
 "keratins, porcine trypsin), which are tested but not annotatable.",
 "",
+paste0("The statistics come from limma ", stat_run$limma_version, " (R ", stat_run$r_version,
+       ", `", RELEASE_PRIMARY_MODEL$script, "`), fitted separately within each sample class:",
+       " one linear model ~0 + condition over that class's ", stat_run$n_columns_in_model,
+       " animal-level units (n = ", inv$n_animals_per_stratum, " animals per condition,",
+       " residual df ", stat_run$df_residual, "), empirical Bayes moderation (robust, no",
+       " intensity trend) and Benjamini-Hochberg adjustment within each comparison. The prior",
+       " variance differs between sample classes (",
+       paste(vapply(unique(diff_summary$sample_class), function(k) {
+         r <- stat_run$manifest[startsWith(stat_run$manifest$canonical_comparison,
+                                           paste0(k, "_")), , drop = FALSE][1, ]
+         sprintf("%s %.2f", release_sample_class_display(k), as.numeric(r$s2_prior))
+       }, character(1)), collapse = ", "),
+       "), so each class has its own variance estimate rather than sharing one. Section 7b",
+       " compares this with the pooled model used by the release of 2026-09-07."),
+"",
 md_table(da_tbl),
 "",
-sprintf(paste("**%d of the 12 primary comparisons contain no FDR-significant protein at all.**",
-              "Only %d contain any."), n_without_hits, n_with_hits),
+sprintf("**%d of the 12 primary comparisons %s no FDR-significant protein at all.** Only %d %s any.",
+        n_without_hits, plural(n_without_hits, "contains", "contain"),
+        n_with_hits, plural(n_with_hits, "contains", "contain")),
 "This is a substantive change from the original submission, in which hemisphere-level",
 "inference produced significant sets far more widely.",
 "",
@@ -255,12 +515,30 @@ sprintf(paste("**%d of the 12 primary comparisons contain no FDR-significant pro
 "",
 "| | Original submission | Revised analysis |",
 "|---|---|---|",
-"| Input statistics | hemisphere-level | animal-level |",
+"| Input statistics | hemisphere-level | animal-level, one limma model per sample class |",
 "| **GSEA ranking statistic** | **the effect size stored as `logFC`** | **moderated t statistic** |",
 "| GSEA / ORA cutoffs | filtered at source | `pvalue_cutoff = 1`, `qvalue_cutoff = 1` -- the complete tested result is released |",
 "| Multiple testing | BH | BH, FDR 0.05 |",
 "| Gene set size | -- | minGSSize 10, maxGSSize 800 |",
 "| ORA universe | not documented | all unique successfully mapped measured UniProt accessions, per comparison |",
+"| Gene-set collections | not documented | GO-BP, GO-CC and KEGG (KEGG downloaded at run time, not version-pinned) |",
+"| GSEA permutations | not documented | fgsea, one recorded seed per comparison (DOSE called with `seed = FALSE`) |",
+paste0("| fgsea nPermSimple | not documented | ", permutations$setting, " |"),
+"",
+paste0("GO-CC is a primary output again. ", RELEASE_GO_CC_PROVENANCE_NOTE, " ",
+       RELEASE_ENRICHMENT_SEED_HANDLING),
+"",
+paste0("**Permutations and untested gene sets.** ", permutations$sentence, " When a",
+       " comparison's moderated t values are strongly one-sided, fgsea cannot estimate a P",
+       " value for some gene sets and DOSE drops them, so they are missing from the GSEA",
+       " tables rather than non-significant. The last column of the table below counts them;",
+       " the GO sets are listed in `enrichment/gsea_untested_gene_sets.tsv`.",
+       " Blocks behind the figure panels: ", LBL$F, " (",
+       panel_untested("paired_veh_vs_unpaired_veh"), "); ", LBL$I, " (",
+       panel_untested(c("paired_veh_vs_unpaired_veh", "paired_cno_vs_paired_veh")), "); ",
+       LBL$SF, " (", panel_untested("paired_cno_vs_paired_veh", "GO_BP", sf_classes), "); ",
+       LBL$G, " (",
+       panel_untested("paired_veh_vs_unpaired_veh", c("GO_BP", "GO_CC"), "mcherry"), ")."),
 "",
 "Ranking a GSEA by the effect size alone ignores the variance of the estimate: a large",
 "difference measured with n = 3 and enormous uncertainty outranks a smaller, well-estimated",
@@ -270,7 +548,7 @@ sprintf(paste("**%d of the 12 primary comparisons contain no FDR-significant pro
 "enrichment result. (The file keeps the name `GSEA_log2FC_sensitivity` because that is what",
 "the canonical run called the variant; on the units of that statistic see section 12.)",
 "",
-"FDR-significant GO-BP terms per comparison, canonical versus sensitivity:",
+"FDR-significant terms per comparison (GO-BP, GO-CC and KEGG canonical; GO-BP sensitivity):",
 "",
 md_table(gsea_tbl),
 "",
@@ -278,50 +556,73 @@ md_table(gsea_tbl),
 "",
 md_table(panel_tbl),
 "",
-sprintf("Panels whose biological interpretation changed: **%s**.",
-        paste(changed_interpretation, collapse = ", ")),
+sprintf(paste("Panels whose biological interpretation changed, each against the comparison",
+              "named in the last column: **%s**. %s were rebuilt on the per-sample-class",
+              "statistics and are judged against the pooled-model release of 2026-09-07; the",
+              "other panels keep their judgement against the original submission."),
+        paste(changed_interpretation, collapse = ", "),
+        paste(rebuilt_labels, collapse = ", ")),
 "",
-"### Findings that were weakened or eliminated",
+"### Findings that were weakened, eliminated or changed",
 "",
-"- **Figure 3 G (GO over-representation, mCherry).** The original panel showed GO terms",
-"  including synaptic vesicle endocytosis, postsynaptic density organization and respiratory",
-"  electron transport chain, over a hemisphere-level significant-protein list. The direct",
-"  animal-level analogue -- ORA over the FDR-significant upregulated list -- returns",
-"  **3,639 GO-BP terms tested, 0 at FDR < 0.05, minimum adjusted P = 0.231**. The panel is",
-"  retained as a null result with the 15 lowest-adjusted-P terms plotted and captioned as",
-"  non-significant. No substitute enrichment was selected to fill it.",
-"- **Figure 3 F (GSEA bubble grid, learning).** The mCherry column contributes **zero**",
-"  FDR-significant GO-BP terms and is deliberately left visibly empty.",
-"- **Supplementary C (EWCE cell-type identity).** 12 of the legacy 14 cell types survive.",
-"  `Int12` and `S1PyrL23` no longer clear global FDR.",
-"- **Figures 3 H and 3 I.** Both remain, but neither can be read as evidence that",
-"  chemogenetic inhibition reverses a learning-associated proteomic programme. Both",
-"  contrasts share `paired_veh` on opposite sides, so anything high in `paired_veh` is pushed",
-"  up on one axis and down on the other **by construction**. The control with the shared arm",
-"  on the same side gives r = +0.90 on the same protein set, and all 38 terms overlapping in",
-"  3 I are opposed in sign, which the design forces. Panel 3 I has been retitled neutrally.",
-"- **Supplementary E.** The original four cross-compartment comparisons were invalid twice",
-"  over: hemispheres were treated as independent, and both arms of every comparison came from",
-"  the same three animals. It has been refitted as a secondary within-animal paired model",
-"  and is no longer presented as one of the designed contrasts.",
+paste0("- **", LBL$G, " (GO enrichment, mCherry learning).** The original panel showed GO",
+       " over-representation terms (synaptic vesicle endocytosis, postsynaptic density",
+       " organization, respiratory electron transport chain) over a hemisphere-level",
+       " significant-protein list. The direct animal-level analogue (ORA over the",
+       " FDR-significant proteins higher in paired_veh) finds **",
+       sum(ora_up_padj < 0.05, na.rm = TRUE), " of ", format(nrow(ora_up), big.mark = ","),
+       " GO-BP terms at FDR < 0.05 (minimum adjusted P = ",
+       sprintf("%.2f", min(ora_up_padj, na.rm = TRUE)), ") and ", ora_cc_up_sig, " of ",
+       format(nrow(ora_cc_up), big.mark = ","), " GO-CC terms (minimum adjusted P = ",
+       format(signif(min(ora_cc_up_padj, na.rm = TRUE), 2)), ")**. The panel now shows",
+       " moderated-t-ranked GSEA for the same comparison, not over-representation: ",
+       nrow(g_bp), " GO-BP and ", nrow(g_cc), " GO-CC terms, chosen from the ",
+       unique(g_bp$n_FDR_significant), " GO-BP and ", unique(g_cc$n_FDR_significant),
+       " GO-CC terms at FDR < 0.05 with redundant terms skipped (listed in `",
+       g_skip_release, "`). These are pathway-level results of a comparison whose origin is",
+       " unresolved (section 7)."),
+paste0("- **", LBL$F, " (GSEA bubble grid, learning).** Ranked by the moderated t at animal",
+       " level, the grid shows ", length(f_terms), " terms; the mCherry column contributes ",
+       f_mcherry, " FDR-significant GO-BP ", plural(f_mcherry, "term", "terms"), "."),
+paste0("- **", LBL$SC, " (EWCE cell-type identity).** 12 of the legacy 14 cell types",
+       " survive. `Int12` and `S1PyrL23` no longer clear global FDR."),
+paste0("- **", LBL$H, " and ", LBL$I, ".** Both remain, but neither can be read as evidence",
+       " that chemogenetic inhibition reverses a learning-associated proteomic programme. Both",
+       " contrasts share `paired_veh` on opposite sides, so anything high in `paired_veh` is",
+       " pushed up on one axis and down on the other **by construction**. ", LBL$H, " gives",
+       " r = ", sprintf("%.2f", fig_h_r), " over ", fig_h_n, " proteins; the control with the",
+       " shared arm on the same side gives r = ", sprintf("%+.2f", fig_h_control_r), " on the",
+       " same protein set. In ", LBL$I, ", ", fig_i_opposed, " of the ", fig_i_n,
+       " overlapping terms are opposed in sign (", fig_i_concordant, " concordant), as the",
+       " shared arm biases them to be. ", LBL$I, " has been retitled neutrally."),
+paste0("- **", LBL$SE, ".** The original four cross-compartment comparisons were invalid",
+       " twice over: hemispheres were treated as independent, and both arms of every",
+       " comparison came from the same three animals. It has been refitted as a secondary",
+       " within-animal paired model and is no longer presented as one of the designed",
+       " contrasts."),
 "",
 "### Findings that did not change",
 "",
-"- **Figures 3 E and Supplementary D (rank abundance).** Descriptive; no statistical test.",
-"  Regenerated at animal level and numerically indistinguishable from the originals",
-"  (Spearman rank r = 0.99999; Pearson on group means r = 1.000), as expected in a balanced",
-"  design.",
-"- **Supplementary A, B2, B3.** Acquisition-level technical QC. The acquisition is the",
-"  correct unit for identification depth and for hemisphere / collection-plate QC, so these",
-"  panels are unchanged and remain valid.",
+paste0("- **", LBL$E, " and ", LBL$SD, " (rank abundance).** Descriptive; no statistical",
+       " test. Regenerated at animal level and numerically indistinguishable from the",
+       " originals (Spearman rank r = 0.99999; Pearson on group means r = 1.000), as expected",
+       " in a balanced design."),
+paste0("- **", supp_prefix, " A, B2, B3.** Acquisition-level technical QC. The acquisition is",
+       " the correct unit for identification depth and for hemisphere / collection-plate QC, so",
+       " these panels are unchanged and remain valid."),
 "",
 "### Numbers that must be retyped in the figures",
 "",
 "| Panel | Original | Revised |",
 "|---|---|---|",
-"| Fig 3 C | PC1 25.4% / PC2 17.7% / PC3 10.2% | PC1 29.1% / PC2 20.5% / PC3 12.1% |",
-"| Supp B1 | PC1 25.4% / PC2 17.7% | PC1 29.1% / PC2 20.5% |",
-"| Fig 3 H | r = -0.71 | r = -0.69 (learning signature, n = 1132) |",
+paste0("| ", LBL$C, " | PC1 25.4% / PC2 17.7% / PC3 10.2% | PC1 29.1% / PC2 20.5% / PC3 12.1% |"),
+paste0("| ", LBL$SB1, " | PC1 25.4% / PC2 17.7% | PC1 29.1% / PC2 20.5% |"),
+paste0("| ", LBL$D, " | hemisphere-level significant set | ",
+       mch$n_significant_fdr_0_05_mapped_only, " FDR-significant proteins (",
+       mch$n_significant_higher_in_numerator_mapped_only, " higher in paired_veh, ",
+       mch$n_significant_higher_in_denominator_mapped_only, " higher in unpaired_veh) |"),
+paste0("| ", LBL$H, " | r = -0.71 | r = ", sprintf("%.2f", fig_h_r),
+       " (learning signature, n = ", fig_h_n, ") |"),
 "",
 "## 7. The unresolved mCherry result",
 "",
@@ -329,20 +630,49 @@ sprintf(paste("The mCherry paired-vehicle versus unpaired-vehicle comparison ret
               "FDR-significant proteins of %d mapped (%d higher in paired_veh, %d higher in",
               "unpaired_veh). The statistical result stands as computed. What it reflects does",
               "not follow from it:"),
-        diff_summary$n_significant_fdr_0_05_mapped_only[
-          diff_summary$canonical_comparison == "mcherry_paired_veh_over_mcherry_unpaired_veh"],
-        as.integer(diff_summary$n_proteins_tested_mapped_only[
-          diff_summary$canonical_comparison == "mcherry_paired_veh_over_mcherry_unpaired_veh"]),
-        as.integer(diff_summary$n_significant_higher_in_numerator_mapped_only[
-          diff_summary$canonical_comparison == "mcherry_paired_veh_over_mcherry_unpaired_veh"]),
-        as.integer(diff_summary$n_significant_higher_in_denominator_mapped_only[
-          diff_summary$canonical_comparison == "mcherry_paired_veh_over_mcherry_unpaired_veh"])),
+        as.integer(mch$n_significant_fdr_0_05_mapped_only),
+        as.integer(mch$n_proteins_tested_mapped_only),
+        as.integer(mch$n_significant_higher_in_numerator_mapped_only),
+        as.integer(mch$n_significant_higher_in_denominator_mapped_only)),
 "",
-"- the shift is broad and one-directional with no GSEA or ORA pathway coherence;",
+paste0("- the shift is broad and asymmetric, and it is accompanied by pathway-level",
+       " enrichment (GSEA: ", term_count(gsea_fdr_by_comparison, MCH_LEARNING), " GO-BP, ",
+       term_count(gsea_cc_fdr_by_comparison, MCH_LEARNING), " GO-CC and ",
+       term_count(kegg_fdr_by_comparison, MCH_LEARNING), " KEGG terms at FDR < 0.05; ORA of",
+       " the higher-in-paired_veh list: ",
+       sum(as.numeric(ora_cc_up$adjusted_p_value) < 0.05, na.rm = TRUE), " GO-CC and ",
+       sum(ora_up_padj < 0.05, na.rm = TRUE), " GO-BP terms). Pathway enrichment does not by",
+       " itself distinguish a biological from a technical origin;"),
+paste0("- the protein count depends on single animals. Leaving one animal out (",
+       paste(loo_df, collapse = "/"), " residual df) gives between ", loo_fdr[1], " and ",
+       format(loo_fdr[2], big.mark = ","), " FDR-significant proteins (full fit ",
+       format(as.integer(loo_full$n_fdr05), big.mark = ","), "), and ", loo_bp[1], " to ",
+       loo_bp[2], " GO-BP terms keeping ", loo_bp_kept[1], " to ", loo_bp_kept[2], " of the ",
+       as.integer(loo_full$go_bp_fdr05), "; GO-CC is more stable (", loo_cc[1], " to ",
+       loo_cc[2], " terms keeping ", loo_cc_kept[1], " to ", loo_cc_kept[2], " of ",
+       as.integer(loo_full$go_cc_fdr05), "). The effect estimates themselves are stable",
+       " (correlation with the full fit at least ", sprintf("%.2f", loo_r_effect_min), "). ",
+       permutations$sensitivity_sentence),
 "- pairing condition is completely associated with collection plate in this comparison;",
 "- no technical batch metadata exist that would let a technical origin be demonstrated.",
 "",
 "Neither a biological nor a technical explanation is established.",
+"",
+"## 7b. What changed from the pooled release (2026-09-07)",
+"",
+paste0("The release of 2026-09-07 used the ", RELEASE_PRIMARY_MODEL$superseded_label,
+       ". The four sample classes therefore shared one variance estimate per protein. The",
+       " statistics are now",
+       " fitted within each sample class (section 4). Effect sizes are unchanged to",
+       " floating-point rounding; moderated t, P values, adjusted P values and AveExpr change.",
+       " FDR < 0.05 counts, pooled model and now:"),
+"",
+md_table(pooled_vs_now),
+"",
+if (length(lost)) paste0("No longer protein-level results: ", lost_text, ".") else
+  "No comparison lost all of its FDR-significant proteins.",
+paste0("Panels rebuilt on the per-sample-class statistics: ",
+       paste(rebuilt_labels, collapse = ", "), " (`", REBUILD_REL, "`)."),
 "",
 "## 8. Primary and secondary analyses are now separated",
 "",
@@ -363,9 +693,9 @@ paste0("Secondary analyses recorded separately (",
 "No downstream proteomics batch effect attributable to collection plate has been",
 "demonstrated. The `Plate1` / `Plate2` token records **which plate a sample was collected",
 "onto**. It is not a proteomics preparation, digestion, LC-MS, acquisition or instrument",
-"batch, and no such batch metadata exist for this dataset. Supplementary B3 has accordingly",
-"been relabelled from `Plate` to `Collection plate`; collection plate explains 0.01% of PC1",
-"and 1.5% of PC2 at acquisition level, neither significant.",
+paste0("batch, and no such batch metadata exist for this dataset. ", LBL$SB3, " has",
+       " accordingly been relabelled from `Plate` to `Collection plate`; collection plate",
+       " explains 0.01% of PC1 and 1.5% of PC2 at acquisition level, neither significant."),
 "",
 "## 10. What is superseded",
 "",
@@ -375,6 +705,10 @@ paste0("Secondary analyses recorded separately (",
 "| `processed_protein_group_matrix_filtered_umap_adjusted.xlsx` (5,349 x 96) | `processed_data/protein_abundance_measurement_level.tsv.gz` | No, but demoted: it is no longer the matrix inference is drawn from. |",
 "| `GSEA_ORA_all_results.xlsx` | `enrichment/*.tsv.gz` and `editor_source_data/Proteomics_Source_Data_Animal_Level.xlsx` | **Yes, entirely.** Hemisphere-level inference, effect-size-ranked GSEA, incomplete contrast coverage. |",
 "| `README.txt` (group codes only) | `README_DATA.md`, `metadata/data_dictionary.tsv`, this changelog | **Yes.** |",
+paste0("| Release of 2026-09-07 (`", paste(RELEASE_STATISTICS_RUN$pooled_release_relative,
+                                         collapse = "/"),
+       "`, pooled model) | this package | **Yes.** Kept frozen for comparison; see",
+       " section 7b. |"),
 "",
 paste0("**How that mapping was established.** Crosswalk method for this build: **",
        crosswalk$method, "**."),
@@ -394,8 +728,7 @@ paste0("None of the four originally submitted files exists under those names any
        " project folder returns no `processed_protein_group_matrix_*`, no",
        " `GSEA_ORA_all_results*` and no `README.txt`."),
 "",
-paste0("**", crosswalk$statement, "** No local copy of the package was created to pretend",
-       " otherwise."),
+paste0("**", crosswalk$statement, "**"),
 "",
 "| submitted file | previously described properties | crosswalk basis |",
 "|---|---|---|",
@@ -439,7 +772,7 @@ paste0("To upgrade this section to `DIRECT_VERIFICATION`, extract the submission
 "",
 if (nrow(corrections) > 0L) c(
 sprintf(paste("For %d of the 96 acquisitions the sample class used by the validated analysis",
-              "differs from every pre-correction record. A forensic audit established what",
+              "differs from every pre-correction record. An audit established what",
               "that difference is: a **deliberate correction** applied during historical",
               "sample-identity quality control. It is not a mislabelling, and it is not an",
               "open question."), nrow(corrections)),
@@ -494,24 +827,23 @@ paste0("**The correction was identified through UMAP-based QC and then corrobora
        " alone is not treated as ground truth.** The correction table's",
        " nearest-class-centre suggestion agrees with the applied correction for five of the",
        " six, and differs for one (N60: nearest centre `cfos`, applied `neuron`). That",
-       " column is published as `umap_nearest_class_suggestion` so the divergence is",
-       " visible rather than smoothed over, and the applied classes are those the validated",
+       " column is published as `umap_nearest_class_suggestion` so the difference is",
+       " visible. The applied classes are those the validated",
        " analysis used, supported by the independent profile-similarity and left/right-pair",
        " analyses."),
 "",
 "### What is not claimed",
 "",
 paste0("**No surviving prose note records the rationale.** No memo, comment or README in the",
-       " project explains why the reassignment was made. That absence is stated here rather",
-       " than papered over. It does not make the correction unresolved: the correction table",
-       " itself is the preserved historical correction record, and the independent lines of",
-       " evidence above are what establish the assignment."),
+       " project explains why the reassignment was made. The correction is still resolved:",
+       " the correction table is the preserved record, and the evidence above establishes",
+       " the assignment."),
 "",
 paste0("**Both labels are retained.** `metadata/sample_metadata.tsv` carries",
        " `original_sample_class` and `analysis_sample_class` for all 96 measurements, with",
        " `sample_class_corrected` marking the six. The `sample_class` column remains the",
-       " canonical analysis-time assignment -- the one the locked GCTs and every validated",
-       " statistic were computed on -- and the data dictionary says so explicitly. The",
+       " canonical analysis-time assignment (the one the locked GCTs and every validated",
+       " statistic were computed on), and the data dictionary says so. The",
        " per-row provenance is in `metadata/sample_class_corrections.tsv`."),
 "",
 paste0("No reanalysis is required and none was performed. The affected animal-level units",
@@ -527,16 +859,18 @@ paste0("No reanalysis is required and none was performed. The affected animal-le
 "sample-class correction above.",
 "",
 paste0("The abundance matrix all statistics were computed on is **standardised separately",
-       " for each protein** across the measurement-level dataset. Measured directly: row",
-       " means are approximately 0 and row standard deviations approximately 1. ProTigy",
-       " nevertheless stores its coefficient as `logFC`, and the canonical split tables",
-       " carry it as `log2fc`."),
+       " for each protein** across the measurement-level dataset. Measured directly on the",
+       " measurement-level matrix: row means are approximately 0 and row standard deviations",
+       " approximately 1. The animal-level matrix is the mean of the two hemispheres on that",
+       " scale, so its row means are the same and its row standard deviations are below 1.",
+       " The statistical GCT nevertheless stores the coefficient as `logFC` (limma's name for",
+       " it), and the canonical split tables carry it as `log2fc`."),
 "",
 paste0("A difference of group means on that scale is a **", RELEASE_EFFECT_SIZE$public_term,
        "** -- equivalently, a ", RELEASE_EFFECT_SIZE$public_term_alt, ". It is not a log2",
        " ratio, and a value of 2 does not mean a four-fold change."),
 "",
-paste0("It is deliberately *not* called a \"standardised mean difference\" without",
+paste0("It is *not* called a \"standardised mean difference\" without",
        " qualification: that term invites a Cohen's d reading, i.e. scaling by a pooled",
        " within-group standard deviation. The scaling here is a per-protein standard",
        " deviation taken across the whole measurement dataset before any grouping, which is",
@@ -545,28 +879,35 @@ paste0("It is deliberately *not* called a \"standardised mean difference\" witho
 paste0("It is also *not* called \"z-scored\". The released values carry two decimals, so on",
        " those bytes no protein is exactly mean 0 / standard deviation 1, and the operation",
        " that produced the matrix is unresolved -- no script, no parameters (see",
-       " `provenance/UPSTREAM_PROVENANCE_GAP.md`). \"Standardised\" is what the numbers",
+       " `provenance/UPSTREAM_PREPROCESSING_GAP.md`). \"Standardised\" is what the numbers",
        " support, so that is what the package says."),
 "",
-"Corroborating evidence, from the canonical tables themselves: `AveExpr` -- the average",
-"abundance limma reports for each protein -- lies within +/-0.0011 of zero for all 5,349",
-"proteins. That can only happen if the input was centred per protein.",
+paste0("Corroborating evidence, from the canonical tables themselves: `AveExpr`, the",
+       " average abundance limma reports for each protein, is the mean over the ",
+       stat_run$n_columns_in_model, " animal-level units of one sample class, so it is not",
+       " centred within a class (it ranges from ", sprintf("%.2f", ave$range_within_classes[1]),
+       " to ", sprintf("%.2f", ave$range_within_classes[2]), "). Averaged over the four",
+       " sample classes it stays close to zero: the largest absolute value over all ",
+       format(ave$n_proteins, big.mark = ","), " proteins is ",
+       format(signif(ave$max_abs_mean_over_classes, 3), scientific = FALSE),
+       " (13_validate_release.R checks this). That can only happen if the input was centred",
+       " per protein."),
 "",
 paste0("This package therefore publishes the quantity as `", RELEASE_EFFECT_SIZE$public_field,
        "`, carrying `effect_size_definition`, `effect_size_source_column` and",
        " `source_statistic_field = \"", RELEASE_EFFECT_SIZE$source_field, "\"` on every row,",
        " rather than republishing it under a name that asserts a fold-change reading."),
 "",
-"**No value was changed.** The numbers are bit-identical to the canonical tables -- the",
-"build re-reads every split table and requires exact equality -- and directions, rankings,",
+"**No value was changed.** The numbers are bit-identical to the canonical tables (the",
+"build re-reads every split table and requires exact equality), and directions, rankings,",
 "p-values and every downstream result are unaffected. Only the label is corrected.",
 "",
 paste0("The same applies to the GSEA sensitivity analysis. Canonical GSEA ranks by the",
        " moderated t and is unchanged. What was described as a \"log2FC-ranked\" sensitivity",
        " analysis is publicly an **", RELEASE_EFFECT_SIZE$sensitivity_public_label, "**;",
        " its filenames and its `rank_statistic` value keep the historical `log2fc` token so",
-       " the export can still be matched to the canonical run. No ranking value changed and",
-       " no enrichment was rerun."),
+       " the export can still be matched to the canonical run. No ranking value changed, and",
+       " the relabelling reran no enrichment."),
 "",
 "### Methods wording",
 "",
@@ -592,20 +933,34 @@ paste0("Every occurrence of the historical fold-change wording in the active",
 "",
 "---",
 "",
-paste0("Underlying revision reports: `", basename(final_report), "` and `",
-       basename(retained_report), "` under the canonical revision output root."),
+paste0("Underlying revision records: `", basename(final_report), "` and `",
+       basename(retained_report), "` (2026-08-27; the panels that do not use the differential",
+       " statistics) and `", REBUILD_REL, "/",
+       paste(RELEASE_STATISTICS_RUN$figure_rebuild_record, collapse = "/"), "` (",
+       paste(rebuilt_labels, collapse = ", "), ", rebuilt on the per-sample-class",
+       " statistics). Interaction and leave-one-animal-out checks: `",
+       paste(RELEASE_STATISTICS_RUN$inferential_relative, collapse = "/"), "/",
+       basename(inferential_report), "`."),
 paste0("Generated by `", STAGE, "`.")
 )
 
 path <- release_path("editor_source_data", "REVISION_PROTEOMICS_DATA_CHANGELOG.md")
 release_write_lines(L, path)
+# The pooled-model indexes are inputs too: sections 7b and 4b are counted from the tables
+# they index, after the checks above.
+changelog_inputs <- c(retained_report, final_report, rebuild_record, fig_f_src_path,
+                      fig_g_src_path, fig_h_audit_path, fig_i_audit_path, loo_path,
+                      inferential_report, stat_run$path, pooled_mapped_index_path,
+                      pooled_enrich_index_path,
+                      release_locked_artefact_path("enrichment_index_go_bp", DATA_ROOT),
+                      release_locked_artefact_path("enrichment_index_go_cc", DATA_ROOT),
+                      release_locked_artefact_path("enrichment_index_kegg", DATA_ROOT))
 release_register("editor_source_data/REVISION_PROTEOMICS_DATA_CHANGELOG.md",
                  "original submission versus revised analysis, for the editor and reviewers",
                  c(rel("differential_analysis", "primary_differential_summary.tsv"),
-                   rel("editor_source_data", "figure_source_map.tsv"),
-                   retained_report, final_report),
-                 c(NA_character_, NA_character_, release_sha256(retained_report),
-                   release_sha256(final_report)),
+                   rel("editor_source_data", "figure_source_map.tsv"), changelog_inputs),
+                 c(NA_character_, NA_character_,
+                   vapply(changelog_inputs, release_sha256, character(1), USE.NAMES = FALSE)),
                  STAGE, "md")
 release_log("  wrote REVISION_PROTEOMICS_DATA_CHANGELOG.md (", length(L), " lines)")
 release_log("  ", n_without_hits, " of 12 primary comparisons have no FDR-significant protein")
@@ -615,25 +970,19 @@ release_log("  panels with changed interpretation: ",
 # --------------------------------------------------------------------------------------
 # effect-size terminology audit
 # --------------------------------------------------------------------------------------
-# Every fold-change mention in the active publication-facing surface, classified. Two parts,
-# and the split matters:
+# Every fold-change mention in the release, classified, in two parts:
+#   - `applied`, listed by hand: the wording corrections made in this layer (they can no
+#     longer be found by scanning the corrected files), the old tokens that are kept, and
+#     the fold changes of other statistics;
+#   - a scan of the release tables built so far; each hit becomes a RESIDUAL
+#     PUBLIC_MISLABEL row, and 13_validate_release.R fails on it.
 #
-#   * a RECORD of the corrections actually applied to the publication layer. Curated,
-#     because "what was changed" is a historical fact about this commit and cannot be
-#     recovered by scanning the already-corrected files.
-#   * a LIVE SCAN of the built release documents and the active builders. This is what makes
-#     the record checkable: if a PUBLIC_MISLABEL survives anywhere, it shows up here as a
-#     row and 13_validate_release.R fails on it.
-#
-# Classification:
-#   INTERNAL_PROVENANCE        a canonical filename, column value or source-field citation.
-#                              Kept deliberately -- renaming would break the link to the
-#                              canonical run.
-#   PUBLIC_MISLABEL            reader-facing text that called the published effect size a
-#                              fold change. Corrected.
-#   LEGITIMATE_OTHER_CONTEXT   a genuine fold change belonging to a different statistic
-#                              (EWCE's bootstrap fold change), or a frozen historical
-#                              artefact that must not be edited.
+# Status values:
+#   INTERNAL_PROVENANCE        canonical file name, column value or source-field name, kept
+#                              so it still matches the canonical run
+#   PUBLIC_MISLABEL            reader-facing text that called the effect size a fold change
+#   LEGITIMATE_OTHER_CONTEXT   a real fold change of another statistic (EWCE), or a frozen
+#                              script that is not edited
 
 audit_row <- function(file, location, old_term, new_term, status, notes) {
   data.frame(file = file, location = location, old_term = old_term, new_term = new_term,
@@ -641,7 +990,7 @@ audit_row <- function(file, location, old_term, new_term, status, notes) {
              stringsAsFactors = FALSE, check.names = FALSE)
 }
 
-LAYER_REL <- "proteomic_analysis/07_publication_release"
+LAYER_REL <- "07_publication_release"
 
 applied <- rbind(
   audit_row(paste0(LAYER_REL, "/04_build_differential_results.R"),
@@ -683,6 +1032,18 @@ applied <- rbind(
             "scatter of learning log2FC against CNO log2FC",
             "scatter of the learning effect size against the CNO effect size (SD units)",
             "PUBLIC_MISLABEL", "Panel description shown to the editor."),
+  audit_row(paste0(LAYER_REL, "/06_build_figure_source_data.R"),
+            paste("figure_source_map, Figure3|H panel_title and statistical_unit (also the",
+                  "workbook Figure_Source_Map sheet and changelog section 6)"),
+            paste("Learning logFC vs CNO logFC scatter, mCherry; animal on both axes, both",
+                  "moderated limma log2FC"),
+            paste("Learning effect size vs CNO effect size scatter, mCherry; animal on both",
+                  "axes; standardized abundance differences (SD units) from the",
+                  "per-sample-class limma fit"),
+            "PUBLIC_MISLABEL",
+            paste("Was copied from the 2026-08-27 regenerated_panel_manifest.csv for the",
+                  "rebuilt panel. limma's logFC is not moderated and here is not a log2",
+                  "ratio. The six rebuilt panels now take title and unit from stage 06.")),
   audit_row(paste0(LAYER_REL, "/08_build_editor_changelog.R"),
             "sections 5, 10, 11, 12", "log2FC / standardised mean difference",
             paste(RELEASE_EFFECT_SIZE$public_term, "/",
@@ -703,7 +1064,7 @@ applied <- rbind(
 
   audit_row("enrichment/GSEA_log2FC_sensitivity.tsv.gz", "filename",
             "GSEA_log2FC_sensitivity", "GSEA_log2FC_sensitivity", "INTERNAL_PROVENANCE",
-            paste("Deliberately unchanged. The name matches the canonical run's",
+            paste("Unchanged. The name matches the canonical run's",
                   "GSEA_{GO_BP,KEGG}_log2fc_sensitivity.csv; renaming would break the",
                   "provenance link. Documented as effect-size-ranked.")),
   audit_row("enrichment/GSEA_log2FC_sensitivity.tsv.gz", "rank_statistic column value",
@@ -715,36 +1076,45 @@ applied <- rbind(
   audit_row("differential_analysis/primary_differential_proteins.tsv.gz",
             "effect_size_source_column and source_statistic_field",
             "logFC", "logFC", "INTERNAL_PROVENANCE",
-            paste("Recorded ON PURPOSE so the published value can be traced to its source.",
+            paste("Recorded so the published value can be traced to its source.",
                   "The exported effect_size_sd_units equals this source field exactly.")),
-  audit_row("02_data/animal_level/split/forward/*.csv", "canonical column log2fc",
-            "log2fc", "log2fc", "INTERNAL_PROVENANCE",
+  audit_row(paste(c(RELEASE_STATISTICS_RUN$stats_relative, "split", "forward", "*.csv"),
+                  collapse = "/"),
+            "canonical column log2fc", "log2fc", "log2fc", "INTERNAL_PROVENANCE",
             "Canonical analysis artefact, outside this layer. Never modified."),
-  audit_row("proteomic_analysis/06_manuscript_figure_revision/*.R",
+  audit_row(paste("06_manuscript_figure_revision/*.R,",
+                  "06_manuscript_figure_revision/within_compartment_20261124/*.R and",
+                  "06_manuscript_figure_revision/within_compartment_20261125/*.R"),
             "frozen figure scripts", "log2FC", "log2FC", "LEGITIMATE_OTHER_CONTEXT",
-            paste("FROZEN. Not edited by this change. Their rendered axis labels and",
-                  "captions are manuscript-facing and are listed in",
+            paste("Frozen; not edited. The 2026-11-25 rebuild draws the",
+                  "released Fig. 2 D and H axes in SD units; the log2FC that remains there is",
+                  "in comments, file names and internal column names. The earlier scripts'",
+                  "rendered axis labels and captions are listed in",
                   "MANUSCRIPT_TERMINOLOGY_ACTIONS.md for manual correction.")),
   audit_row("enrichment/primary_EWCE.tsv.gz", "fold_change column",
             "fold change", "fold change", "LEGITIMATE_OTHER_CONTEXT",
             paste("EWCE's own statistic: the ratio of observed to bootstrap-null mean",
-                  "expression proportion. Genuinely a fold change. Unrelated to the",
+                  "expression proportion: a real fold change, unrelated to the",
                   "differential effect size.")),
-  audit_row("proteomic_analysis/04_differential_expression_enrichment/01_clusterProfiler.r",
-            "canonical analysis script", "log2fc", "log2fc", "INTERNAL_PROVENANCE",
-            paste("Produced the canonical statistics. Not a publication-facing document",
-                  "and not edited; renaming would invalidate the validated outputs."))
+  audit_row("04_differential_expression_enrichment/01_clusterProfiler.r",
+            "canonical enrichment script", "log2fc", "log2fc", "INTERNAL_PROVENANCE",
+            paste("Produced the canonical enrichment. Not a publication-facing document; its",
+                  "log2fc tokens are kept because renaming them would break the link to the",
+                  "outputs. The GO runs record its nPermSimple, serial BiocParallel backend",
+                  "and untested-set audit; the KEGG run predates them. The script in the",
+                  "repository is later than both runs only in its defaults (no default",
+                  "output root; per-compartment inputs).")),
+  audit_row(RELEASE_PRIMARY_MODEL$script,
+            "canonical statistics script", "logFC", "logFC", "INTERNAL_PROVENANCE",
+            paste("Writes the per-sample-class limma statistics in the ProTigy GCT layout.",
+                  "logFC is limma's coefficient name and is kept so the split, mapping and",
+                  "enrichment stages run unchanged; the published field is",
+                  RELEASE_EFFECT_SIZE$public_field))
 )
 
-# Live scan. Any reader-facing line that still asserts a fold-change reading appears here
-# as a PUBLIC_MISLABEL row and fails validation.
-# Live scan of BUILT artefacts. Deliberately not a scan of the builder SOURCES: those
-# necessarily contain the vocabulary being classified -- R/release_validation.R holds the
-# claim list itself, and this file holds the audit rows -- so scanning them reports the
-# detector as a defect. What matters is the published surface, so that is what is
-# scanned. Reader-facing documents written later in the build (README_DATA.md, the data
-# dictionary, the changelog, the PRIDE and provenance notes) are scanned by
-# 13_validate_release.R, which runs last and fails the release on any residual hit.
+# Scan the built tables, not the builder sources (those hold the claim list and the audit
+# rows themselves). Documents written later in the build are scanned by
+# 13_validate_release.R.
 scan_targets <- c(
   rel("differential_analysis", "primary_differential_summary.tsv"),
   rel("metadata", "primary_contrast_manifest.tsv"),
@@ -757,7 +1127,7 @@ scan_targets <- c(
 # for sources, so the audit reads the same whichever scratch root the build used.
 audit_scan_label <- function(p) {
   p <- gsub("\\\\", "/", p)
-  for (root in c(OUT_ROOT, dirname(REPO_ROOT), REPO_ROOT)) {
+  for (root in c(OUT_ROOT, REPO_ROOT)) {
     root <- gsub("\\\\", "/", root)
     if (startsWith(p, paste0(root, "/"))) return(substring(p, nchar(root) + 2L))
   }
@@ -804,53 +1174,76 @@ release_log("  wrote EFFECT_SIZE_TERMINOLOGY_AUDIT.tsv (", wa$rows, "x", wa$cols
 # manuscript action note -- what has to be fixed by hand, outside this repository
 # --------------------------------------------------------------------------------------
 
-inv <- RELEASE_DESIGN_INVARIANTS
-
-# The named cFos CNO hits, read from the release rather than transcribed. This is the one
-# result the manuscript should name explicitly, so the names must come from the data.
-cfos_cno_hits <- {
-  s <- differential[differential$canonical_comparison ==
-                      "cfos_paired_cno_over_cfos_paired_veh" &
-                      toupper(differential$significant_fdr_0_05) == "TRUE", , drop = FALSE]
-  sort(unique(s$gene_symbol[nzchar(s$gene_symbol) & !is.na(s$gene_symbol)]))
-}
-
-# Panels that are retained BECAUSE a null or structural result is still a result. Each
-# needs its limitation in the legend; softening any of them would misrepresent the
-# analysis, and deleting the panel would hide it.
+# Panels kept although their result is structural or unresolved; each needs its limitation
+# in the legend. All numbers are read from the release or the rebuild files.
 MA_PANEL_CAVEATS <- list(
-  list(panel = "Fig 3G",
-       legend = paste("State that no plotted GO-BP term reaches FDR < 0.05. The animal-level",
-                      "over-representation analysis tested 3,639 terms with a minimum",
-                      "adjusted P of approximately 0.231; the plotted terms are the lowest",
-                      "adjusted P among terms with a gene count >= 10 and are NOT",
-                      "significant. Colour encodes adjusted P, so the legend numbers rather",
-                      "than the hues carry the significance information.")),
-  list(panel = "Fig 3H",
-       legend = paste("Descriptive only. Report r as approximately -0.69 and state that the",
-                      "two contrasts share the paired-vehicle condition on opposite sides,",
-                      "so a negative correlation is expected by construction; the control",
-                      "with the shared arm on the same side gives r = +0.90 on the same",
-                      "protein set. The correlation must not be interpreted causally or as",
-                      "independent evidence of reversal.")),
-  list(panel = "Fig 3I",
-       legend = paste("State that all 38 overlapping FDR-significant pathways are opposed in",
-                      "direction, and that this is the expected structural consequence of the",
-                      "two contrasts sharing the paired-vehicle reference on opposite sides.",
-                      "Describe the pattern neutrally; it is not evidence that CNO reverses a",
-                      "pairing-associated programme.")),
-  list(panel = "Supp E",
+  list(panel = LBL$F,
+       legend = paste0("State that the grid shows GSEA ranked by the moderated t for the",
+                       " learning comparison in each sample class.",
+                       untested_legend("paired_veh_vs_unpaired_veh"))),
+  list(panel = LBL$G,
+       legend = paste0("State that the panel shows GSEA ranked by the moderated t for mCherry",
+                       " paired-VEH versus unpaired-VEH, and that the ", nrow(g_bp), " GO-BP",
+                       " and ", nrow(g_cc), " GO-CC terms plotted were chosen from the ",
+                       unique(g_bp$n_FDR_significant), " GO-BP and ",
+                       unique(g_cc$n_FDR_significant), " GO-CC terms at FDR < 0.05, redundant",
+                       " terms skipped. Do not call it over-representation, because it is",
+                       " GSEA. If ORA of the same up-list is mentioned, give both ontologies: ",
+                       sum(ora_up_padj < 0.05, na.rm = TRUE), " of ",
+                       format(nrow(ora_up), big.mark = ","), " GO-BP terms (minimum adjusted P ",
+                       sprintf("%.2f", min(ora_up_padj, na.rm = TRUE)), ") and ",
+                       ora_cc_up_sig, " of ", format(nrow(ora_cc_up), big.mark = ","),
+                       " GO-CC terms at FDR < 0.05. Say that the",
+                       " comparison's origin is unresolved because pairing is completely",
+                       " associated with collection plate.",
+                       untested_legend("paired_veh_vs_unpaired_veh", c("GO_BP", "GO_CC"),
+                                       "mcherry"))),
+  list(panel = LBL$H,
+       legend = paste0("Descriptive only. Report r as approximately ", sprintf("%.2f", fig_h_r),
+                       " (n = ", fig_h_n, " proteins) and state that the two contrasts share",
+                       " the paired-vehicle condition on opposite sides, so a negative",
+                       " correlation is expected by construction; the control with the shared",
+                       " arm on the same side gives r = ", sprintf("%+.2f", fig_h_control_r),
+                       " on the same protein set. The correlation must not be interpreted",
+                       " causally or as independent evidence of reversal.")),
+  list(panel = LBL$I,
+       legend = paste0("State that ", fig_i_opposed, " of the ", fig_i_n, " overlapping",
+                       " FDR-significant pathways are opposed in direction (", fig_i_concordant,
+                       " concordant), and that opposition is the expected structural",
+                       " consequence of the two contrasts sharing the paired-vehicle reference",
+                       " on opposite sides. Describe the pattern neutrally; it is not evidence",
+                       " that CNO reverses a pairing-associated programme.",
+                       untested_legend(c("paired_veh_vs_unpaired_veh",
+                                         "paired_cno_vs_paired_veh")))),
+  list(panel = LBL$SF,
+       legend = paste0("State that the grid shows GSEA ranked by the moderated t for paired",
+                       " CNO versus paired VEH in each sample class shown.",
+                       untested_legend("paired_cno_vs_paired_veh", "GO_BP", sf_classes))),
+  list(panel = LBL$SE,
        legend = paste("Identify it as a secondary, within-animal paired cross-compartment",
                       "model, not one of the primary contrasts and not a treatment effect.",
                       "State n = 3 animals and that inference is correspondingly limited.")),
-  list(panel = "Supp A, B2, B3",
+  list(panel = paste(supp_prefix, "A, B2, B3"),
        legend = paste("These are acquisition-level technical QC panels. The acquisition is",
                       "the correct unit here and the bars/points are not biological",
                       "replicates; say so, and label the plate axis \"collection plate\"."))
 )
 
-# Methods facts that are established, read from the checked-in experimenter record so the
-# action list cannot drift from what the release publishes.
+# Enrichment software versions, from the same shared builder as provenance/software_versions.
+sw_tbl <- release_build_software_versions(DATA_ROOT, REPO_ROOT)
+enr <- sw_tbl[sw_tbl$applies_to_stage == "differential enrichment (GSEA / ORA)", , drop = FALSE]
+pkg_versions_enrich <- stats::setNames(enr$version, enr$component)
+if (!all(c("clusterProfiler", "fgsea") %in% names(pkg_versions_enrich))) {
+  stop("The enrichment run audit records no clusterProfiler or fgsea version.", call. = FALSE)
+}
+
+# Comparisons by what the release supports, for the checklist and section 4.
+cls_protein <- comparison_labels[n_prot_mapped > 0L]
+cls_pathway <- comparison_labels[n_prot_mapped == 0L & n_bp_now + n_cc_now > 0L]
+cls_null <- comparison_labels[n_prot_mapped == 0L & n_bp_now + n_cc_now == 0L]
+or_none <- function(x) if (length(x)) paste(x, collapse = "; ") else "none"
+
+# Established Methods facts, from the checked-in experimenter records.
 MA_VERIFIED_METHODS <- {
   mv <- function(id) release_metadata_value(experimenter_metadata, id)
   prot <- sample_preparation_protocol
@@ -866,8 +1259,11 @@ MA_VERIFIED_METHODS <- {
     paste0("Quantification strategy: ", mv("labeling_strategy"), "."),
     paste0("Sample preparation: ",
            paste(paste0(prot$step_name, " (", prot$details, ")"), collapse = "; "), "."),
-    paste0("Statistical software: ProTigy ", PROTIGY_ANIMAL_LEVEL_VERSION,
-           " for the canonical animal-level differential statistics.")
+    paste0("Statistical software: limma ", stat_run$limma_version, " in R ",
+           stat_run$r_version, " (`", RELEASE_PRIMARY_MODEL$script, "`) for the canonical",
+           " animal-level differential statistics, one linear model per sample class;",
+           " clusterProfiler ", pkg_versions_enrich[["clusterProfiler"]], " with fgsea ",
+           pkg_versions_enrich[["fgsea"]], " for enrichment.")
   )
 }
 
@@ -887,7 +1283,10 @@ MA_REVIEWER_CHECKLIST <- c(
   "acknowledges the animal-level correction where the comment concerns sample size, replication or significance;",
   "does not defend hemisphere-level independence anywhere;",
   "states what changed after the corrected analysis, including findings that weakened or became null;",
-  "distinguishes robust conclusions (cFos paired CNO) from pathway-level-only observations (neuropil) and null results (cFos unpaired CNO);",
+  paste0("distinguishes protein-level results (", or_none(cls_protein),
+         ") from pathway-level-only observations (", or_none(cls_pathway),
+         ") and null results (", or_none(cls_null), ");"),
+  "quotes no number from the earlier pooled-model release (section 4b);",
   "does not call the effect size a log2 fold change or a fold change;",
   "describes the canonical GSEA as ranked by the moderated t statistic;",
   "uses the collection-plate identifiability wording and claims no demonstrated batch effect;",
@@ -916,7 +1315,7 @@ MA <- c(
   "| 1 | EFFECT_SIZE_TERMINOLOGY, FIGURE_AXIS | the effect size is not a log2 fold change |",
   "| 2 | SAMPLE_CLASS_CORRECTION | the six corrected acquisitions |",
   "| 3 | INFERENTIAL_UNIT, HEMISPHERE_AVERAGING, SAMPLE_SIZE | animal as the unit, n = 3 |",
-  "| 4 | RESULT_SIGNIFICANCE | which claims the animal-level analysis supports |",
+  "| 4 | RESULT_SIGNIFICANCE | which claims the animal-level analysis supports; 4b what changed from the pooled release |",
   "| 5 | GSEA_RANKING | canonical ranking is the moderated t |",
   "| 6 | COLLECTION_PLATE | identifiability, not a demonstrated batch effect |",
   "| 7 | FIGURE_LEGEND | panels needing an explicit caveat |",
@@ -931,11 +1330,11 @@ MA <- c(
   "",
   "| Where | Incorrect wording | Correct wording |",
   "|---|---|---|",
-  paste0("| Figure 3D volcano, x-axis | incorrect: `log2FC` / \"log2 fold change\" | \"",
+  paste0("| ", LBL$D, " volcano, x-axis | incorrect: `log2FC` / \"log2 fold change\" | \"",
          RELEASE_EFFECT_SIZE$public_term, "\" |"),
-  paste0("| Figure 3H scatter, both axes | learning / CNO `log2FC` | learning / CNO effect",
+  paste0("| ", LBL$H, " scatter, both axes | learning / CNO `log2FC` | learning / CNO effect",
          " size (SD units) |"),
-  paste0("| Supplementary E panels derived from the paired model | `log2FC` | ",
+  paste0("| ", LBL$SE, " panels derived from the paired model | `log2FC` | ",
          RELEASE_EFFECT_SIZE$public_term, " |"),
   "| Figure captions quoting effect sizes | incorrect: \"fold change\" | \"SD units\" |",
   "| Methods, differential-abundance paragraph | incorrect: \"log2 fold change\" | see the sentence below |",
@@ -954,11 +1353,13 @@ MA <- c(
          " Cohen's d, which uses a pooled within-group SD rather than the across-dataset",
          " per-protein SD used here."),
   "",
-  paste0("The frozen scripts under `06_manuscript_figure_revision/` were **not** edited:",
-         " they are the record of how the submitted figures were produced. Their axis",
-         " labels therefore still say `log2FC`, and the figures must be relabelled at the",
-         " manuscript stage. The classification of every occurrence is in",
-         " `EFFECT_SIZE_TERMINOLOGY_AUDIT.tsv`."),
+  paste0("The frozen scripts under `06_manuscript_figure_revision/` (and their copies of",
+         " the per-sample-class rebuilds under `within_compartment_20261124/` and",
+         " `within_compartment_20261125/`) were **not** edited: they are the record of how the",
+         " figures were produced. The 2026-11-25 rebuild already labels the axes of ",
+         LBL$D, " and ", LBL$H, " in SD units; panels kept from the earlier scripts still say",
+         " `log2FC` on their axes and must be relabelled at the manuscript stage. The",
+         " classification of every occurrence is in `EFFECT_SIZE_TERMINOLOGY_AUDIT.tsv`."),
   "",
   "## 2. The sample-class correction",
   "",
@@ -1000,7 +1401,9 @@ MA <- c(
          " animals per condition per sample class\" |"),
   "| Methods, statistics paragraph | hemispheres as replicates | animal as the independent experimental unit; see the sentence below |",
   "| Results, any n | hemisphere-level n | animal-level n |",
-  "| Figure legends quoting n | acquisition or hemisphere n | animal n, except the technical-QC panels (Supp A, B2, B3) where the acquisition IS the correct unit |",
+  paste0("| Figure legends quoting n | acquisition or hemisphere n | animal n, except the",
+         " technical-QC panels (", supp_prefix, " A, B2, B3) where the acquisition IS the",
+         " correct unit |"),
   "| Any mention of technical replicates | \"technical replicates\" for L/R | left and right hemisphere measurements of the same animal |",
   "",
   "### Methods sentences to insert verbatim",
@@ -1014,81 +1417,124 @@ MA <- c(
          inv$n_animals_per_stratum, " animals per condition per sample class across all ",
          inv$n_strata, " strata, with complete left/right pairing."),
   "",
-  paste0("> Differential abundance was assessed within each sample class using moderated",
-         " two-sample statistics on the ", inv$n_animal_level_units,
-         " animal-level units, across ", inv$n_primary_contrasts,
-         " primary contrasts (", inv$n_sample_classes,
-         " sample classes x 3 within-sample-class comparisons). P-values were adjusted by",
-         " the Benjamini-Hochberg procedure and significance was assessed at FDR < 0.05."),
+  paste0("> ", RELEASE_PRIMARY_MODEL$methods_sentence, " Significance was assessed at",
+         " FDR < 0.05. Software: limma ", stat_run$limma_version, " in R ", stat_run$r_version,
+         "."),
   "",
   "## 4. Which result claims the animal-level analysis supports",
   "",
   paste0("Correcting the statistical unit did not leave the findings intact. Of the ",
-         inv$n_primary_contrasts, " primary comparisons, ", n_with_hits,
-         " contain any FDR-significant protein and ", n_without_hits, " contain none."),
+         inv$n_primary_contrasts, " primary comparisons, ", n_with_hits, " ",
+         plural(n_with_hits, "contains", "contain"), " any FDR-significant protein and ",
+         n_without_hits, " ", plural(n_without_hits, "contains", "contain"), " none."),
   "",
   "Protein-level and pathway-level outcomes per comparison, generated from the release:",
   "",
-  "| Comparison | Proteins, FDR < 0.05 | GO-BP terms, FDR < 0.05 | How to describe it |",
-  "|---|--:|--:|---|",
+  "| Comparison | Proteins, FDR < 0.05 | GO-BP terms, FDR < 0.05 | GO-CC terms, FDR < 0.05 | How to describe it |",
+  "|---|--:|--:|--:|---|",
   vapply(seq_len(nrow(diff_summary)), function(i) {
-    cmp <- diff_summary$canonical_comparison[i]
-    np <- as.integer(diff_summary$n_significant_fdr_0_05_mapped_only[i])
-    ng <- unname(gsea_fdr_by_comparison[cmp])
-    if (is.na(ng)) ng <- 0L
-    how <- if (np > 100L && ng == 0L) {
+    np <- n_prot_mapped[i]; ng <- n_bp_now[i]; nc <- n_cc_now[i]
+    learning <- diff_summary$contrast_family[i] == "paired_veh_vs_unpaired_veh"
+    how <- if (np > 100L && ng + nc == 0L) {
       "large protein-level burden with no coherent pathway support; interpret cautiously"
-    } else if (np > 0L && ng > 0L) {
+    } else if (np > 100L) {
+      paste0("large protein-level burden with pathway-level support, but origin unresolved",
+             if (learning) " (pairing completely associated with collection plate)" else "",
+             "; interpret cautiously")
+    } else if (np > 0L && ng + nc > 0L) {
       "coherent: protein-level and pathway-level agree"
-    } else if (np == 0L && ng > 0L) {
+    } else if (np == 0L && ng + nc > 0L) {
       "pathway-level enrichment ONLY -- do not report as significant proteins"
-    } else if (np > 0L && ng == 0L) {
+    } else if (np > 0L) {
       "protein-level only; no pathway support"
     } else {
       "null at both levels"
     }
-    label <- release_comparison_label(diff_summary$sample_class[i],
-                                      diff_summary$numerator_condition[i],
-                                      diff_summary$denominator_condition[i])
-    paste0("| ", label, " | ", np, " | ", ng, " | ", how, " |")
+    paste0("| ", comparison_labels[i], " | ", np, " | ", ng, " | ", nc, " | ", how, " |")
   }, character(1)),
+  "",
+  paste("GO term counts:", PERMUTATION_NOTE),
   "",
   "The specific corrections most likely to be needed:",
   "",
-  if (length(cfos_cno_hits)) {
-    paste0("- **cFos, paired CNO versus paired vehicle** is the strongest coherent result: ",
-           length(cfos_cno_hits), " FDR-significant proteins (",
-           paste(cfos_cno_hits, collapse = ", "), "), all higher under CNO, with ",
-           unname(gsea_fdr_by_comparison["cfos_paired_cno_over_cfos_paired_veh"]),
-           " FDR-significant GO-BP terms and supporting cell-type evidence. Name these",
-           " proteins rather than describing the result in the aggregate.")
-  } else {
-    "- **cFos, paired CNO versus paired vehicle**: see the table above."
-  },
+  paste0("- **Protein-level results.** ", length(cls_protein), " of ", inv$n_primary_contrasts,
+         " comparisons ", plural(length(cls_protein), "has", "have"),
+         " FDR-significant proteins: ",
+         if (length(cls_protein)) paste0(cls_protein, " (", n_prot_mapped[n_prot_mapped > 0L],
+                                         " mapped)", collapse = "; ") else "none",
+         ". Do not name individual proteins as FDR-significant for any other comparison."),
+  paste0("- **The mCherry learning result** (", mch$n_significant_fdr_0_05_mapped_only,
+         " mapped proteins) has pathway-level support but an unresolved origin, and its",
+         " protein count depends on single animals: leaving one animal out gives ",
+         loo_fdr[1], " to ", format(loo_fdr[2], big.mark = ","), " FDR-significant proteins",
+         " (effect estimates stay correlated with the full fit at r >= ",
+         sprintf("%.2f", loo_r_effect_min), "). Report it with that caveat."),
+  if (length(lost)) paste0("- **No longer protein-level results.** Under the earlier pooled",
+         " model these had FDR-significant proteins and now have none: ", lost_text,
+         ". Remove any such claim, and any protein named from them, from the manuscript and",
+         " the response.") else character(0),
   paste0("- **Neuropil** has **no** FDR-significant individual proteins in any of its three",
-         " comparisons, but robust pathway-level enrichment (up to ",
-         max(gsea_fdr_by_comparison[grep("^neuropil", names(gsea_fdr_by_comparison))]),
+         " comparisons, but pathway-level enrichment (up to ",
+         max(n_bp_now[diff_summary$sample_class == "neuropil"]),
          " GO-BP terms). Describe this as pathway-level enrichment. Do **not** describe it",
          " as protein-level FDR significance."),
-  if (!is.null(interaction_proteins) && !is.null(interaction_gsea)) {
-    ip <- interaction_proteins[interaction_proteins$sample_class == "cfos", , drop = FALSE]
-    ig <- interaction_gsea[interaction_gsea$sample_class == "cfos", , drop = FALSE]
-    paste0("- **The cFos Pairing x CNO interaction** yields ",
-           as.integer(ip$n_fdr05[1]), " FDR-significant proteins of ",
-           format(as.integer(ip$n_tested[1]), big.mark = ","), " tested, alongside ",
-           as.integer(ig$go_bp_fdr05[1]), " FDR-significant GO-BP terms. It is post-hoc",
-           " with n = ", inv$n_animals_per_stratum,
-           " per cell. Describe the pathway observations as suggestive and post-hoc, not as",
-           " protein-level confirmation of an interaction.")
-  } else {
-    "- **The cFos Pairing x CNO interaction** is post-hoc; describe it as suggestive."
+  {
+    ip <- interaction_proteins
+    ig <- interaction_gsea[match(ip$sample_class, interaction_gsea$sample_class), , drop = FALSE]
+    idg <- interaction_diag[match(ip$sample_class, interaction_diag$sample_class), , drop = FALSE]
+    paste0("- **The Pairing x CNO interaction** (post hoc, per-sample-class model, n = ",
+           inv$n_animals_per_stratum, " animals per cell) has ",
+           sum(as.integer(ip$n_fdr05)), " FDR-significant proteins in any sample class (",
+           format(as.integer(ip$n_tested[1]), big.mark = ","), " tested in each), alongside ",
+           paste0(vapply(ip$sample_class, release_sample_class_display, character(1)), " ",
+                  as.integer(ig$go_bp_fdr05), collapse = ", "),
+           " FDR-significant GO-BP terms. Within each sample class the gene-set results",
+           " largely follow a shift of the whole interaction contrast (share of all tested",
+           " GO-BP terms whose NES has the majority sign: ",
+           paste(vapply(seq_len(nrow(idg)), function(j) {
+             p <- as.numeric(idg$go_bp_pct_NES_positive[j])
+             sprintf("%s %.0f%% %s", release_sample_class_display(idg$sample_class[j]),
+                     max(p, 100 - p), if (p >= 50) "positive" else "negative")
+           }, character(1)), collapse = ", "),
+           "), and the contrast keeps ",
+           sprintf("%.0f%%", 100 * as.numeric(idg$plate2_minus_plate1_weight[1])),
+           " of any additive collection-plate difference. Describe the pathway observations",
+           " as suggestive and post hoc, not as protein-level confirmation of an interaction,",
+           " and name no protein as an interaction hit.")
   },
   paste0("- **cFos unpaired CNO versus unpaired vehicle** is essentially null across",
-         " analysis layers (0 proteins, ",
-         unname(gsea_fdr_by_comparison["cfos_unpaired_cno_over_cfos_unpaired_veh"]),
+         " analysis layers (", n_prot_mapped[diff_summary$canonical_comparison ==
+                                               "cfos_unpaired_cno_over_cfos_unpaired_veh"],
+         " proteins, ", term_count(gsea_fdr_by_comparison,
+                                   "cfos_unpaired_cno_over_cfos_unpaired_veh"),
          " GO-BP terms). Do not retain stronger historical claims for it."),
-  paste0("- **Neuron** comparisons are mostly negative or suggestive: 0 FDR-significant",
-         " proteins throughout."),
+  paste0("- **Neuron** comparisons have ",
+         sum(n_prot_mapped[diff_summary$sample_class == "neuron"]),
+         " FDR-significant proteins in total and ",
+         paste(n_bp_now[diff_summary$sample_class == "neuron"], collapse = " / "),
+         " GO-BP terms (",
+         paste(comparison_labels[diff_summary$sample_class == "neuron"], collapse = " / "),
+         "); pathway-level only."),
+  "",
+  "### 4b. What changed from the pooled release (2026-09-07)",
+  "",
+  paste0("Text or figures drafted from the earlier release of 2026-09-07 carry numbers that",
+         " must be replaced. That release used the ", RELEASE_PRIMARY_MODEL$superseded_label,
+         ". FDR < 0.05 counts, pooled model and now:"),
+  "",
+  md_table(pooled_vs_now),
+  "",
+  paste("Term counts for now:", PERMUTATION_NOTE),
+  "",
+  paste0("Also replace: ", LBL$D, " count (now ", mch$n_significant_fdr_0_05_mapped_only,
+         " proteins, ", mch$n_significant_higher_in_numerator_mapped_only, " up / ",
+         mch$n_significant_higher_in_denominator_mapped_only, " down); ", LBL$H,
+         " r and n (now ", sprintf("%.2f", fig_h_r), ", n = ", fig_h_n, "); ", LBL$I,
+         " overlap (now ", fig_i_opposed, " of ", fig_i_n, " opposed, ", fig_i_concordant,
+         " concordant); ", LBL$F, " (now ", length(f_terms), " terms, mCherry ", f_mcherry,
+         "); ", LBL$G, " content (now GSEA, ", nrow(g_bp), " GO-BP + ", nrow(g_cc),
+         " GO-CC terms); and any statement that the mCherry learning comparison has no",
+         " pathway support."),
   "",
   "## 5. The canonical GSEA ranking statistic",
   "",
@@ -1139,11 +1585,14 @@ MA <- c(
   "",
   vapply(MA_UNRESOLVED_METHODS, function(x) paste0("- ", x), character(1)),
   "",
-  paste0("On software: the canonical animal-level statistics were produced with ProTigy ",
-         PROTIGY_ANIMAL_LEVEL_VERSION, ". The superseded hemisphere-level 2025 runs used",
-         " v1.1.8; do not report that version as the version behind the reported results.",
-         " No search or quantification software may be named: the identity and version of",
-         " the upstream tool could not be recovered from the retained project files."),
+  paste0("On software: the canonical animal-level statistics were produced with limma ",
+         stat_run$limma_version, " (R ", stat_run$r_version, "), one model per sample class,",
+         " by `", RELEASE_PRIMARY_MODEL$script, "`. ProTigy ", PROTIGY_ANIMAL_LEVEL_VERSION,
+         " produced the earlier pooled animal-level run (one model over all ",
+         inv$n_animal_level_units, " units) that is superseded, and the hemisphere-level 2025",
+         " runs used v1.1.8; report neither as the software behind the reported results. No",
+         " search or quantification software may be named: the identity and version of the",
+         " upstream tool could not be recovered from the retained project files."),
   "",
   paste0("On the previously submitted package: none of the four submitted files was located",
          " or read. Do not describe their internal structure. The crosswalk in",
@@ -1168,7 +1617,8 @@ MA <- c(
   "- the current manuscript file (Results, Methods, Discussion, figure legends);",
   "- the reviewer response / rebuttal document;",
   "- the supplementary figure legend file, if it is separate from the manuscript;",
-  "- the figure source files whose axis labels need relabelling (Fig 3D, 3H, Supp E).",
+  paste0("- the figure source files whose axis labels need relabelling (", LBL$D, ", ",
+         LBL$H, ", ", LBL$SE, ")."),
   "",
   "## 10. Still needed for the PRIDE deposition",
   "",
@@ -1178,9 +1628,16 @@ MA <- c(
 )
 mp <- release_path("editor_source_data", "MANUSCRIPT_TERMINOLOGY_ACTIONS.md")
 release_write_lines(MA, mp)
+actions_inputs <- c(stat_run$path, pooled_mapped_index_path, pooled_enrich_index_path,
+                    interaction_protein_path, interaction_gsea_path, interaction_diag_path,
+                    loo_path, fig_g_src_path, fig_h_audit_path, fig_i_audit_path)
 release_register("editor_source_data/MANUSCRIPT_TERMINOLOGY_ACTIONS.md",
                  paste("figure axes, captions and manuscript text that must be corrected by",
                        "hand outside this repository"),
-                 "publication release layer", NA_character_, STAGE, "md")
+                 c(rel("differential_analysis", "primary_differential_summary.tsv"),
+                   rel("editor_source_data", "figure_source_map.tsv"), actions_inputs),
+                 c(NA_character_, NA_character_,
+                   vapply(actions_inputs, release_sha256, character(1), USE.NAMES = FALSE)),
+                 STAGE, "md")
 release_log("  wrote MANUSCRIPT_TERMINOLOGY_ACTIONS.md (", length(MA), " lines)")
 release_log("stage 08 complete")

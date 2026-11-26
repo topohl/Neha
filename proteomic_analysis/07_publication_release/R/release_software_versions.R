@@ -1,49 +1,29 @@
-# Single source of truth for the software / database version table.
+# The software / database version table. provenance/software_versions.tsv (stage 10) and
+# the Software_Versions sheet of the editor workbook (stage 07) both call
+# release_build_software_versions(), so they always agree.
 #
-# Two release artefacts report software versions to a reader:
-#   provenance/software_versions.tsv                     (stage 10)
-#   the Software_Versions sheet of the editor workbook    (stage 07)
+# Since 2026-11-24 the differential statistics come from limma
+# (01_preprocessing/02b_limma_stat_gct.r, one model per sample class); the limma and R
+# versions are read from that run's manifest (release_read_stat_run()). ProTigy 2.4.1 is
+# listed only for the superseded pooled animal-level run of 2026-08-24.
 #
-# They used to derive it independently, and they disagreed. Stage 07 read only the 2025
-# hemisphere-level ProTigy params.txt header and published "Protigy (v1.1.8)" with no
-# qualification, while stage 10 correctly reported 2.4.1 for the canonical animal-level run
-# and confined v1.1.8 to the superseded hemisphere-level runs. An editor reading the
-# workbook would have concluded the analysis used ProTigy 1.1.8.
-#
-# The fix is structural rather than a corrected duplicate: both stages now call
-# release_build_software_versions(), so the two artefacts cannot drift apart again.
-#
-# Requires release_utils.R to be sourced first.
+# Requires release_utils.R and release_validation.R to be sourced first.
 
 # --------------------------------------------------------------------------------------
-# ProTigy version for the CANONICAL animal-level run (2026-08-24)
+# ProTigy version of the superseded pooled animal-level run (2026-08-24)
 # --------------------------------------------------------------------------------------
-# Recovered 2026-09-02 by targeted audit. Recorded as a constant rather than read from
-# whatever ProTigy happens to be installed on the machine running this build: the question
-# is which version produced a specific run in the past, and a build-time lookup would
-# silently answer a different question on a different machine. That is the same trap as
-# carrying the 2025 version forward.
-#
-# The evidence is five strands that agree:
-#   1. The only ProTigy present on the analysis machine is 2.4.1, and its installed
-#      DESCRIPTION records Packaged 2026-08-24 12:47:48 UTC / Built 2026-08-24 12:48:07 UTC.
-#   2. The canonical run's parameter export, neha_proteome_parameters.yaml, was written
-#      2026-08-24 13:06:11 UTC -- 18 minutes after that build finished.
-#   3. ProTigy v2's exporter (R/tab_export.R) writes paste0(ome, "_parameters.yaml"); the
-#      canonical file is neha_proteome_parameters.yaml, i.e. the historical
-#      project-specific proteome identifier.
-#   4. That exporter writes the parameter list minus "gct_file_path". The canonical YAML
-#      carries gct_file_name and no gct_file_path, exactly as the code does.
-#   5. All 19 schema keys in the canonical YAML are a subset of 2.4.1's
-#      setup_parameters/setupDefaults.yaml; the two extras (gct_file_name,
-#      annotation_column) are added at runtime by 2.4.1; and the two absent data-filter
-#      keys are precisely the ones 2.4.1 sets to NULL when data_filter is None, which is
-#      this run's setting.
-#
-# The negative result matters as much: v1.1.x writes a params.txt whose first lines are
-# "## <timestamp>" / "## Protigy (vX.Y.Z)". The canonical run produced no such file, and
-# its YAML key set does not exist in the v1.1.x format at all. v1.1.8 is therefore
-# disproven for this run, not merely unproven.
+# Recovered 2026-09-02 and stored as a constant, because it describes a past run and must
+# not be read from whatever ProTigy is installed now. Evidence (summarised in
+# PROTIGY_ANIMAL_LEVEL_EVIDENCE):
+#   - the only ProTigy on the analysis machine is 2.4.1, built 2026-08-24 12:48:07 UTC;
+#   - the run's neha_proteome_parameters.yaml was written 18 minutes later (13:06:11 UTC);
+#   - ProTigy v2's tab_export.R writes <ome>_parameters.yaml without gct_file_path, which
+#     matches this file's name and keys;
+#   - its 19 schema keys are all in 2.4.1's setup_parameters/setupDefaults.yaml (plus
+#     gct_file_name and annotation_column, which 2.4.1 adds at run time); the two missing
+#     data-filter keys are the ones 2.4.1 sets to NULL when data_filter is None.
+# v1.1.x writes a params.txt starting "## Protigy (vX.Y.Z)" and uses a different key set,
+# so v1.1.8 is ruled out for this run.
 PROTIGY_ANIMAL_LEVEL_VERSION <- "2.4.1"
 
 PROTIGY_ANIMAL_LEVEL_EVIDENCE <- paste(
@@ -60,10 +40,8 @@ PROTIGY_ANIMAL_LEVEL_EVIDENCE <- paste(
   "full evidence table."
 )
 
-#' Fail closed if the artefact the ProTigy 2.4.1 claim rests on stops looking like a v2 export.
-#'
-#' Without this, a future change to the canonical YAML could leave a version claim standing
-#' on evidence that no longer exists.
+#' Stop if the parameter export behind the ProTigy 2.4.1 version no longer looks like a v2
+#' export.
 release_assert_protigy_v2_export_signature <- function(animal_param_yaml) {
   if (!file.exists(animal_param_yaml)) return(invisible(FALSE))
   pp <- readLines(animal_param_yaml, warn = FALSE)
@@ -100,18 +78,19 @@ release_parse_attached_packages <- function(path) {
   unique(toks[grepl("^[A-Za-z][A-Za-z0-9._]*_[0-9]", toks)])
 }
 
-#' Build the authoritative software / database version table.
+#' Build the software / database version table.
 #'
 #' Every row records where the version came from, so a reader can tell a version captured
 #' by the run itself from one recovered later, and an UNKNOWN from an omission. Rows are
-#' scoped by `applies_to_stage`, which is what keeps the superseded 2025 hemisphere-level
-#' ProTigy version from reading as the version behind the canonical result.
+#' scoped by `applies_to_stage`, which is what keeps the superseded ProTigy versions (2025
+#' hemisphere-level, 2026-08-24 pooled) from reading as the version behind the canonical
+#' result; that is limma, at the version its run manifest recorded.
 release_build_software_versions <- function(data_root = release_data_root(),
                                             repo_root = release_repo_root()) {
   UNKNOWN <- "UNKNOWN"
   animal_root <- file.path(data_root, "02_data", "animal_level")
-  enrich_root <- file.path(data_root, "03_output", "enrichment",
-                           "enrichment_t_rank_validation_20260825")
+  enrich_root <- release_enrichment_root("GO_BP", data_root)
+  enrich_root_cc <- release_enrichment_root("GO_CC", data_root)
   ewce_root <- file.path(data_root, "03_output", "ewce",
                          "EWCE_Results_animal_level_validation_20260825")
   pca_root <- file.path(data_root, "03_output", "pca",
@@ -128,10 +107,27 @@ release_build_software_versions <- function(data_root = release_data_root(),
 
   release_assert_protigy_v2_export_signature(animal_param_yaml)
 
-  mapped_index <- release_read_csv(file.path(animal_root, "mapped",
+  mapped_index <- release_read_csv(file.path(release_stats_root(data_root), "mapped",
                                              "indexMappedComparisons.csv"))
   pkg_versions <- release_read_csv(file.path(enrich_root, "audits",
                                              "package_database_versions.csv"))
+  pkg_versions_cc <- release_read_csv(file.path(enrich_root_cc, "audits",
+                                                "package_database_versions.csv"))
+  if (!identical(pkg_versions, pkg_versions_cc)) {
+    stop("The GO-BP and GO-CC enrichment runs recorded different package versions; ",
+         "report them separately before releasing.", call. = FALSE)
+  }
+  # The KEGG run must have used the same version of every package it records.
+  pkg_versions_kegg <- release_read_csv(file.path(release_kegg_root(data_root), "audits",
+                                                  "package_database_versions.csv"))
+  if (!all(pkg_versions_kegg$component %in% pkg_versions$component) ||
+      !identical(as.character(pkg_versions_kegg$version),
+                 as.character(pkg_versions$version[match(pkg_versions_kegg$component,
+                                                         pkg_versions$component)]))) {
+    stop("The KEGG enrichment run recorded package versions that differ from the GO runs'.",
+         call. = FALSE)
+  }
+  stat_run <- release_read_stat_run(data_root)
 
   hash_or <- function(path, fallback = NA_character_) {
     if (!is.na(path) && nzchar(path) && file.exists(path) && !dir.exists(path)) {
@@ -150,7 +146,11 @@ release_build_software_versions <- function(data_root = release_data_root(),
     sv(pkg_versions$component[i],
        ifelse(pkg_versions$component[i] == "R", "language", "R package"),
        pkg_versions$version[i], "KNOWN_VERIFIED",
-       "enrichment run audit, 2026-08-25",
+       paste0("enrichment run audit, ", RELEASE_STATISTICS_RUN$enrichment_date,
+              " (GO_BP and GO_CC runs, identical versions",
+              if (pkg_versions$component[i] %in% pkg_versions_kegg$component)
+                paste0("; the KEGG run of ", RELEASE_STATISTICS_RUN$kegg_enrichment_date,
+                       " recorded the same") else "", ")"),
        file.path(enrich_root, "audits", "package_database_versions.csv"),
        "differential enrichment (GSEA / ORA)")
   }))
@@ -192,11 +192,24 @@ release_build_software_versions <- function(data_root = release_data_root(),
              "protigy/ folder, all reporting v1.1.5 for exploratory runs on 2025-03-28.",
              "The version therefore changed across this project's history",
              "(1.1.5 -> 1.1.8 -> 2.4.1), which is why no version is carried between runs.")),
-    sv("ProTigy (animal-level statistical GCT, 2026-08-24)", "external application",
+    sv("ProTigy (pooled animal-level statistical GCT, 2026-08-24)", "external application",
        PROTIGY_ANIMAL_LEVEL_VERSION, "KNOWN_VERIFIED",
-       "recovered by cross-source audit, 2026-09-02",
-       animal_param_yaml, "canonical animal-level differential statistics",
-       PROTIGY_ANIMAL_LEVEL_EVIDENCE),
+       "recovered by cross-source audit, 2026-09-02", animal_param_yaml,
+       paste0("pooled animal-level differential statistics (superseded ",
+              RELEASE_PRIMARY_MODEL$date, ")"),
+       paste0(PROTIGY_ANIMAL_LEVEL_EVIDENCE, " That run was the ",
+              RELEASE_PRIMARY_MODEL$superseded_label, ". It is not the source of the",
+              " released statistics: since ", RELEASE_PRIMARY_MODEL$date, " they come",
+              " from limma, one model per sample class (see the limma and R rows for",
+              " 'canonical animal-level differential statistics').")),
+    sv("limma", "R package", stat_run$limma_version, "KNOWN_VERIFIED",
+       paste("statistics run manifest,", RELEASE_PRIMARY_MODEL$date), stat_run$path,
+       "canonical animal-level differential statistics",
+       paste0("Recorded at run time by ", RELEASE_PRIMARY_MODEL$script, " (packageVersion). ",
+              RELEASE_PRIMARY_MODEL$label, ".")),
+    sv("R", "language", stat_run$r_version, "KNOWN_VERIFIED",
+       paste("statistics run manifest,", RELEASE_PRIMARY_MODEL$date), stat_run$path,
+       "canonical animal-level differential statistics", stat_run$r_version_string),
     sv("upstream search / quantification software", "external application", UNKNOWN,
        "MISSING_RECOVERABLE",
        "no software name and no version string exist in the project tree", "NONE",

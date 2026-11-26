@@ -1,15 +1,14 @@
 #!/usr/bin/env Rscript
 
-# Contract: the publication release layer READS validated results. It must never fit a
-# model, run an enrichment, bootstrap a cell-type test, or recompute a PCA.
+# Checks: the release layer only reads results. No R file in it fits a model, runs an
+# enrichment, bootstraps a cell-type test or computes a PCA. It also checks the output-root
+# rules: protected roots are refused, the shared drive needs an opt-in, and an in-place
+# rebuild removes only the previous stage 13 reports.
 #
-# This is a static scan of the layer's own source, so it needs neither the shared drive nor
-# a built release and always runs -- including in CI.
-#
-# The scanner's own pattern table names the prohibited calls as strings. Strings do not
-# match, because the pattern requires an opening parenthesis after the identifier; but
-# R/release_validation.R and 13_validate_release.R are excluded anyway so that adding a
-# call name to the table can never be mistaken for making the call.
+# A static scan of the source, so it needs neither the shared drive nor a built release.
+# The scanner uses the parse tree, so call names written as strings do not count;
+# R/release_validation.R (which holds the list), 13_validate_release.R and this file are
+# skipped anyway.
 
 args <- commandArgs(trailingOnly = FALSE)
 file_arg <- grep("^--file=", args, value = TRUE)
@@ -103,10 +102,17 @@ for (p in c(file.path(data_root, "02_data", "animal_level", "input_gct"),
   expect(rejected, sprintf("rejects a nested/containing root at %s", sub("^.*/", ".../", p)))
 }
 accepted <- !inherits(tryCatch(
+  release_validate_output_root(file.path(data_root, "03_output",
+                                         "release_within_compartment_20261125"),
+                               data_root),
+  error = function(e) e), "error")
+expect(accepted,
+       "accepts the intended release root 03_output/release_within_compartment_20261125")
+frozen_rejected <- inherits(tryCatch(
   release_validate_output_root(file.path(data_root, "03_output", "publication_release"),
                                data_root),
   error = function(e) e), "error")
-expect(accepted, "accepts the intended release root 03_output/publication_release")
+expect(frozen_rejected, "rejects the frozen pooled-run release root 03_output/publication_release")
 accepted_scratch <- !inherits(tryCatch(
   release_validate_output_root(tempdir(), data_root), error = function(e) e), "error")
 expect(accepted_scratch, "accepts a scratch root")
@@ -116,7 +122,8 @@ cat("\n=== writing to the shared drive requires an explicit opt-in ===\n")
 # Use a fresh synthetic data root. The canonical publication release may already exist,
 # and its existence must not make this write-guard fixture stateful or destructive.
 guard_data_root <- tempfile("amp_release_shared_guard_")
-shared_root <- file.path(guard_data_root, "03_output", "publication_release")
+shared_root <- file.path(guard_data_root, "03_output",
+                         "release_within_compartment_20261125")
 saved <- Sys.getenv("PROTEOMICS_RELEASE_ALLOW_SHARED_DRIVE", unset = NA)
 Sys.unsetenv("PROTEOMICS_RELEASE_ALLOW_SHARED_DRIVE")
 blocked <- inherits(tryCatch(release_prepare_output_root(shared_root, guard_data_root),
@@ -126,14 +133,43 @@ expect(!dir.exists(shared_root),
        "the refused shared-drive root was not even created as an empty directory")
 
 Sys.setenv(PROTEOMICS_RELEASE_ALLOW_SHARED_DRIVE = "true")
-opted_in <- !inherits(tryCatch(release_assert_shared_drive_opt_in(shared_root, guard_data_root),
+saved_dirty <- Sys.getenv("PROTEOMICS_RELEASE_ALLOW_DIRTY", unset = NA)
+Sys.unsetenv("PROTEOMICS_RELEASE_ALLOW_DIRTY")
+opted_in <- !inherits(tryCatch(release_assert_shared_drive_opt_in(shared_root, guard_data_root,
+                                                                  dirty = FALSE),
                                error = function(e) e), "error")
-expect(opted_in, "the opt-in permits a deliberate shared-drive release")
+expect(opted_in, "the opt-in permits a deliberate shared-drive release from a clean tree")
+dirty_refused <- inherits(tryCatch(release_assert_shared_drive_opt_in(shared_root, guard_data_root,
+                                                                      dirty = TRUE),
+                                   error = function(e) e), "error")
+expect(dirty_refused,
+       "a shared-drive release from a dirty tree is refused without PROTEOMICS_RELEASE_ALLOW_DIRTY")
+Sys.setenv(PROTEOMICS_RELEASE_ALLOW_DIRTY = "true")
+dirty_allowed <- !inherits(tryCatch(release_assert_shared_drive_opt_in(shared_root, guard_data_root,
+                                                                       dirty = TRUE),
+                                    error = function(e) e), "error")
+expect(dirty_allowed, "PROTEOMICS_RELEASE_ALLOW_DIRTY=true permits it")
+scratch_dirty_ok <- !inherits(tryCatch(release_assert_shared_drive_opt_in(tempdir(), guard_data_root,
+                                                                          dirty = TRUE),
+                                       error = function(e) e), "error")
+if (is.na(saved_dirty)) {
+  Sys.unsetenv("PROTEOMICS_RELEASE_ALLOW_DIRTY")
+} else {
+  Sys.setenv(PROTEOMICS_RELEASE_ALLOW_DIRTY = saved_dirty)
+}
+expect(scratch_dirty_ok, "a scratch build from a dirty tree needs no opt-in")
 if (is.na(saved)) {
   Sys.unsetenv("PROTEOMICS_RELEASE_ALLOW_SHARED_DRIVE")
 } else {
   Sys.setenv(PROTEOMICS_RELEASE_ALLOW_SHARED_DRIVE = saved)
 }
+commit <- release_git_commit(repo_root)
+dirty_now <- release_git_tree_dirty(repo_root)
+expect(identical(commit, "UNKNOWN") ||
+         (grepl("^[0-9a-f]{40}(\\+dirty)?$", commit) &&
+            identical(grepl("[+]dirty$", commit), isTRUE(dirty_now))),
+       sprintf("the recorded commit carries +dirty exactly when the tree differs from it (%s)",
+               commit))
 
 scratch_dir <- file.path(tempdir(), "amp_release_guard_probe")
 scratch_ok <- !inherits(tryCatch(release_prepare_output_root(scratch_dir, data_root),
@@ -163,7 +199,7 @@ unlink(rebuild_root, recursive = TRUE)
 
 cat("\n=== RESULT ===\n")
 if (failures > 0L) {
-  stop(sprintf("Publication release recomputation contracts failed: %d", failures),
+  stop(sprintf("Publication release recomputation checks failed: %d", failures),
        call. = FALSE)
 }
-cat("All publication release recomputation contracts hold.\n")
+cat("All publication release recomputation checks hold.\n")

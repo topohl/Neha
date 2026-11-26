@@ -1,18 +1,17 @@
 #!/usr/bin/env Rscript
 
-# Publication release, stage 10 -- lineage, software/database versions, parameters.
+# Publication release, stage 10: lineage, software and database versions, parameters.
 #
 # Produces
-#   provenance/data_lineage.tsv                 raw -> processed -> analysis, edge by edge
+#   provenance/data_lineage.tsv                 raw -> processed -> analysis, step by step
 #   provenance/UPSTREAM_PREPROCESSING_GAP.md    what cannot be reproduced, and why
-#   provenance/software_versions.tsv            exact versions, or UNKNOWN with a source
-#   provenance/sessionInfo_release.txt          the environment that built THIS package
+#   provenance/software_versions.tsv            versions, or UNKNOWN with a source
+#   provenance/sessionInfo_release.txt          the R session that built this package
 #   provenance/analysis_parameters.tsv          every recorded analysis parameter
 #
-# Lineage edges that cannot be proven are marked UNRESOLVED rather than inferred. Two of
-# them are load-bearing and are stated as such: the search-software output is absent from
-# the project, and the code that produced the 5,349-protein processed matrix is not in the
-# repository.
+# Steps that cannot be shown from the files are marked UNRESOLVED. The two that matter most:
+# the search-software output is not in the project, and the code that made the 5,349-protein
+# processed matrix is not in the repository.
 
 suppressWarnings({
   args <- commandArgs(trailingOnly = FALSE)
@@ -36,13 +35,18 @@ UNKNOWN <- "UNKNOWN"
 release_banner("stage 10 -- provenance")
 
 ANIMAL_ROOT <- file.path(DATA_ROOT, "02_data", "animal_level")
-ENRICH_ROOT <- file.path(DATA_ROOT, "03_output", "enrichment",
-                         "enrichment_t_rank_validation_20260825")
+# The primary statistics run (per sample class, 2026-11-24) and its enrichment runs.
+STAT_ROOT <- release_stats_root(DATA_ROOT)
+ENRICH_RUN_ROOT <- release_rel_path(RELEASE_STATISTICS_RUN$enrichment_relative, DATA_ROOT)
+ENRICH_ROOT <- release_enrichment_root("GO_BP", DATA_ROOT)      # GO-BP
+ENRICH_ROOT_CC <- release_enrichment_root("GO_CC", DATA_ROOT)   # GO-CC
+KEGG_ROOT <- release_kegg_root(DATA_ROOT)                       # KEGG (20261124 GO_BP folder)
 EWCE_ROOT <- file.path(DATA_ROOT, "03_output", "ewce",
                        "EWCE_Results_animal_level_validation_20260825")
 PCA_ROOT <- file.path(DATA_ROOT, "03_output", "pca",
                       "pca_plots_animal_level_validation_20260825_rerun")
 REVISION_ROOT <- file.path(DATA_ROOT, "03_output", "reviewer_revision_animal_level_20260827")
+REBUILD_ROOT <- release_figure_rebuild_root(DATA_ROOT)
 experimenter_source <- release_experimenter_metadata_source_path(REPO_ROOT)
 protocol_source <- release_sample_preparation_source_path(REPO_ROOT)
 experimenter_metadata <- release_read_experimenter_metadata(REPO_ROOT)
@@ -54,10 +58,35 @@ hash_or <- function(path, fallback = NA_character_) {
   } else fallback
 }
 
-mapped_index <- release_read_csv(file.path(ANIMAL_ROOT, "mapped", "indexMappedComparisons.csv"))
+mapped_index <- release_read_csv(file.path(STAT_ROOT, "mapped", "indexMappedComparisons.csv"))
 pkg_versions <- release_read_csv(file.path(ENRICH_ROOT, "audits",
                                            "package_database_versions.csv"))
 run_parameters <- release_read_csv(file.path(ENRICH_ROOT, "audits", "run_parameters.csv"))
+run_parameters_cc <- release_read_csv(file.path(ENRICH_ROOT_CC, "audits", "run_parameters.csv"))
+run_parameters_kegg <- release_read_csv(file.path(KEGG_ROOT, "audits", "run_parameters.csv"))
+permutations <- release_enrichment_permutations(DATA_ROOT)
+stat_run <- release_read_stat_run(DATA_ROOT)
+# EWCE's own differential limma fit, as its audit recorded it.
+ewce_model <- release_ewce_differential_model(DATA_ROOT)
+# Evidence for the enrichment seed handling: the robustness branch reran the mCherry learning
+# GSEA with the recorded seeds and DOSE seed = FALSE and compared it with the stored run.
+p_seed_checks <- file.path(release_inferential_root(DATA_ROOT), "robustness", "checks.csv")
+seed_checks <- release_read_csv(p_seed_checks)
+seed_check_rows <- vapply(c("GO-BP", "GO-CC"), function(ont) {
+  hit <- grepl(paste0(ont, " GSEA vs stored enrichment"), seed_checks$check, fixed = TRUE)
+  if (sum(hit) != 1L || !identical(toupper(as.character(seed_checks$passed[hit])), "TRUE")) {
+    stop("robustness/checks.csv lacks a passing ", ont, " rerun-versus-stored check: ",
+         p_seed_checks, call. = FALSE)
+  }
+  which(hit)
+}, integer(1))
+# The test that ties 01_preprocessing/02b_limma_stat_gct.r to the locked statistics GCT.
+p_limma_test <- file.path(REPO_ROOT, "tests", "test_limma_stat_gct.R")
+# AveExpr as the per-sample-class model reports it, measured on the released table.
+ave <- release_aveexpr_summary(read.delim(
+  gzfile(release_path("differential_analysis", "primary_differential_proteins.tsv.gz",
+                      create_dir = FALSE)),
+  sep = "\t", quote = "", stringsAsFactors = FALSE, check.names = FALSE))
 protigy_params_2025 <- file.path(DATA_ROOT, "01_input", "raw_proteomics",
                                  "20251107_pg.matrix_Neha", "params.txt")
 animal_param_yaml <- file.path(ANIMAL_ROOT, "neha_proteome_parameters.yaml")
@@ -66,16 +95,10 @@ ewce_session_path <- file.path(EWCE_ROOT, "03_QC_Mapping_Logs",
 pca_session_path <- file.path(PCA_ROOT, "tables", "meta", "sessionInfo.txt")
 
 # --------------------------------------------------------------------------------------
-# ProTigy version for the CANONICAL animal-level run (2026-08-24)
+# ProTigy version of the superseded pooled animal-level run (2026-08-24)
 # --------------------------------------------------------------------------------------
-# PROTIGY_ANIMAL_LEVEL_VERSION / _EVIDENCE, the five-strand recovery argument behind them,
-# and the fail-closed check on the export signature all live in
-# R/release_software_versions.R. The editor workbook reports software versions too, and
-# these two artefacts previously derived them independently and disagreed -- the workbook
-# published the superseded 2025 hemisphere-level version as though it were the version
-# behind the canonical result. Sharing one builder is what stops that recurring.
-#
-# Asserted here as well so this stage still fails closed on its own.
+# The version, its evidence and this check are in R/release_software_versions.R; the check
+# runs here too so this stage stops on its own if the parameter export changes.
 release_assert_protigy_v2_export_signature(animal_param_yaml)
 
 # --------------------------------------------------------------------------------------
@@ -86,7 +109,8 @@ lin <- function(artifact_id, artifact_type, path_or_release_filename, parent_art
                 processing_stage, software, software_version, analysis_unit,
                 sha256 = NA_character_, canonical = "yes", notes = NA_character_) {
   data.frame(artifact_id = artifact_id, artifact_type = artifact_type,
-             path_or_release_filename = path_or_release_filename,
+             path_or_release_filename = release_repo_relative(path_or_release_filename,
+                                                              REPO_ROOT),
              parent_artifact = parent_artifact, processing_stage = processing_stage,
              software = software, software_version = software_version,
              analysis_unit = analysis_unit, sha256 = sha256, canonical = canonical,
@@ -101,12 +125,33 @@ p_processed <- file.path(DATA_ROOT, "02_data", "gct",
 p_processed_dup <- file.path(DATA_ROOT, "01_input", "raw_proteomics",
                              "20251107_pg.matrix_Neha", "pg.matrix_filtered_pcaAdjusted.gct")
 p_animal_gct <- release_locked_artefact_path("animal_level_input_gct", DATA_ROOT)
-p_stat_gct <- release_locked_artefact_path("protigy_stat_gct", DATA_ROOT)
-p_split_index <- file.path(ANIMAL_ROOT, "split", "indexComparisons.csv")
-p_mapped_index <- file.path(ANIMAL_ROOT, "mapped", "indexMappedComparisons.csv")
+p_stat_gct <- release_locked_artefact_path("stat_gct", DATA_ROOT)
+if (!identical(hash_or(p_stat_gct), stat_run$output_gct_sha256)) {
+  stop("The statistics GCT does not hash to the value its run manifest recorded.",
+       call. = FALSE)
+}
+p_stat_manifest <- release_locked_artefact_path("stat_run_manifest", DATA_ROOT)
+p_stat_gct_pooled <- file.path(release_rel_path(RELEASE_STATISTICS_RUN$pooled_stats_relative,
+                                                DATA_ROOT),
+                               RELEASE_STATISTICS_RUN$pooled_stat_gct)
+p_pooled_mapped_index <- file.path(release_rel_path(RELEASE_STATISTICS_RUN$pooled_stats_relative,
+                                                    DATA_ROOT),
+                                   "mapped", "indexMappedComparisons.csv")
+p_pooled_enrich_index <- file.path(
+  release_rel_path(RELEASE_STATISTICS_RUN$pooled_enrichment_relative, DATA_ROOT),
+  "indexEnrichmentComparisons.csv")
+if (!identical(hash_or(p_stat_gct_pooled), RELEASE_STATISTICS_RUN$pooled_stat_gct_sha256)) {
+  stop("The superseded pooled statistics GCT no longer hashes to its recorded value: ",
+       p_stat_gct_pooled, call. = FALSE)
+}
+p_limma_script <- file.path(REPO_ROOT, RELEASE_PRIMARY_MODEL$script)
+p_split_index <- file.path(STAT_ROOT, "split", "indexComparisons.csv")
+p_mapped_index <- file.path(STAT_ROOT, "mapped", "indexMappedComparisons.csv")
 p_idmapping <- file.path(DATA_ROOT, "01_input", "references", "MOUSE_10090_idmapping.dat")
 p_manual_mapping <- file.path(DATA_ROOT, "01_input", "references", "manual_mapping.xlsx")
 p_enrich_index <- file.path(ENRICH_ROOT, "indexEnrichmentComparisons.csv")
+p_enrich_index_cc <- file.path(ENRICH_ROOT_CC, "indexEnrichmentComparisons.csv")
+p_enrich_index_kegg <- file.path(KEGG_ROOT, "indexEnrichmentComparisons.csv")
 p_ewce_table <- file.path(EWCE_ROOT, "02_Tables_Supplements", "Supplementary_Table_EWCE.xlsx")
 p_pca_variance <- file.path(PCA_ROOT, "tables", "variance", "pca_variance_explained.csv")
 p_loom <- file.path(DATA_ROOT, "01_input", "single_cell", "loom", "l1_amygdala.loom")
@@ -132,7 +177,7 @@ p_perseus <- file.path(PROJECT_ROOT,
 lineage <- rbind(
   lin("A00_experimenter_metadata", "study / cohort / sample-class metadata",
       experimenter_source, NA_character_,
-      "experimenter-supplied facts codified in a source-controlled release contract",
+      "experimenter-supplied facts recorded in a release metadata file in the repository",
       "manual curation", "n/a", "study / cohort / sample class",
       hash_or(experimenter_source), "yes",
       paste("Defines CeM origin, marker-defined LCM classes, mouse strain/source, cohort-only",
@@ -217,8 +262,9 @@ lineage <- rbind(
              "metadata/sample_class_corrections.tsv.")),
   lin("A07_processed_matrix", "processed protein abundance matrix",
       p_processed, "A04_protein_group_matrix_prefilter",
-      paste("filtering, log2 transformation, median centring, imputation, PCA adjustment --",
-            "PRODUCING CODE NOT IN REPOSITORY:", UNRESOLVED),
+      paste("filtering, imputation and per-protein standardisation (measured on the values);",
+            "log2 transformation, median centring and PCA adjustment are described for this",
+            "file but not recorded -- PRODUCING CODE NOT IN REPOSITORY:", UNRESOLVED),
       UNKNOWN, UNKNOWN, "acquisition run", processed_sha, "yes",
       paste("5,349 x 96. The reproducible pipeline STARTS here. See",
             "provenance/UPSTREAM_PREPROCESSING_GAP.md. 01_preprocessing/01_impute.r does",
@@ -247,24 +293,46 @@ lineage <- rbind(
       paste("R", R.version.string), "animal", hash_or(p_animal_gct), "yes",
       paste("5,349 x 48. LOCKED artefact. No transformation, normalisation, filtering,",
             "imputation or remapping is applied at this step.")),
-  lin("A09_protigy_statistics", "differential statistics GCT",
-      p_stat_gct, "A08_animal_level_matrix",
-      "within-sample-class two-sample moderated t", "ProTigy",
-      PROTIGY_ANIMAL_LEVEL_VERSION, "animal",
+  lin("A09_differential_statistics", "differential statistics GCT",
+      p_stat_gct, "A08_animal_level_matrix", RELEASE_PRIMARY_MODEL$label,
+      paste("R + limma +", RELEASE_PRIMARY_MODEL$script),
+      paste0("limma ", stat_run$limma_version, "; R ", stat_run$r_version), "animal",
       hash_or(p_stat_gct), "yes",
-      paste("LOCKED artefact. Parameters recorded in",
-            "02_data/animal_level/neha_proteome_parameters.yaml. ProTigy VERSION for THIS",
-            "(2026-08-24) run is", PROTIGY_ANIMAL_LEVEL_VERSION, "-- recovered 2026-09-02",
-            "by cross-source audit and NOT carried over from the 2025 runs, which used",
-            "v1.1.5 (2025-03-28) and v1.1.8 (2025-11-07, 2025-12-12). v1.1.8 is disproven",
-            "for this run: it emits a params.txt header, this run emitted a v2 YAML export.",
-            "See provenance/software_versions.tsv for the evidence.")),
+      paste0("LOCKED artefact, written ", stat_run$run_timestamp_utc, " in the ProTigy GCT",
+             " layout so the split, identifier-mapping and enrichment stages run unchanged.",
+             " Versions, residual df, variance priors and input/output SHA256 are recorded",
+             " per contrast in ", basename(p_stat_manifest), " (also LOCKED). Primary since ",
+             RELEASE_PRIMARY_MODEL$date, "; replaces the pooled ProTigy run",
+             " (A09p_protigy_statistics_pooled), whose one ",
+             RELEASE_DESIGN_INVARIANTS$n_animal_level_units,
+             "-column model shared a variance estimate across the four sample classes. logFC",
+             " equals the pooled run's to floating-point rounding; AveExpr is now the",
+             " sample-class mean; t, P, adjusted P and B differ.")),
+  lin("A09p_protigy_statistics_pooled", "differential statistics GCT (superseded)",
+      p_stat_gct_pooled, "A08_animal_level_matrix", RELEASE_PRIMARY_MODEL$superseded_label,
+      "ProTigy", PROTIGY_ANIMAL_LEVEL_VERSION, "animal", hash_or(p_stat_gct_pooled), "no",
+      paste("SUPERSEDED on", RELEASE_PRIMARY_MODEL$date, "as the primary statistics;",
+            "retained for comparison and read only for the comparison tables in changelog",
+            "section 7b and manuscript actions section 4b, from its mapped tables (index",
+            paste0("02_data/animal_level/mapped/indexMappedComparisons.csv, SHA256 ",
+                   hash_or(p_pooled_mapped_index), ")"),
+            "and its enrichment run (index",
+            paste0(paste(RELEASE_STATISTICS_RUN$pooled_enrichment_relative, collapse = "/"),
+                   "/indexEnrichmentComparisons.csv, SHA256 ", hash_or(p_pooled_enrich_index),
+                   "),"),
+            "both of which record this GCT's hash. Parameters in",
+            "02_data/animal_level/neha_proteome_parameters.yaml. ProTigy version for this",
+            "(2026-08-24) run is", PROTIGY_ANIMAL_LEVEL_VERSION, "-- recovered 2026-09-02 by",
+            "cross-source audit and NOT carried over from the 2025 runs, which used v1.1.5",
+            "(2025-03-28) and v1.1.8 (2025-11-07, 2025-12-12). v1.1.8 is disproven for this",
+            "run: it emits a params.txt header, this run emitted a v2 YAML export.")),
   lin("A10_split_differential_tables", "differential result tables",
-      file.path(ANIMAL_ROOT, "split", "forward"), "A09_protigy_statistics",
+      file.path(STAT_ROOT, "split", "forward"), "A09_differential_statistics",
       "split into 12 forward and 12 reverse per-contrast tables",
       "R + 01_preprocessing/03_gct_extractR.r", paste("R", R.version.string), "animal",
       hash_or(p_split_index), "yes",
-      "5,349 rows per contrast. Index: indexComparisons.csv."),
+      paste("5,349 rows per contrast. Index: indexComparisons.csv; run_contract_manifest.csv",
+            "records the source GCT SHA256.")),
   lin("A11_uniprot_mapping_reference", "reference database",
       p_idmapping, NA_character_, "external download",
       "UniProt idmapping (MOUSE_10090)",
@@ -279,32 +347,44 @@ lineage <- rbind(
       as.character(mapped_index$manual_mapping_sha256[[1]]), "yes",
       paste0(mapped_index$manual_mapping_rows[[1]], " override rows.")),
   lin("A12_mapped_differential_tables", "mapped differential result tables",
-      file.path(ANIMAL_ROOT, "mapped", "forward"),
+      file.path(STAT_ROOT, "mapped", "forward"),
       "A10_split_differential_tables;A11_uniprot_mapping_reference;A11b_manual_mapping",
       "UniProt identifier resolution", "R + 02_id_mapping/01_MapThatProt_batch.r",
       paste("R", R.version.string), "animal", hash_or(p_mapped_index), "yes",
       paste("5,327 of 5,349 mapped; 22 non-mouse contaminant identifiers retained in",
             "mapped/unmapped/. Index: indexMappedComparisons.csv.")),
   lin("A13_enrichment", "GSEA and ORA results",
-      ENRICH_ROOT, "A12_mapped_differential_tables",
-      "GSEA ranked by the moderated t; ORA over FDR-significant lists",
+      ENRICH_RUN_ROOT, "A12_mapped_differential_tables",
+      "GSEA ranked by the moderated t (GO-BP, GO-CC, KEGG); ORA over FDR-significant lists",
       "R + clusterProfiler + fgsea",
       paste0("clusterProfiler ",
              pkg_versions$version[pkg_versions$component == "clusterProfiler"],
              "; fgsea ", pkg_versions$version[pkg_versions$component == "fgsea"]),
       "animal", hash_or(p_enrich_index), "yes",
-      paste("The effect-size-ranked GSEA in the same run is a SENSITIVITY analysis only;",
-            "its ranking statistic is the standardised-abundance effect size recorded",
-            "upstream as log2fc, not a log2 fold change.",
-            "Index: indexEnrichmentComparisons.csv.")),
+      paste("Runs of 04_differential_expression_enrichment/01_clusterProfiler.r on the",
+            "same mapped tables: GO_BP/ (GO-BP) and GO_CC/ (GO-CC) of this folder, and KEGG",
+            "from the GO_BP/ folder of",
+            paste0(permutations$kegg_relative, ", whose GO tables this run superseded."),
+            permutations$sentence, RELEASE_GO_CC_PROVENANCE_NOTE,
+            RELEASE_ENRICHMENT_SEED_HANDLING, RELEASE_KEGG_VERSION_NOTE,
+            "The effect-size-ranked GSEA in the same runs is a",
+            "SENSITIVITY analysis only; its ranking statistic is the standardised-abundance",
+            "effect size recorded upstream as log2fc, not a log2 fold change. Indexes:",
+            "GO_BP/indexEnrichmentComparisons.csv (hashed here),",
+            paste0("GO_CC/indexEnrichmentComparisons.csv (SHA256 ", hash_or(p_enrich_index_cc),
+                   ") and the KEGG run's GO_BP/indexEnrichmentComparisons.csv (SHA256 ",
+                   hash_or(p_enrich_index_kegg), "); all record the locked statistics GCT",
+                   " hash."))),
   lin("A14_ewce", "cell-type enrichment results",
-      EWCE_ROOT, "A08_animal_level_matrix;A10_split_differential_tables",
+      EWCE_ROOT, "A08_animal_level_matrix",
       "EWCE bootstrap enrichment, 10000 replicates",
       "R + EWCE + ewceData",
       paste0("EWCE 1.18.1; ewceData 1.18.0"), "animal", hash_or(p_ewce_table), "yes",
       paste("Cell-type reference is ewceData::ctd(), NOT the amygdala loom in 01_input.",
             "Primary settings: annotation level 2, top-N 250, FDR 0.05, measured-proteome",
-            "background 4859.")),
+            "background 4859. Run 2026-08-25 from the animal-level matrix alone:",
+            ewce_model$sentence, "Its limma settings are recorded in",
+            paste0(basename(ewce_model$path), "."))),
   lin("A14b_unused_single_cell_reference", "reference dataset (unused)",
       p_loom, NA_character_, "not used by any canonical analysis", "n/a", "n/a", "n/a",
       NA_character_, "no",
@@ -315,26 +395,51 @@ lineage <- rbind(
       PCA_ROOT, "A08_animal_level_matrix", "principal component analysis",
       "R + prcomp", paste("R", R.version.string), "animal", hash_or(p_pca_variance), "yes",
       "48 animal-level units, 5349 proteins, 0 zero-variance rows removed."),
-  lin("A16_figure_panels", "manuscript figure panels and source data",
-      REVISION_ROOT, "A08_animal_level_matrix;A12_mapped_differential_tables;A13_enrichment;A14_ewce",
-      "figure regeneration at animal level",
+  lin("A16_figure_panels",
+      "manuscript figure panels and source data (panels not using the differential statistics)",
+      REVISION_ROOT, "A08_animal_level_matrix;A14_ewce;A15_pca",
+      "figure regeneration at animal level (2026-08-27)",
       "R + 06_manuscript_figure_revision/*.R (frozen snapshots)",
       paste("R", R.version.string), "animal",
       hash_or(file.path(REVISION_ROOT, "manifests", "regenerated_panel_manifest.csv")), "yes",
-      "17 panels; per-panel source data copied into editor_source_data/figure_source_data/."),
+      paste("Source of the panels that do not depend on the differential statistics (PCA,",
+            "rank abundance, acquisition QC, EWCE, the secondary within-animal model). Its",
+            "Fig. 2 D, F, G, H, I and Supp. Fig. 4 F were drawn from the superseded pooled",
+            "statistics and are replaced by A16c. Per-panel source data copied into",
+            "editor_source_data/figure_source_data/.")),
+  lin("A16c_figure_panels_within_compartment",
+      "manuscript figure panels and source data (per-sample-class statistics)",
+      REBUILD_ROOT, "A12_mapped_differential_tables;A13_enrichment",
+      paste("figure regeneration on the per-sample-class statistics",
+            paste0("(", RELEASE_PRIMARY_MODEL$date, "; again 2026-11-25 on the GO enrichment",
+                   " at nPermSimple ", format(permutations$go_n_perm_simple, big.mark = ","),
+                   ")")),
+      paste("R + 06_manuscript_figure_revision/within_compartment_20261125/ (copies of the",
+            "rebuild's scripts/, run by run_rebuild.sh; the 2026-08-27 scripts re-pointed at",
+            "this run, plus 16b_final_Fig3G_gsea_lollipop.R)"),
+      paste("R", R.version.string), "animal", hash_or(release_figure_rebuild_record(DATA_ROOT)),
+      "yes",
+      paste("Fig. 2 D, F, G, H, I and Supp. Fig. 4 F (internal names Fig3*, SuppF). Fig. 2 G",
+            "is now moderated-t-ranked GSEA of GO-BP and GO-CC terms instead of an ORA",
+            "lollipop; the ORA results of the same comparison are quoted in",
+            "figure_source_map.tsv. Per-panel source data copied into",
+            "editor_source_data/figure_source_data/ under manuscript-numbered names and",
+            "pinned by SHA256 in figure_source_map.tsv.")),
   lin("A16b_acquisition_qc_counts", "acquisition QC source data",
       p_protein_count, "A03_search_quantification",
       "protein and peptide identification counts per acquisition",
       UNKNOWN, UNKNOWN, "acquisition run", NA_character_, "yes",
-      paste("Source of Supplementary A. Lives outside the clusterProfiler tree.",
+      paste("Source of Supp. Fig. 4 A. Lives outside the clusterProfiler tree.",
             "Producing step is", UNRESOLVED, "-- not hashed here; the copied panel source",
             "data in editor_source_data/ carries its hash.")),
   lin("A17_publication_release", "publication / deposition package",
       "this release", paste("A00_experimenter_metadata;A00_sample_preparation_protocol;",
                             "A05_sample_annotation;A06_sample_info;A04_protein_group_matrix_prefilter;",
-                            "A07_processed_matrix;A08_animal_level_matrix;A10_split_differential_tables;",
-                            "A12_mapped_differential_tables;A13_enrichment;A14_ewce;A16_figure_panels",
-                            sep = ""),
+                            "A07_processed_matrix;A08_animal_level_matrix;A09_differential_statistics;",
+                            "A09p_protigy_statistics_pooled;",
+                            "A10_split_differential_tables;A12_mapped_differential_tables;",
+                            "A13_enrichment;A14_ewce;A16_figure_panels;",
+                            "A16c_figure_panels_within_compartment", sep = ""),
       "read-only repackaging; no statistic recomputed",
       "R + 07_publication_release/*.R", paste("R", R.version.string), "animal / acquisition",
       NA_character_, "yes",
@@ -393,7 +498,8 @@ gap <- c(
   paste0("| Filtering threshold | 70% maximum missingness, applied within sample class |",
          " Encoded in the sibling filename",
          " `pg.matrix_filtered_70percent-onegroup_imputed_ANOVA_z-scored.gct` and in the",
-         " `max_missing: 70` field of `neha_proteome_parameters.yaml`. **The exact",
+         " `max_missing: 70` field of `neha_proteome_parameters.yaml` (the pooled ProTigy",
+         " run's parameter export). **The exact",
          " application to THIS file is not independently recorded.** |"),
   paste0("| A 2025 ProTigy session's settings | log transform none, normalisation none,",
          " filter none, NA filter 75, SD filter 10, two-sample moderated t, adj.p 0.05 |",
@@ -410,12 +516,13 @@ gap <- c(
   "|---|---|---|",
   paste0("| Producing script | ", UNRESOLVED, " | No script in this repository produces `",
          basename(p_processed), "`. |"),
-  paste0("| Log transformation | ", UNRESOLVED, " | The values are log2-scale and centred",
-         " near zero, consistent with log2 plus per-sample median centring, but no record",
-         " of the operation applied to this file exists. |"),
+  paste0("| Log transformation | ", UNRESOLVED, " | The values are standardised per protein",
+         " (see below), so they are not on a log2 scale. Whether a log transformation and",
+         " per-sample median centring came before that step is not recorded for this file. |"),
   paste0("| Normalisation | ", UNRESOLVED, " | The filename says `unnormalized`; the",
-         " downstream ProTigy run applied `norm.data none`. What, if anything, was applied",
-         " upstream is not recorded. |"),
+         " 2025-11-07 hemisphere-level ProTigy session applied `norm.data none`, and the",
+         " per-sample-class limma statistics fit the matrix as given. What, if anything, was",
+         " applied upstream is not recorded. |"),
   paste0("| Imputation | ", UNRESOLVED, " | No imputation log, seed or record accompanies",
          " the file. |"),
   paste0("| PCA adjustment | ", UNRESOLVED, " | The filename says `pcaAdjusted`. No script,",
@@ -434,12 +541,16 @@ gap <- c(
          " separately across the 96 acquisitions: row means are approximately 0 and row",
          " standard deviations approximately 1. So the values are neither log2 abundance nor",
          " raw intensity, and the token `unnormalized` in the filename is not a description",
-         " of them. Corroborated independently by the canonical differential tables: limma's",
-         " `AveExpr` lies within +/-0.0011 of zero for every protein, which requires a",
-         " per-protein centred input. The values carry only 2 decimals, so on these bytes no",
-         " row is exactly mean 0 / sd 1 -- the residual deviations are the size that",
-         " 2-decimal rounding produces -- and the release therefore does not claim a",
-         " specific standardisation formula. See the reporting note below."),
+         " of them. Corroborated independently by the differential statistics: limma's",
+         " `AveExpr` is the mean over one sample class's ", stat_run$n_columns_in_model,
+         " animal-level units, and its average over the four sample classes stays close to",
+         " zero (largest absolute value over all proteins ",
+         format(signif(ave$max_abs_mean_over_classes, 3), scientific = FALSE),
+         ", checked by 13_validate_release.R), which requires a per-protein centred input.",
+         " The values carry only 2 decimals, so on these bytes no row is exactly mean 0 /",
+         " sd 1 -- the residual deviations are the size that 2-decimal rounding produces --",
+         " and the release therefore does not claim a specific standardisation formula. See",
+         " the reporting note below."),
   paste0("2. **A sibling file matches it to within rounding.** `",
          basename(p_perseus), "` at the project root (Feb 2025, 5,349 x 106) has identical",
          " protein identifiers in identical order, the same 96 sample columns, and values",
@@ -452,12 +563,12 @@ gap <- c(
   "edge is recorded in the lineage as a CANDIDATE ancestor and remains UNRESOLVED.",
   "",
   paste0("**Consequence for reporting.** The effect size the canonical tables call `log2fc`",
-         " (and ProTigy stores as `logFC`) is a difference of group means on this",
+         " (and the statistical GCT stores as `logFC`) is a difference of group means on this",
          " standardised scale -- a ", RELEASE_EFFECT_SIZE$public_term, ", not a log2 ratio."),
   "",
   paste0("The publication release publishes it as `", RELEASE_EFFECT_SIZE$public_field,
          "` and records `source_statistic_field = \"", RELEASE_EFFECT_SIZE$source_field,
-         "\"` alongside it. No value was changed; only the label. It is deliberately not",
+         "\"` alongside it. No value was changed; only the label. It is not",
          " called a \"standardised mean difference\" unqualified (that reads as Cohen's d,",
          " which scales by a pooled within-group SD) and not called \"z-scored\" (see above:",
          " the operation is unresolved and the bytes are rounded)."),
@@ -473,7 +584,7 @@ gap <- c(
   "tree is named `pg.matrix_filtered_pcaAdjusted_unnormalized`. Both are 5,349 x 96. The",
   "dimensions match, but **the names disagree about which dimensionality-reduction method",
   "was used to adjust the data**, and nothing in the project resolves the disagreement.",
-  "This is recorded as a discrepancy rather than silently harmonised. Until the producing",
+  "This is recorded as a discrepancy rather than harmonised. Until the producing",
   "workflow is recovered, neither name should be taken as a description of the operation",
   "actually applied.",
   "",
@@ -504,12 +615,12 @@ gap <- c(
          " `processed_protein_group_matrix_raw.txt`, but it is a `.txt`, not the `.tsv` the",
          " script expects, and no run linking the two was ever recorded."),
   "",
-  "### What was deliberately NOT done",
+  "### What was NOT done",
   "",
   "A seed was **not** added and the matrix was **not** regenerated. Stochastic imputation",
   "without a recorded seed cannot be reproduced after the fact; re-running it would produce",
   "a numerically different matrix and therefore a new analysis generation, invalidating",
-  "every validated downstream artefact and both locked GCT hashes. That is out of scope for",
+  "every validated downstream artefact and the locked GCT hashes. That is out of scope for",
   "a packaging task.",
   "",
   "## Consequence for the deposition",
@@ -555,7 +666,8 @@ release_log("  software_versions: ", nrow(software_versions), " components, ", n
 ap <- function(stage_name, parameter, value, recorded_by, evidence_path,
                status = "KNOWN_VERIFIED", notes = NA_character_) {
   data.frame(stage = stage_name, parameter = parameter, value = value,
-             recorded_by = recorded_by, evidence_path = evidence_path, status = status,
+             recorded_by = recorded_by,
+             evidence_path = release_repo_relative(evidence_path, REPO_ROOT), status = status,
              notes = notes, stringsAsFactors = FALSE, check.names = FALSE)
 }
 
@@ -563,7 +675,7 @@ yaml_lines <- readLines(animal_param_yaml, warn = FALSE)
 yaml_tbl <- do.call(rbind, lapply(yaml_lines, function(l) {
   m <- regmatches(l, regexec("^([A-Za-z_][A-Za-z0-9_]*):\\s*(.*)$", l))[[1]]
   if (length(m) != 3L) return(NULL)
-  ap("animal-level ProTigy input", m[[2]], trimws(m[[3]]),
+  ap("pooled animal-level ProTigy run, 2026-08-24 (superseded)", m[[2]], trimws(m[[3]]),
      "neha_proteome_parameters.yaml", animal_param_yaml)
 }))
 
@@ -578,9 +690,100 @@ protigy_2025_tbl <- if (file.exists(protigy_params_2025)) {
 } else NULL
 
 enrich_tbl <- do.call(rbind, lapply(seq_len(nrow(run_parameters)), function(i) {
-  ap("enrichment (GSEA / ORA)", run_parameters$parameter[i], run_parameters$value[i],
-     "run_parameters.csv", file.path(ENRICH_ROOT, "audits", "run_parameters.csv"))
+  ap("enrichment (GSEA / ORA), GO_BP run (GO-BP)", run_parameters$parameter[i],
+     run_parameters$value[i], "run_parameters.csv",
+     file.path(ENRICH_ROOT, "audits", "run_parameters.csv"))
 }))
+enrich_cc_tbl <- do.call(rbind, lapply(seq_len(nrow(run_parameters_cc)), function(i) {
+  ap("enrichment (GSEA / ORA), GO_CC run", run_parameters_cc$parameter[i],
+     run_parameters_cc$value[i], "run_parameters.csv",
+     file.path(ENRICH_ROOT_CC, "audits", "run_parameters.csv"))
+}))
+enrich_kegg_tbl <- do.call(rbind, lapply(seq_len(nrow(run_parameters_kegg)), function(i) {
+  ap("enrichment (GSEA), KEGG run (its GO-BP tables are superseded)",
+     run_parameters_kegg$parameter[i], run_parameters_kegg$value[i], "run_parameters.csv",
+     file.path(KEGG_ROOT, "audits", "run_parameters.csv"))
+}))
+# Not recorded by run_parameters.csv. The seed handling is taken from what the run produced:
+# a rerun with the recorded seeds and DOSE seed = FALSE reproduces the stored NES. The script
+# in the repository is later than the locked runs, so its hash is labelled as such. The
+# features it adds are checked against the KEGG run, which predates them; the GO runs record
+# them.
+p_enrich_script <- file.path(REPO_ROOT, "04_differential_expression_enrichment",
+                             "01_clusterProfiler.r")
+fmt_e <- function(x) format(signif(as.numeric(x), 2), scientific = TRUE)
+later_features <- c(
+  if (!"gsea_n_perm_simple" %in% run_parameters_kegg$parameter)
+    "sets fgsea nPermSimple",
+  if (!"gsea_biocparallel_backend" %in% run_parameters_kegg$parameter)
+    "registers a serial BiocParallel backend",
+  if (!any(grepl("untested_set_count", names(release_read_csv(p_enrich_index_kegg)), fixed = TRUE)))
+    "records the gene sets fgsea could not test")
+if (!all(c("gsea_n_perm_simple", "gsea_biocparallel_backend") %in% run_parameters$parameter) ||
+    !any(grepl("untested_set_count", names(release_read_csv(p_enrich_index)), fixed = TRUE))) {
+  stop("The GO enrichment run does not record its nPermSimple, backend and untested sets.",
+       call. = FALSE)
+}
+seed_tbl <- rbind(
+  ap("enrichment (GSEA / ORA)", "dose_seed_argument", "FALSE",
+     paste0("rerun check: the mCherry learning GO-BP and GO-CC GSEA, rerun with the recorded",
+            " seeds and DOSE seed = FALSE, reproduce the stored FDR sets and NES (max |dNES| ",
+            fmt_e(seed_checks$value[seed_check_rows[["GO-BP"]]]), " GO-BP, ",
+            fmt_e(seed_checks$value[seed_check_rows[["GO-CC"]]]), " GO-CC)"),
+     p_seed_checks, "KNOWN_VERIFIED",
+     paste0(RELEASE_ENRICHMENT_SEED_HANDLING, " Evidence SHA256 ", hash_or(p_seed_checks), ".")),
+  ap("enrichment (GSEA / ORA)", "enrichment_script_sha256_at_build", hash_or(p_enrich_script),
+     "script at build time, later than the locked runs", p_enrich_script, "KNOWN_VERIFIED",
+     if (length(later_features)) paste0(
+       "Not the exact code of the locked runs. The GO runs record what this version adds;",
+       " the KEGG run predates it: this version also ",
+       if (length(later_features) > 1L) paste0(
+         paste(later_features[-length(later_features)], collapse = ", "), " and ",
+         later_features[length(later_features)]) else later_features,
+       ", which the KEGG run's audits do not record. It also has no default output root",
+       " (PROTEOMICS_ENRICHMENT_OUTPUT_ROOT must name the run folder). The runs are",
+       " identified by their locked index hashes.") else
+       "The locked runs' audits record every setting this version adds."))
+
+# The per-sample-class limma model behind every released t, P and FDR. The model terms come
+# from RELEASE_PRIMARY_MODEL and the script; the numbers from the run manifest.
+LIMMA_STAGE <- "differential statistics (limma, one model per sample class)"
+LIMMA_TESTED_BY <- function(call) {
+  paste0("script source (", call, "); tests/test_limma_stat_gct.R requires the script to",
+         " reproduce the locked statistics GCT byte for byte")
+}
+sm_stat <- stat_run$manifest
+limma_tbl <- rbind(
+  ap(LIMMA_STAGE, "variance_model", RELEASE_PRIMARY_MODEL$variance_model, "run manifest",
+     p_stat_manifest),
+  ap(LIMMA_STAGE, "design", "~0 + condition, fitted separately within each sample class",
+     "script source", p_limma_script),
+  ap(LIMMA_STAGE, "n_columns_in_model", as.character(stat_run$n_columns_in_model),
+     "run manifest", p_stat_manifest),
+  ap(LIMMA_STAGE, "df_residual", as.character(stat_run$df_residual), "run manifest",
+     p_stat_manifest),
+  # The run manifest does not record the eBayes settings; the script does, and
+  # tests/test_limma_stat_gct.R checks that the script reproduces the locked GCT byte for
+  # byte, which ties the script's settings to the published statistics.
+  ap(LIMMA_STAGE, "ebayes_robust", "TRUE",
+     LIMMA_TESTED_BY("eBayes call"), paste(p_limma_script, p_limma_test, sep = ";")),
+  ap(LIMMA_STAGE, "ebayes_trend", "FALSE",
+     LIMMA_TESTED_BY("eBayes call, limma default"), paste(p_limma_script, p_limma_test, sep = ";")),
+  ap(LIMMA_STAGE, "p_adjust_method", "BH, within each contrast",
+     LIMMA_TESTED_BY("topTable call"), paste(p_limma_script, p_limma_test, sep = ";")),
+  ap(LIMMA_STAGE, "significance_threshold", "adj.P.Val < 0.05", "script source",
+     p_limma_script),
+  ap(LIMMA_STAGE, "limma_version", stat_run$limma_version, "run manifest", p_stat_manifest),
+  ap(LIMMA_STAGE, "r_version", stat_run$r_version_string, "run manifest", p_stat_manifest),
+  do.call(rbind, lapply(unique(sub("_.*$", "", sm_stat$canonical_comparison)), function(cls) {
+    r <- sm_stat[startsWith(sm_stat$canonical_comparison, paste0(cls, "_")), , drop = FALSE][1, ]
+    rbind(ap(LIMMA_STAGE, paste0("df_prior_median_", cls),
+             format(signif(as.numeric(r$df_prior_median), 4)), "run manifest",
+             p_stat_manifest),
+          ap(LIMMA_STAGE, paste0("s2_prior_", cls),
+             format(signif(as.numeric(r$s2_prior), 4)), "run manifest", p_stat_manifest))
+  }))
+)
 
 ewce_lines <- if (file.exists(ewce_session_path)) readLines(ewce_session_path, warn = FALSE) else character(0)
 grab <- function(prefix) {
@@ -598,6 +801,17 @@ ewce_tbl <- do.call(rbind, lapply(
        c("sampling_unit", "Sampling unit"), c("input_sha256", "Input SHA256")),
   function(x) ap("EWCE", x[[1]], grab(x[[2]]), "reproducibility_session_info.txt",
                  ewce_session_path)))
+# EWCE's differential lists come from its own limma fit, not from the released statistics.
+ewce_tbl <- rbind(ewce_tbl,
+  ap("EWCE", "differential_limma_design", ewce_model$design,
+     "animal_level_differential_audit.csv", ewce_model$path, "KNOWN_VERIFIED",
+     ewce_model$sentence),
+  ap("EWCE", "differential_limma_ebayes", ewce_model$ebayes,
+     "animal_level_differential_audit.csv", ewce_model$path, "KNOWN_VERIFIED",
+     paste("EWCE's own fit; the released differential statistics use",
+           "eBayes(robust = TRUE, trend = FALSE).")),
+  ap("EWCE", "differential_n_proteins", as.character(ewce_model$n_proteins),
+     "animal_level_differential_audit.csv", ewce_model$path))
 
 impute_tbl <- rbind(
   ap("historical imputation (01_impute.r, NOT the producer of the canonical matrix)",
@@ -621,7 +835,8 @@ impute_tbl <- rbind(
      "MISSING_UNKNOWN", "Filename says unnormalized; not independently recorded.")
 )
 
-analysis_parameters <- rbind(yaml_tbl, protigy_2025_tbl, enrich_tbl, ewce_tbl, impute_tbl)
+analysis_parameters <- rbind(limma_tbl, yaml_tbl, protigy_2025_tbl, enrich_tbl, enrich_cc_tbl,
+                             enrich_kegg_tbl, seed_tbl, ewce_tbl, impute_tbl)
 rownames(analysis_parameters) <- NULL
 release_log("  analysis_parameters: ", nrow(analysis_parameters), " recorded parameters")
 
@@ -632,7 +847,8 @@ release_log("  analysis_parameters: ", nrow(analysis_parameters), " recorded par
 si <- c(
   "Publication release build environment",
   paste0("Generated: ", release_timestamp_utc()),
-  paste0("Repository: ", REPO_ROOT),
+  paste0("Repository: proteomic_analysis/ (repository paths in this release are relative ",
+         "to this folder)"),
   paste0("Git commit: ", release_git_commit(REPO_ROOT)),
   paste0("Release layer version: ", RELEASE_LAYER_VERSION),
   "",
@@ -652,29 +868,45 @@ w1 <- release_write_table(lineage, release_path("provenance", "data_lineage.tsv"
 release_register("provenance/data_lineage.tsv",
                  "acquisition to publication lineage; unproven edges marked UNRESOLVED",
                  c(experimenter_source, protocol_source, p_pg_raw, p_processed,
-                   p_animal_gct, p_stat_gct),
+                   p_animal_gct, p_stat_gct, p_stat_manifest, release_figure_rebuild_record(DATA_ROOT),
+                   p_stat_gct_pooled, p_pooled_mapped_index, p_pooled_enrich_index,
+                   ewce_model$path),
                  c(hash_or(experimenter_source), hash_or(protocol_source), hash_or(p_pg_raw),
-                   processed_sha, hash_or(p_animal_gct), hash_or(p_stat_gct)), STAGE, "tsv")
+                   processed_sha, hash_or(p_animal_gct), hash_or(p_stat_gct),
+                   hash_or(p_stat_manifest), hash_or(release_figure_rebuild_record(DATA_ROOT)),
+                   hash_or(p_stat_gct_pooled), hash_or(p_pooled_mapped_index),
+                   hash_or(p_pooled_enrich_index), hash_or(ewce_model$path)),
+                 STAGE, "tsv")
 
 w2 <- release_write_table(software_versions,
                           release_path("provenance", "software_versions.tsv"))
 release_register("provenance/software_versions.tsv",
                  "exact software and reference-database versions, or UNKNOWN with a source",
                  c(file.path(ENRICH_ROOT, "audits", "package_database_versions.csv"),
-                   ewce_session_path, pca_session_path, protigy_params_2025),
+                   file.path(ENRICH_ROOT_CC, "audits", "package_database_versions.csv"),
+                   p_stat_manifest, ewce_session_path, pca_session_path, protigy_params_2025),
                  c(hash_or(file.path(ENRICH_ROOT, "audits", "package_database_versions.csv")),
-                   hash_or(ewce_session_path), hash_or(pca_session_path),
-                   hash_or(protigy_params_2025)), STAGE, "tsv")
+                   hash_or(file.path(ENRICH_ROOT_CC, "audits", "package_database_versions.csv")),
+                   hash_or(p_stat_manifest), hash_or(ewce_session_path),
+                   hash_or(pca_session_path), hash_or(protigy_params_2025)), STAGE, "tsv")
 
 w3 <- release_write_table(analysis_parameters,
                           release_path("provenance", "analysis_parameters.tsv"))
 release_register("provenance/analysis_parameters.tsv",
                  "every recorded analysis parameter, per stage",
-                 c(animal_param_yaml, protigy_params_2025,
-                   file.path(ENRICH_ROOT, "audits", "run_parameters.csv"), ewce_session_path),
-                 c(hash_or(animal_param_yaml), hash_or(protigy_params_2025),
+                 c(p_stat_manifest, p_limma_script, p_limma_test, p_seed_checks,
+                   p_enrich_script, animal_param_yaml,
+                   protigy_params_2025, file.path(ENRICH_ROOT, "audits", "run_parameters.csv"),
+                   file.path(ENRICH_ROOT_CC, "audits", "run_parameters.csv"),
+                   file.path(KEGG_ROOT, "audits", "run_parameters.csv"),
+                   ewce_session_path, ewce_model$path),
+                 c(hash_or(p_stat_manifest), hash_or(p_limma_script), hash_or(p_limma_test),
+                   hash_or(p_seed_checks), hash_or(p_enrich_script),
+                   hash_or(animal_param_yaml), hash_or(protigy_params_2025),
                    hash_or(file.path(ENRICH_ROOT, "audits", "run_parameters.csv")),
-                   hash_or(ewce_session_path)), STAGE, "tsv")
+                   hash_or(file.path(ENRICH_ROOT_CC, "audits", "run_parameters.csv")),
+                   hash_or(file.path(KEGG_ROOT, "audits", "run_parameters.csv")),
+                   hash_or(ewce_session_path), hash_or(ewce_model$path)), STAGE, "tsv")
 
 release_register("provenance/UPSTREAM_PREPROCESSING_GAP.md",
                  "what upstream of the 5,349-protein matrix cannot be reproduced, and why",
