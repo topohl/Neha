@@ -1,20 +1,15 @@
-# Rank-abundance active-successor note — 2026-08-28
+# Rank-abundance stage and the frozen source map (2026-08-28)
 
-The frozen shared-drive `manifests/original_figure_panel_source_map.csv` was written before the
-active rank-abundance stage was hardened in C1. Its description says that the nearest active
-successor, `03_qc_exploration/02_rank_abundance_by_sample_class.r`, produces one curve per
-`sample_class` rather than per `sample_class × condition`.
-
-That historical description now predates the active implementation. The current successor:
+The shared-drive `manifests/original_figure_panel_source_map.csv` is frozen and was written
+before the rank-abundance stage was reworked. It says that the nearest active script,
+`03_qc_exploration/02_rank_abundance_by_sample_class.r`, draws one curve per `sample_class`
+rather than per `sample_class × condition`. That is no longer true. The current script:
 
 - reads the validated 48-column animal-level GCT;
-- requires one unique `AnimalID × sample_class × condition` observation per biological unit;
-- summarizes the four canonical sample classes across the four canonical conditions, producing
-  16 groups with three distinct animals per group; and
-- regenerates the Figure 3E and Supplementary D rank-abundance source data with exact keyed
-  equality to the finalized reviewer-revision reference.
+- requires exactly one observation per `AnimalID × sample_class × condition`;
+- summarizes the four sample classes across the four conditions: 16 groups of three animals;
+- regenerates the Figure 3E and Supplementary D rank-abundance source data, which match the
+  final reviewer-revision reference exactly when rows are joined on their key columns.
 
-The original shared-drive source map remains unchanged because it is a finalized historical
-artifact. This note is the non-destructive crosswalk from that frozen description to the current
-active successor. See `SCRIPT_PROVENANCE.csv` for the independent mapping between the executed
-revision scripts and their byte-identical repository snapshots.
+The source map is left as it is; this note records the difference. `SCRIPT_PROVENANCE.csv` maps
+the executed revision scripts to their copies in this folder.
